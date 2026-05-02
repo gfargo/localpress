@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-02
+
+### Added
+- **Ink-based interactive init wizard**: full React terminal UI with step-by-step
+  prompts, colored output, masked password display, connection test spinner, and
+  capability report. Replaces the readline-based prompts from v0.1. Falls back
+  gracefully to non-interactive mode if Ink rendering fails.
+- **jSquash WASM codec integration** (`--encoder jsquash`): alternative encoding
+  path using Squoosh-derived WASM codecs for the final encoding step.
+  - **OxiPNG** for significantly better lossless PNG compression than sharp's
+    built-in PNG encoder.
+  - MozJPEG, WebP, and AVIF encoding with full parameter control.
+  - Consistent cross-platform output (WASM, no native binary differences).
+  - Sharp still handles all transforms (resize, rotate, metadata strip);
+    jSquash handles the final encoding when `--encoder jsquash` is passed.
+- `OptimizeOptions.encoder` field in the engine types for programmatic use.
+
 ## [1.0.0] - 2026-05-02
 
 ### Added
@@ -121,7 +138,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/gfargo/localpress/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/gfargo/localpress/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/gfargo/localpress/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/gfargo/localpress/compare/v0.2.0...v0.3.0
