@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-05-02
+
+### Fixed
+- **`list --interactive` typecheck errors**: restored missing `MediaItem` import
+  removed when the exit-to-preview flow was deleted; boxed `pendingAction` in an
+  object container so TypeScript does not narrow it to `never` across the
+  `await waitUntilExit()` boundary.
+
+### Changed
+- **`list --interactive` sidebar thumbnail**: inline image preview now loads
+  directly in the sidebar via the iTerm2 inline-image protocol — no TUI exit
+  required. Supported terminals: iTerm2, Warp, WezTerm, Kitty.
+- **`list --interactive` page-nav hints**: navigation bar now shows
+  `← [b] prev page` / `[n] next page →` with dimming at boundaries, making
+  paging discoverable at a glance.
+- **`list --interactive` page-load spinner**: list panel replaces stale items
+  with a centered braille spinner during page fetches; nav bar also animates.
+- Removed `[v] preview` keybinding — preview is now always-on in the sidebar.
+
 ## [1.3.0] - 2026-05-02
 
 ### Added
@@ -221,7 +240,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/gfargo/localpress/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/gfargo/localpress/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/gfargo/localpress/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/gfargo/localpress/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/gfargo/localpress/compare/v0.4.0...v1.0.0
