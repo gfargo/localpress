@@ -54,6 +54,8 @@ scratch/
 # separate git repo (gfargo/localpress-www).
 .www/
 
+.wiki/
+
 # Models (downloaded at runtime, not committed)
 models/
 *.onnx
