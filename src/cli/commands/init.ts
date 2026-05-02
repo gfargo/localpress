@@ -153,6 +153,7 @@ export function registerInitCommand(program: Command): void {
       if (!availability.wpCli) {
         info('');
         info('Tip: Configure SSH for WP-CLI to unlock all capabilities.');
+        info('    Guide: https://localpress.griffen.codes/docs/wp-cli-ssh-setup');
       }
 
       info('\nReady! Try `localpress list` to see your media library.');

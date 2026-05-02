@@ -118,6 +118,12 @@ export interface Reference {
 
 export type ReferenceScope = 'fast' | 'full';
 
+export interface PagedResult<T> {
+  items: T[];
+  total: number;
+  totalPages: number;
+}
+
 /**
  * Backend interface. All adapters implement this; not all methods are supported
  * by every adapter — those that aren't throw `CapabilityUnavailableError`.
@@ -128,6 +134,7 @@ export interface WpBackend {
 
   // Discovery
   listMedia(filters: ListFilters): Promise<MediaItem[]>;
+  listMediaPage(filters: ListFilters): Promise<PagedResult<MediaItem>>;
   getMedia(id: number): Promise<MediaItem>;
 
   // Mutation

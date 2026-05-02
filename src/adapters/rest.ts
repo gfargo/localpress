@@ -70,6 +70,11 @@ export class RestAdapter implements WpBackend {
   }
 
   private async request<T>(url: string, init?: RequestInit): Promise<T> {
+    const { data } = await this.requestRaw<T>(url, init);
+    return data;
+  }
+
+  private async requestRaw<T>(url: string, init?: RequestInit): Promise<{ data: T; headers: Headers }> {
     const response = await fetch(url, {
       ...init,
       headers: {
@@ -94,7 +99,8 @@ export class RestAdapter implements WpBackend {
       );
     }
 
-    return response.json() as Promise<T>;
+    const data = await response.json() as T;
+    return { data, headers: response.headers };
   }
 
   // Discovery -----------------------------------------------------------------
@@ -119,6 +125,30 @@ export class RestAdapter implements WpBackend {
 
     const raw = await this.request<WpMediaResponse[]>(this.apiUrl('/media', params));
     return raw.map(mapWpMediaToItem);
+  }
+
+  async listMediaPage(filters: ListFilters): Promise<import('./types.ts').PagedResult<MediaItem>> {
+    const params: Record<string, string | number> = {
+      per_page: Math.min(filters.perPage ?? 50, 100),
+      page: filters.page ?? 1,
+      orderby: 'date',
+      order: 'desc',
+    };
+
+    if (filters.type) {
+      params.media_type = filters.type.startsWith('image') ? 'image' : filters.type;
+    }
+    if (filters.postId) {
+      params.parent = filters.postId;
+    }
+    if (filters.since) {
+      params.after = filters.since;
+    }
+
+    const { data, headers } = await this.requestRaw<WpMediaResponse[]>(this.apiUrl('/media', params));
+    const total = parseInt(headers.get('X-WP-Total') ?? '0', 10);
+    const totalPages = parseInt(headers.get('X-WP-TotalPages') ?? '1', 10);
+    return { items: data.map(mapWpMediaToItem), total, totalPages };
   }
 
   async getMedia(id: number): Promise<MediaItem> {

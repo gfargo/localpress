@@ -118,6 +118,11 @@ export class WpCliAdapter implements WpBackend {
     return items;
   }
 
+  async listMediaPage(filters: ListFilters): Promise<import('./types.ts').PagedResult<MediaItem>> {
+    const items = await this.listMedia(filters);
+    return { items, total: items.length, totalPages: 1 };
+  }
+
   async getMedia(id: number): Promise<MediaItem> {
     const output = await this.wp(
       `post meta get ${id} _wp_attachment_metadata --format=json 2>/dev/null || echo "null"`,
