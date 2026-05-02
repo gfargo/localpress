@@ -1,0 +1,142 @@
+name: Release
+
+# Builds platform binaries, creates a GitHub Release, and updates
+# the Homebrew formula with the correct SHA256 checksums.
+#
+# Prerequisites:
+#   - HOMEBREW_TAP_TOKEN secret: a GitHub PAT with `repo` scope on
+#     the homebrew-localpress tap repository (gfargo/homebrew-localpress).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build binaries
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Unit tests
+        run: bun test test/unit/
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build all targets
+        run: bun run build:all
+
+      - name: Compute SHA256 checksums
+        id: checksums
+        run: |
+          echo "darwin_arm64=$(sha256sum dist/localpress-darwin-arm64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "darwin_x64=$(sha256sum dist/localpress-darwin-x64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux_arm64=$(sha256sum dist/localpress-linux-arm64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux_x64=$(sha256sum dist/localpress-linux-x64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/localpress-darwin-arm64
+            dist/localpress-darwin-x64
+            dist/localpress-linux-arm64
+            dist/localpress-linux-x64
+            dist/localpress-windows-x64.exe
+          generate_release_notes: true
+          make_latest: true
+
+      - name: Update Homebrew formula
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256_DARWIN_ARM64: ${{ steps.checksums.outputs.darwin_arm64 }}
+          SHA256_DARWIN_X64: ${{ steps.checksums.outputs.darwin_x64 }}
+          SHA256_LINUX_ARM64: ${{ steps.checksums.outputs.linux_arm64 }}
+          SHA256_LINUX_X64: ${{ steps.checksums.outputs.linux_x64 }}
+        run: |
+          sed -i \
+            -e "s/version \".*\"/version \"${VERSION}\"/" \
+            -e "s/PLACEHOLDER_SHA256_DARWIN_ARM64/${SHA256_DARWIN_ARM64}/" \
+            -e "s/PLACEHOLDER_SHA256_DARWIN_X64/${SHA256_DARWIN_X64}/" \
+            -e "s/PLACEHOLDER_SHA256_LINUX_ARM64/${SHA256_LINUX_ARM64}/" \
+            -e "s/PLACEHOLDER_SHA256_LINUX_X64/${SHA256_LINUX_X64}/" \
+            Formula/localpress.rb
+
+          # Also update any existing real SHA256 lines (for subsequent releases).
+          python3 - <<'PYEOF'
+          import re, os
+
+          version = os.environ['VERSION']
+          shas = {
+              'darwin_arm64': os.environ['SHA256_DARWIN_ARM64'],
+              'darwin_x64':   os.environ['SHA256_DARWIN_X64'],
+              'linux_arm64':  os.environ['SHA256_LINUX_ARM64'],
+              'linux_x64':    os.environ['SHA256_LINUX_X64'],
+          }
+
+          with open('Formula/localpress.rb', 'r') as f:
+              content = f.read()
+
+          # Update version
+          content = re.sub(r'version "[^"]*"', f'version "{version}"', content)
+
+          # Update sha256 lines — match the 64-char hex strings
+          sha_pattern = re.compile(r'sha256 "[0-9a-f]{64}"')
+          sha_values = list(shas.values())
+          idx = 0
+          def replace_sha(m):
+              nonlocal idx
+              if idx < len(sha_values):
+                  result = f'sha256 "{sha_values[idx]}"'
+                  idx += 1
+                  return result
+              return m.group(0)
+          content = sha_pattern.sub(replace_sha, content)
+
+          with open('Formula/localpress.rb', 'w') as f:
+              f.write(content)
+          PYEOF
+
+      - name: Commit updated formula
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/localpress.rb
+          git diff --staged --quiet || git commit -m "chore: update Homebrew formula to v${{ steps.version.outputs.version }}"
+          git push origin HEAD:main
+
+      - name: Push formula to homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set — skipping tap push. Add it to repo secrets to enable."
+            exit 0
+          fi
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/gfargo/homebrew-localpress.git /tmp/tap
+          cp Formula/localpress.rb /tmp/tap/Formula/localpress.rb
+          cd /tmp/tap
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/localpress.rb
+          git diff --staged --quiet || git commit -m "chore: update formula to v${VERSION}"
+          git push origin main

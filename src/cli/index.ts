@@ -58,6 +58,7 @@ program
 registerInitCommand(program);
 registerSitesCommand(program);
 registerDoctorCommand(program);
+registerConfigCommand(program);
 registerListCommand(program);
 registerShowCommand(program);
 registerAuditCommand(program);

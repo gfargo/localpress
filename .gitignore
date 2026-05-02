@@ -45,6 +45,11 @@ coverage/
 scratch/
 *.local
 
+# Homebrew tap repo — checked out locally for reference/editing,
+# but it's a separate git repo (gfargo/homebrew-localpress).
+# Same pattern as .wiki for project wikis.
+.tap/
+
 # Models (downloaded at runtime, not committed)
 models/
 *.onnx

@@ -89,11 +89,47 @@ localpress doctor --json
 {
   "site": "production",
   "url": "https://example.com",
+  "connectionOk": true,
   "adapters": { "rest": true, "wpCli": false, "mcp": false },
   "capabilities": [
     { "capability": "list", "preferredAdapter": "rest", "availableOn": ["rest"] },
     { "capability": "replace-in-place", "preferredAdapter": null, "availableOn": [] }
+  ],
+  "issues": [],
+  "plugins": [
+    { "slug": "enable-media-replace", "name": "Enable Media Replace", "active": true, "capability": "replace-in-place (REST fallback)", "version": "4.1.0" }
   ]
+}
+```
+
+### Configuration
+
+```bash
+# Set global defaults
+localpress config set defaults.quality 80 --json
+localpress config set defaults.format webp --json
+
+# Create a named optimization profile
+localpress config set-profile hero --quality 75 --format webp --max-width 1920 --json
+
+# List all profiles
+localpress config list-profiles --json
+
+# Get a specific profile
+localpress config get-profile hero --json
+
+# Print full config (passwords redacted)
+localpress config list --json
+```
+
+#### `config list-profiles --json` output
+
+```json
+{
+  "profiles": {
+    "hero": { "quality": 75, "format": "webp", "maxWidth": 1920, "description": "Hero images" },
+    "thumbnail": { "quality": 85, "maxWidth": 400, "stripMetadata": true }
+  }
 }
 ```
 
@@ -114,6 +150,11 @@ localpress show 123 --json
 
 # Audit the library for issues
 localpress audit --json
+
+# Audit specific checks only
+localpress audit --display-size --json
+localpress audit --duplicates --json
+localpress audit --broken-refs --json
 
 # Find where an attachment is used
 localpress references 123 --json
@@ -147,9 +188,12 @@ localpress references 123 --json
   "findings": [
     { "type": "unoptimized", "attachmentId": 123, "filename": "photo.jpg", "detail": "Not yet processed" },
     { "type": "large", "attachmentId": 456, "filename": "banner.png", "detail": "2.4 MB (threshold: 1.0 MB)" },
-    { "type": "missing-alt", "attachmentId": 789, "filename": "hero.jpg", "detail": "No alt text set" }
+    { "type": "missing-alt", "attachmentId": 789, "filename": "hero.jpg", "detail": "No alt text set" },
+    { "type": "display-size", "attachmentId": 101, "filename": "bg.jpg", "detail": "Source is 4000×3000 but largest registered size is 1024×768 (large) — 15.3× oversized" },
+    { "type": "duplicate", "attachmentId": 202, "filename": "logo.png", "detail": "Perceptually similar to attachment(s) #203, #204", "duplicateOf": [203, 204] },
+    { "type": "broken-ref", "attachmentId": 303, "filename": "old-banner.jpg", "detail": "URL returns HTTP 404" }
   ],
-  "summary": { "unoptimized": 45, "large": 12, "missingAlt": 23 }
+  "summary": { "unoptimized": 45, "large": 12, "missingAlt": 23, "displaySize": 8, "duplicates": 3, "brokenRefs": 2, "orphan": 0, "missingFile": 0 }
 }
 ```
 

@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-02
+
+### Added
+- **`audit --display-size`**: flags images significantly larger than their largest
+  registered WordPress thumbnail size (≥2× pixel area). Compares source dimensions
+  against `media_details.sizes` from the REST API. Surfaces the most common waste
+  in real media libraries — a 4000px image used only as a 400px thumbnail.
+- **`audit --duplicates`**: perceptual duplicate detection using dHash (difference
+  hash) computed via sharp. Downloads each image, resizes to 9×8 grayscale, and
+  compares 64-bit hashes with Hamming distance ≤ 5. Groups near-identical images
+  for deduplication.
+- **`audit --broken-refs`**: HEAD-checks every attachment URL concurrently (10 at
+  a time) and flags any that return HTTP 404/410 or are unreachable.
+- **`doctor --plugins`**: probes the WP REST API plugins endpoint to detect
+  relevant installed plugins — Enable Media Replace (capability unlock), Jetpack
+  (CDN awareness), Smush/ShortPixel/EWWW (conflict warnings).
+- **`doctor --fix`**: runs a live REST API connection test and surfaces actionable
+  remediation steps for auth failures, unreachable sites, and missing SSH config.
+- **`config` command** with subcommands:
+  - `config get <key>` / `config set <key> <value>` for `active-site`,
+    `defaults.quality`, `defaults.format`, `defaults.concurrency`.
+  - `config list` — prints full config with app passwords redacted.
+  - `config set-profile <name>` — create/update named optimization profiles with
+    `--quality`, `--format`, `--max-width`, `--max-height`, `--encoder`,
+    `--strip-metadata`, `--description`.
+  - `config get-profile`, `config list-profiles`, `config remove-profile`.
+- **`OptimizationProfile` type** in `src/types.ts` — reusable processing presets
+  stored in config and applied via `localpress optimize --profile <name>`.
+- **`Config.profiles`** and **`Config.defaults`** fields for global defaults and
+  named profiles.
+- **Homebrew formula** at `Formula/localpress.rb` — platform-specific binary
+  downloads for macOS (arm64/x64) and Linux (arm64/x64).
+- **Release workflow** at `.github/workflows/release.yml` — builds binaries,
+  computes SHA256 checksums, creates GitHub Release, and pushes updated formula
+  to the `gfargo/homebrew-localpress` tap repository.
+- **Homebrew tap repository** at `gfargo/homebrew-localpress` — enables
+  `brew install gfargo/localpress/localpress`.
+
+### Removed
+- `undici` dependency — Bun's built-in `fetch` handles all HTTP; undici was
+  unused dead weight.
+
+### Changed
+- CLI now registers 15 commands (added `config`).
+- `doctor` now tests REST API connectivity on every invocation and reports
+  `✓/✗ REST API connection` status.
+- `audit` JSON output now includes `displaySize`, `duplicates`, and `brokenRefs`
+  counts in the summary object.
+
 ## [1.1.0] - 2026-05-02
 
 ### Added
@@ -138,7 +187,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/gfargo/localpress/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/gfargo/localpress/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/gfargo/localpress/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/gfargo/localpress/compare/v0.3.0...v0.4.0

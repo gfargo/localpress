@@ -37,6 +37,27 @@ export interface SshConfig {
 }
 
 /**
+ * A named optimization profile — reusable processing presets.
+ * Stored in config and applied via `localpress optimize --profile <name>`.
+ */
+export interface OptimizationProfile {
+  /** Human-readable description of what this profile does. */
+  description?: string;
+  /** Target quality (1–100). */
+  quality?: number;
+  /** Target output format. */
+  format?: 'webp' | 'avif' | 'jpeg' | 'png';
+  /** Max width in pixels (preserves aspect ratio). */
+  maxWidth?: number;
+  /** Max height in pixels (preserves aspect ratio). */
+  maxHeight?: number;
+  /** Encoding backend to use. */
+  encoder?: 'sharp' | 'jsquash';
+  /** Strip all metadata (EXIF, ICC, etc.). */
+  stripMetadata?: boolean;
+}
+
+/**
  * Top-level config file shape.
  * Lives at $XDG_CONFIG_HOME/localpress/config.json (or ~/.config/localpress/config.json).
  */
@@ -47,6 +68,17 @@ export interface Config {
   activeSite?: string;
   /** All configured sites, keyed by name. */
   sites: Record<string, SiteConfig>;
+  /** Named optimization profiles, keyed by profile name. */
+  profiles?: Record<string, OptimizationProfile>;
+  /** Global defaults applied to all sites unless overridden. */
+  defaults?: {
+    /** Default quality for lossy formats (1–100). */
+    quality?: number;
+    /** Default output format. */
+    format?: 'webp' | 'avif' | 'jpeg' | 'png';
+    /** Default concurrency for bulk ops. */
+    concurrency?: number;
+  };
 }
 
 /**

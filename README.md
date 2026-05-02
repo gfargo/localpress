@@ -14,11 +14,30 @@ The dominant WordPress image-optimization plugins (Smush, ShortPixel, Imagify, O
 
 `localpress` fills that gap.
 
+---
+
 ## Install
 
-> Homebrew tap and GitHub Releases binaries coming soon.
+### Homebrew (macOS / Linux)
 
-For now, clone and run from source:
+```bash
+brew tap gfargo/localpress
+brew install localpress
+```
+
+Or in one step:
+
+```bash
+brew install gfargo/localpress/localpress
+```
+
+### Pre-built binaries
+
+Download from the [releases page](https://github.com/gfargo/localpress/releases). Binaries are available for macOS (arm64/x64), Linux (arm64/x64), and Windows (x64).
+
+### From source
+
+Requires [Bun](https://bun.sh) >= 1.1.0.
 
 ```bash
 git clone https://github.com/gfargo/localpress.git
@@ -27,18 +46,21 @@ bun install
 bun run dev -- --help
 ```
 
-Requires [Bun](https://bun.sh) >= 1.1.0.
+---
 
-## Quick tour
+## Quick start
 
 ```bash
-# Connect a WP site (interactive Ink wizard)
+# Connect a WordPress site (interactive Ink wizard)
 localpress init
 
 # See what backends and capabilities are available
 localpress doctor
 
-# List media in the library
+# Check for relevant WP plugins and potential conflicts
+localpress doctor --plugins
+
+# List unoptimized images in the library
 localpress list --unoptimized
 
 # Optimize a few attachments (compression + WebP/AVIF)
@@ -62,9 +84,11 @@ localpress edit 123
 # Find every place an attachment is used
 localpress references 1234
 
-# Audit the library for issues
+# Audit the library for issues (oversized, duplicates, broken refs, and more)
 localpress audit
 ```
+
+---
 
 ## Commands
 
@@ -72,10 +96,11 @@ localpress audit
 | --- | --- |
 | `init` | Connect a WordPress site (interactive Ink wizard) |
 | `sites` | List, add, switch, or remove configured sites |
-| `doctor` | Show backend availability and capability matrix |
-| `list` | List media with filters (--unoptimized, --type, --larger-than) |
+| `doctor` | Show backend availability, capability matrix, plugin detection, `--fix` |
+| `config` | Read/write config values, manage named optimization profiles |
+| `list` | List media with filters (`--unoptimized`, `--type`, `--larger-than`) |
 | `show <id>` | Show metadata and optimization history for an attachment |
-| `audit` | Find unoptimized, large, missing-alt, and orphan media |
+| `audit` | Find unoptimized, large, missing-alt, oversized, duplicate, and orphan media |
 | `optimize` | Compress and optionally convert media (the marquee command) |
 | `convert` | Convert between formats (webp, avif, jpeg, png) |
 | `resize` | Resize preserving aspect ratio, regenerate WP thumbnails |
@@ -87,12 +112,67 @@ localpress audit
 
 All commands accept `--json` for machine-readable output (used by the skill for AI agent integration).
 
+---
+
+## Audit checks
+
+The `audit` command runs multiple checks in a single pass:
+
+| Flag | What it finds |
+| --- | --- |
+| `--unoptimized` | Images not yet processed by localpress |
+| `--large` | Images larger than `--threshold` (default 1 MB) |
+| `--missing-alt` | Images without alt text |
+| `--display-size` | Images significantly larger than their largest registered WP thumbnail |
+| `--duplicates` | Perceptually identical or near-identical images (dHash via sharp) |
+| `--broken-refs` | Attachment URLs that return 404 or are unreachable |
+| `--orphans` | Files on disk with no DB record (requires WP-CLI) |
+
+Run with no flags to execute all REST-based checks at once.
+
+---
+
+## Config & profiles
+
+```bash
+# Set global defaults
+localpress config set defaults.quality 80
+localpress config set defaults.format webp
+
+# Create a named optimization profile
+localpress config set-profile hero --quality 75 --format webp --max-width 1920 --description "Hero images"
+localpress config set-profile thumbnail --quality 85 --max-width 400 --strip-metadata
+
+# List profiles
+localpress config list-profiles
+
+# Use a profile (coming soon in optimize --profile)
+localpress config get-profile hero
+```
+
+---
+
+## Global flags
+
+| Flag | Effect |
+| --- | --- |
+| `--site <name>` | Override the active site for this command |
+| `--json` | Machine-readable NDJSON output |
+| `--quiet` | Errors only; suppress info messages |
+| `--dry-run` | Show what would happen without executing |
+| `--apply` | Execute bulk operations (overrides default dry-run) |
+| `--strict` | Fail loudly when capability fallbacks would activate |
+| `--concurrency <n>` | Parallel workers for bulk ops (default: CPU count − 1) |
+| `--yes` | Skip confirmation prompts |
+
+---
+
 ## Architecture
 
-```
+```text
 ┌──────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  Skill (md)  │───→│  localpress CLI  │───→│  Remote WP site │
-│  for agents  │    │  (TS + Bun)      │    │  (REST/SSH)     │
+│  Skill (md)  │───▶│  localpress CLI  │───▶│  Remote WP site │
+│  for agents  │    │  (TS + Bun)      │    │  (REST / SSH)   │
 └──────────────┘    └──────────────────┘    └─────────────────┘
                             │
                     ┌───────┴────────┐
@@ -113,16 +193,32 @@ The CLI talks to WordPress through a **backend adapter** that auto-detects what'
 
 **AI background removal:** ONNX Runtime + U2-Net models (Apache-2.0), or system Python rembg via `--rembg` flag.
 
+---
+
 ## Key behaviors
 
-- **Safe by default:** Bulk operations (`--all`, `--unoptimized`) dry-run unless `--apply` is passed. Explicit IDs execute immediately.
-- **Idempotent:** Re-running optimize on an already-processed attachment is a no-op if the source hasn't changed (SHA-256 hash comparison).
-- **Replace-in-place fallback:** Tries WP-CLI first, falls back to new attachment + references report. `--strict` fails instead of falling back.
+**Safe by default for bulk ops.** `optimize --all` and `optimize --unoptimized` dry-run unless `--apply` is passed. Explicit IDs execute immediately.
 
-## Planning documents
+**Idempotent.** Re-running optimize on an already-processed attachment is a no-op if the source hasn't changed (SHA-256 hash comparison). Safe to run repeatedly.
 
-- [`docs/localpress-competitive-brief.md`](docs/localpress-competitive-brief.md) — market analysis and competitive positioning.
-- [`docs/localpress-v1-plan.md`](docs/localpress-v1-plan.md) — implementation plan: architecture, command surface, adapter pattern, roadmap.
+**Replace-in-place fallback.** Tries WP-CLI first (if SSH is configured), falls back to new attachment + references report. `--strict` fails instead of falling back.
+
+**Background removal models.** Downloads on first use and caches locally. Available models: `u2net` (~176MB, best quality), `u2netp` (~4.7MB, fast), `silueta` (~44MB, balanced). Use `--rembg` to shell out to system Python rembg instead.
+
+---
+
+## AI agent integration
+
+The `skill/SKILL.md` file is a complete instruction sheet for AI agents (Claude Desktop, Cursor, VS Code with MCP, etc.). It covers:
+
+- When to invoke localpress vs. the user's existing WP MCP server
+- Full command reference with `--json` output schemas
+- Composition patterns for mixed WP MCP + localpress workflows
+- Error codes and handling guidance
+
+Always pass `--json` when running from an agent — the human-readable output is not designed for parsing.
+
+---
 
 ## Development
 
@@ -131,11 +227,24 @@ bun install              # install deps
 bun run dev -- --help    # run the CLI from source
 bun run typecheck        # tsc --noEmit
 bun run lint             # biome check
-bun test                 # run unit tests
+bun test                 # run all tests (36 unit + 11 integration)
 bun test test/unit/      # unit tests only
-bun run build            # compile to single binary
-bun run build:all        # cross-compile for all platforms
+bun run build            # compile to single binary at ./dist/localpress
+bun run build:all        # cross-compile for all 5 platforms
 ```
+
+Integration tests require Docker. They spin up WordPress 6.7 + MySQL 8.0 via `test/integration/docker-compose.yml` and are skipped automatically when the environment variables aren't set.
+
+---
+
+## Docs
+
+- [`docs/localpress-competitive-brief.md`](docs/localpress-competitive-brief.md) — market analysis and competitive positioning
+- [`docs/roadmap-ideas.md`](docs/roadmap-ideas.md) — extension brainstorm with 40+ ideas
+- [`docs/homebrew-tap.md`](docs/homebrew-tap.md) — Homebrew tap setup and release checklist
+- [`CLAUDE.md`](CLAUDE.md) — implementation status, locked decisions, and conventions for contributors
+
+---
 
 ## License
 

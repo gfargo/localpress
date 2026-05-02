@@ -1,27 +1,27 @@
 # CLAUDE.md — handoff for the next agent
 
-You're picking up `localpress` at **v1.1.0**. The full v1.0 implementation plan is complete. All 14 CLI commands are implemented and working. The project compiles, tests pass, and the CLI boots cleanly.
+You're picking up `localpress` at **v1.2.0**. The full v1.0 implementation plan is complete plus post-v1.0 enhancements. All 15 CLI commands are implemented and working. The project compiles, tests pass, and the CLI boots cleanly.
 
 **Read in this order before writing any code:**
 
-1. [`docs/localpress-v1-plan.md`](docs/localpress-v1-plan.md) — the implementation plan. Architecture, command surface, adapter pattern, roadmap.
-2. [`docs/localpress-competitive-brief.md`](docs/localpress-competitive-brief.md) — the *why*. Competitive landscape, positioning, the gap we're filling.
-3. [`README.md`](README.md) — user-facing overview.
-4. [`skill/SKILL.md`](skill/SKILL.md) — the AI agent skill with full command reference and JSON schemas.
-5. This file — implementation status and conventions.
+1. [`docs/localpress-competitive-brief.md`](docs/localpress-competitive-brief.md) — the *why*. Competitive landscape, positioning, the gap we're filling.
+2. [`README.md`](README.md) — user-facing overview.
+3. [`skill/SKILL.md`](skill/SKILL.md) — the AI agent skill with full command reference and JSON schemas.
+4. This file — implementation status and conventions.
 
 ---
 
 ## Current status
 
-**Version:** 1.1.0
-**Status:** All v1.0 plan features complete. Post-v1.0 polish shipped.
+**Version:** 1.2.0
+**Status:** All v1.0 plan features complete. Post-v1.0 enhancements shipped: advanced audit checks, config management, Homebrew distribution.
 
 ### What's implemented
 
-**14 CLI commands:**
-- Setup: `init` (Ink wizard), `sites` (list/add/use/remove), `doctor` (capability matrix)
-- Discovery: `list`, `show`, `audit` (unoptimized/large/missing-alt/orphans), `references` (fast + full scan, `--update-to` rewriting)
+**15 CLI commands:**
+- Setup: `init` (Ink wizard), `sites` (list/add/use/remove), `doctor` (capability matrix + plugin detection + `--fix`)
+- Config: `config` (get/set/list, named optimization profiles)
+- Discovery: `list`, `show`, `audit` (unoptimized/large/missing-alt/orphans/display-size/duplicates/broken-refs), `references` (fast + full scan, `--update-to` rewriting)
 - Processing: `optimize`, `convert`, `resize`, `remove-bg` (ONNX + system rembg)
 - Round-trip: `edit` (download → editor → watch → sync)
 - Low-level: `pull`, `push`
@@ -41,6 +41,17 @@ You're picking up `localpress` at **v1.1.0**. The full v1.0 implementation plan 
 - Idempotent processing via SHA-256 hash comparison
 - Schema migrations support
 
+**Config management:**
+- Named optimization profiles (`config set-profile hero --quality 75 --format webp --max-width 1920`)
+- Global defaults (`config set defaults.quality 80`)
+- Scalar config read/write (`config get/set`)
+- Full config listing with password redaction
+
+**Distribution:**
+- Homebrew tap at `gfargo/homebrew-localpress`
+- GitHub Releases with binaries for 5 platforms (darwin-arm64, darwin-x64, linux-arm64, linux-x64, windows-x64)
+- Automated release workflow: build → checksum → release → update formula
+
 **Testing:**
 - 36 unit tests (SQLite, config, adapter resolver)
 - 11 integration tests (Docker WordPress, skip when env vars not set)
@@ -48,7 +59,7 @@ You're picking up `localpress` at **v1.1.0**. The full v1.0 implementation plan 
 **CI:**
 - GitHub Actions: typecheck + lint + unit tests on PR
 - Integration tests against Dockerized WordPress
-- Binary builds for 5 platforms on v* tag
+- Binary builds + GitHub Release + Homebrew formula update on v* tag
 
 ### Release history
 
@@ -60,6 +71,7 @@ You're picking up `localpress` at **v1.1.0**. The full v1.0 implementation plan 
 | v0.4.0 | Edit round-trip workflow (download → editor → watch → sync) |
 | v1.0.0 | Full skill, --rembg flag for system Python rembg |
 | v1.1.0 | Ink interactive wizard, jSquash WASM codec integration |
+| v1.2.0 | Advanced audit (display-size, duplicates, broken-refs), doctor --fix + plugin detection, config command + named profiles, Homebrew tap |
 
 ---
 
@@ -81,6 +93,7 @@ These were debated and resolved during planning. **Don't relitigate without stro
 | Bulk safety | Dry-run by default for `--all` / `--unoptimized`; explicit IDs execute | Don't surprise users |
 | Auth storage | Plain config file, mode 0600 | System keychain is a v1.x upgrade |
 | Skill (no MCP server) | Markdown skill that drives the CLI | Composes with whatever WP MCP the user has |
+| Distribution | Bun-compiled binaries via Homebrew tap + GitHub Releases | No npm; single binary, no runtime deps |
 
 ---
 
@@ -121,15 +134,18 @@ localpress/
 ├── package.json                      ← Bun + TS deps; build/test scripts
 ├── tsconfig.json                     ← strict, ESM, bundler resolution
 ├── biome.json                        ← lint/format config
+├── Formula/
+│   └── localpress.rb                 ← Homebrew formula (auto-updated on release)
 ├── docs/
 │   ├── localpress-competitive-brief.md  ← market analysis
-│   └── localpress-v1-plan.md            ← implementation plan (the spec)
+│   ├── roadmap-ideas.md                 ← extension brainstorm (40+ ideas)
+│   └── homebrew-tap.md                  ← Homebrew tap setup guide
 ├── src/
-│   ├── types.ts                      ← shared types (SiteConfig, ExitCode)
+│   ├── types.ts                      ← shared types (SiteConfig, ExitCode, OptimizationProfile)
 │   ├── cli/
-│   │   ├── index.ts                  ← entry point; commander setup, 14 commands
+│   │   ├── index.ts                  ← entry point; commander setup, 15 commands
 │   │   ├── commands/                 ← one file per command (all implemented)
-│   │   │   ├── init.ts, sites.ts, doctor.ts
+│   │   │   ├── init.ts, sites.ts, doctor.ts, config.ts
 │   │   │   ├── list.ts, show.ts, audit.ts, references.ts
 │   │   │   ├── optimize.ts, convert.ts, resize.ts, remove-bg.ts
 │   │   │   ├── edit.ts, pull.ts, push.ts
@@ -172,9 +188,11 @@ localpress/
 │   └── fixtures/
 ├── skill/
 │   └── SKILL.md                      ← Full AI agent skill with JSON schemas
+├── .tap/                             ← Homebrew tap repo checkout (gitignored)
 └── .github/
     └── workflows/
-        └── ci.yml                    ← Unit + integration tests; binary builds on tag
+        ├── ci.yml                    ← Unit + integration tests; binary builds on tag
+        └── release.yml               ← Build + release + Homebrew formula update
 ```
 
 ---
@@ -198,13 +216,15 @@ bun run build:all        # binaries for all 5 platforms
 
 ## What's left (v1.x and beyond)
 
-These are deferred features from the plan, not blocking any release:
+These are deferred features from the plan, not blocking any release. See `docs/roadmap-ideas.md` for the full brainstorm.
 
 - **McpAdapter** — third backend adapter for users with a WP MCP server connected
 - **Multi-site bulk operations** — `--all-sites` flag or `localpress sites run`
+- **`caption` command** — AI alt-text generation using local vision models
+- **`watch` command** — continuous directory sync to WordPress
+- **`stats` command** — cumulative savings tracking and library health dashboard
 - **Scheduled audits** — cron mode or `--watch`
 - **System keychain integration** — macOS Keychain / Windows Credential Manager
-- **Telemetry** — opt-in/opt-out, not decided
 - **Auto-update mechanism** — notify-only vs apply
 - **Scoop manifest** for Windows
-- **npm distribution** — open question given Bun binaries
+- **WP post meta state mirror** — `_localpress_processed` meta key for cross-machine state sharing
