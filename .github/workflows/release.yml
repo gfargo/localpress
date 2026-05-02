@@ -72,48 +72,45 @@ jobs:
           SHA256_LINUX_ARM64: ${{ steps.checksums.outputs.linux_arm64 }}
           SHA256_LINUX_X64: ${{ steps.checksums.outputs.linux_x64 }}
         run: |
-          sed -i \
-            -e "s/version \".*\"/version \"${VERSION}\"/" \
-            -e "s/PLACEHOLDER_SHA256_DARWIN_ARM64/${SHA256_DARWIN_ARM64}/" \
-            -e "s/PLACEHOLDER_SHA256_DARWIN_X64/${SHA256_DARWIN_X64}/" \
-            -e "s/PLACEHOLDER_SHA256_LINUX_ARM64/${SHA256_LINUX_ARM64}/" \
-            -e "s/PLACEHOLDER_SHA256_LINUX_X64/${SHA256_LINUX_X64}/" \
-            Formula/localpress.rb
+          # Update version line
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" Formula/localpress.rb
 
-          # Also update any existing real SHA256 lines (for subsequent releases).
-          python3 - <<'PYEOF'
-          import re, os
+          # Replace SHA256 placeholders (first release) or existing hashes (subsequent releases)
+          # The formula has exactly 4 sha256 lines in order: darwin-arm64, darwin-x64, linux-arm64, linux-x64
+          sed -i "0,/sha256 \"[0-9a-fA-F_]*\"/s//sha256 \"${SHA256_DARWIN_ARM64}\"/" Formula/localpress.rb
+          sed -i "0,/sha256 \"[0-9a-fA-F]*\"/{ /sha256 \"${SHA256_DARWIN_ARM64}\"/!s/sha256 \"[0-9a-fA-F_]*\"/sha256 \"${SHA256_DARWIN_X64}\"/; }" Formula/localpress.rb
 
-          version = os.environ['VERSION']
-          shas = {
-              'darwin_arm64': os.environ['SHA256_DARWIN_ARM64'],
-              'darwin_x64':   os.environ['SHA256_DARWIN_X64'],
-              'linux_arm64':  os.environ['SHA256_LINUX_ARM64'],
-              'linux_x64':    os.environ['SHA256_LINUX_X64'],
-          }
-
+          # Simpler approach: just write the whole file with correct values
+          python3 -c "
+          import os
+          v = os.environ['VERSION']
+          shas = [
+              os.environ['SHA256_DARWIN_ARM64'],
+              os.environ['SHA256_DARWIN_X64'],
+              os.environ['SHA256_LINUX_ARM64'],
+              os.environ['SHA256_LINUX_X64'],
+          ]
           with open('Formula/localpress.rb', 'r') as f:
-              content = f.read()
-
-          # Update version
-          content = re.sub(r'version "[^"]*"', f'version "{version}"', content)
-
-          # Update sha256 lines — match the 64-char hex strings
-          sha_pattern = re.compile(r'sha256 "[0-9a-f]{64}"')
-          sha_values = list(shas.values())
+              lines = f.readlines()
           idx = 0
-          def replace_sha(m):
-              nonlocal idx
-              if idx < len(sha_values):
-                  result = f'sha256 "{sha_values[idx]}"'
-                  idx += 1
-                  return result
-              return m.group(0)
-          content = sha_pattern.sub(replace_sha, content)
-
+          out = []
+          for line in lines:
+              stripped = line.strip()
+              if stripped.startswith('sha256 '):
+                  if idx < len(shas):
+                      indent = line[:len(line) - len(line.lstrip())]
+                      out.append(indent + 'sha256 \"' + shas[idx] + '\"\n')
+                      idx += 1
+                  else:
+                      out.append(line)
+              elif stripped.startswith('version '):
+                  indent = line[:len(line) - len(line.lstrip())]
+                  out.append(indent + 'version \"' + v + '\"\n')
+              else:
+                  out.append(line)
           with open('Formula/localpress.rb', 'w') as f:
-              f.write(content)
-          PYEOF
+              f.writelines(out)
+          "
 
       - name: Commit updated formula
         run: |
