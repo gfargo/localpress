@@ -1,71 +1,20 @@
 /**
  * `localpress init` — interactive setup wizard.
  *
- * Walks the user through:
- *   1. Site URL
- *   2. Username + Application Password
- *   3. Connection test (calls /wp-json/wp/v2/users/me)
- *   4. Capability detection report (same output as `localpress doctor`)
- *   5. Save to config file
+ * Two modes:
+ *   - Interactive (default): Ink-rendered wizard with step-by-step prompts,
+ *     masked password input, connection test, and capability report.
+ *   - Non-interactive (--non-interactive or piped stdin): requires all
+ *     values via flags, fails if any are missing.
  *
- * Supports both interactive (Ink) and non-interactive (flags) modes.
+ * Flags can pre-fill values in either mode, skipping those prompts.
  */
 
-import * as readline from 'node:readline';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { SiteConfig } from '../../types.ts';
 import { loadConfig, saveConfig } from '../utils/config.ts';
 import { error, info, warn } from '../utils/output.ts';
-
-/** Prompt the user for a line of input. */
-function prompt(question: string, mask = false): Promise<string> {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    if (mask) {
-      // For passwords: write the question, then suppress echo.
-      process.stdout.write(question);
-      const stdin = process.stdin;
-      const wasRaw = stdin.isRaw;
-      if (stdin.isTTY) stdin.setRawMode(true);
-
-      let value = '';
-      const onData = (ch: Buffer) => {
-        const c = ch.toString('utf8');
-        if (c === '\n' || c === '\r') {
-          if (stdin.isTTY) stdin.setRawMode(wasRaw ?? false);
-          stdin.removeListener('data', onData);
-          process.stdout.write('\n');
-          rl.close();
-          resolve(value);
-        } else if (c === '\u0003') {
-          // Ctrl+C
-          rl.close();
-          process.exit(130);
-        } else if (c === '\u007F' || c === '\b') {
-          // Backspace
-          if (value.length > 0) {
-            value = value.slice(0, -1);
-            process.stdout.write('\b \b');
-          }
-        } else {
-          value += c;
-          process.stdout.write('*');
-        }
-      };
-      stdin.on('data', onData);
-    } else {
-      rl.question(question, (answer) => {
-        rl.close();
-        resolve(answer.trim());
-      });
-    }
-  });
-}
 
 export function registerInitCommand(program: Command): void {
   program
@@ -77,28 +26,45 @@ export function registerInitCommand(program: Command): void {
     .option('--app-password <password>', 'WordPress Application Password')
     .option('--non-interactive', 'fail instead of prompting (for scripts)')
     .action(async (options) => {
+      const isInteractive = !options.nonInteractive && process.stdin.isTTY;
+
+      // Try Ink wizard for interactive mode.
+      if (isInteractive && !options.url) {
+        try {
+          const { render } = await import('ink');
+          const React = await import('react');
+          const { InitWizard } = await import('../components/InitWizard.tsx');
+
+          const { waitUntilExit } = render(
+            React.createElement(InitWizard, {
+              initialUrl: options.url,
+              initialName: options.name,
+              initialUsername: options.username,
+              initialPassword: options.appPassword,
+            }),
+          );
+
+          await waitUntilExit();
+          return;
+        } catch {
+          // Ink rendering failed (e.g. missing deps, CI environment).
+          // Fall through to the non-interactive path.
+        }
+      }
+
+      // Non-interactive path (flags required).
       let siteUrl = options.url as string | undefined;
       let username = options.username as string | undefined;
       let appPassword = options.appPassword as string | undefined;
       let siteName = options.name as string | undefined;
 
-      const isInteractive = !options.nonInteractive && process.stdin.isTTY;
-
-      // Gather missing values interactively or fail.
-      if (!siteUrl) {
-        if (!isInteractive) {
-          error('--url is required in non-interactive mode.');
-          process.exit(2);
-        }
-        info('');
-        info('  localpress — connect a WordPress site');
-        info('  ─────────────────────────────────────');
-        info('');
-        siteUrl = await prompt('  Site URL: ');
-        if (!siteUrl) {
-          error('Site URL is required.');
-          process.exit(2);
-        }
+      if (!siteUrl || !username || !appPassword) {
+        error(
+          'Missing required flags for non-interactive mode.\n' +
+            'Usage: localpress init --url https://yoursite.com --username admin --app-password "xxxx xxxx xxxx xxxx xxxx xxxx"\n' +
+            '\nRun without flags for the interactive wizard.',
+        );
+        process.exit(2);
       }
 
       // Normalize URL.
@@ -108,46 +74,11 @@ export function registerInitCommand(program: Command): void {
       siteUrl = siteUrl.replace(/\/+$/, '');
 
       if (!siteName) {
-        const defaultName = new URL(siteUrl).hostname;
-        if (isInteractive) {
-          const input = await prompt(`  Site name [${defaultName}]: `);
-          siteName = input || defaultName;
-        } else {
-          siteName = defaultName;
-        }
-      }
-
-      if (!username) {
-        if (!isInteractive) {
-          error('--username is required in non-interactive mode.');
-          process.exit(2);
-        }
-        username = await prompt('  WordPress username: ');
-        if (!username) {
-          error('Username is required.');
-          process.exit(2);
-        }
-      }
-
-      if (!appPassword) {
-        if (!isInteractive) {
-          error('--app-password is required in non-interactive mode.');
-          process.exit(2);
-        }
-        info('');
-        info('  Application Passwords can be created at:');
-        info(`  ${siteUrl}/wp-admin/profile.php`);
-        info('');
-        appPassword = await prompt('  Application Password: ', true);
-        if (!appPassword) {
-          error('Application Password is required.');
-          process.exit(2);
-        }
+        siteName = new URL(siteUrl).hostname;
       }
 
       // Test the connection.
-      info('');
-      info(`  Testing connection to ${siteUrl}...`);
+      info(`Testing connection to ${siteUrl}...`);
 
       const credentials = `${username}:${appPassword}`;
       const authHeader = `Basic ${btoa(credentials)}`;
@@ -158,17 +89,13 @@ export function registerInitCommand(program: Command): void {
         });
 
         if (!response.ok) {
-          const body = await response.text().catch(() => '');
           if (response.status === 401) {
             error(
               'Authentication failed. Check your username and Application Password.\n' +
-                'Application Passwords can be created at: ' +
-                `${siteUrl}/wp-admin/profile.php`,
+                `Application Passwords: ${siteUrl}/wp-admin/profile.php`,
             );
           } else {
-            error(
-              `Connection test failed: ${response.status} ${response.statusText}\n${body.slice(0, 200)}`,
-            );
+            error(`Connection failed: ${response.status} ${response.statusText}`);
           }
           process.exit(5);
         }
@@ -176,13 +103,11 @@ export function registerInitCommand(program: Command): void {
         const user = (await response.json()) as { name?: string; slug?: string };
         info(`  ✓ Authenticated as ${user.name ?? user.slug ?? username}`);
       } catch (err) {
-        error(
-          `Could not connect to ${siteUrl}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        error(`Could not connect to ${siteUrl}: ${err instanceof Error ? err.message : String(err)}`);
         process.exit(4);
       }
 
-      // Save the site config.
+      // Save config.
       const config = await loadConfig();
 
       if (config.sites[siteName]) {
@@ -205,42 +130,31 @@ export function registerInitCommand(program: Command): void {
       await saveConfig(config);
       info(`  ✓ Site '${siteName}' saved.`);
 
-      if (config.activeSite === siteName) {
-        info(`  ✓ Set as active site.`);
-      }
-
       // Show capability report.
       const resolver = new AdapterResolver(siteConfig);
       const availability = resolver.availability();
       const report = resolver.capabilityReport();
 
       info('');
-      info('  Backend availability:');
-      info(`    ${availability.rest ? '✓' : '✗'} REST API`);
-      info(`    ${availability.wpCli ? '✓' : '✗'} WP-CLI (SSH)`);
-      info(`    ${availability.mcp ? '✓' : '✗'} MCP`);
-
-      if (!availability.wpCli) {
-        info('');
-        info(
-          '  Tip: Without WP-CLI, image replacements will create new attachments.');
-        info(
-          '  Configure SSH access for true in-place replacement.');
-        info(
-          '  Run `localpress doctor` for the full capability matrix.',
-        );
-      }
+      info('Backend availability:');
+      info(`  ${availability.rest ? '✓' : '✗'} REST API`);
+      info(`  ${availability.wpCli ? '✓' : '✗'} WP-CLI (SSH)`);
+      info(`  ${availability.mcp ? '✓' : '✗'} MCP`);
 
       const unavailable = report.filter((r) => !r.preferredAdapter);
       if (unavailable.length > 0) {
         info('');
-        info('  Unavailable capabilities (require WP-CLI or MCP):');
+        info('Unavailable capabilities (require WP-CLI or MCP):');
         for (const cap of unavailable) {
-          info(`    ✗ ${cap.capability}`);
+          info(`  ✗ ${cap.capability}`);
         }
       }
 
-      info('');
-      info('  Ready! Try `localpress list` to see your media library.');
+      if (!availability.wpCli) {
+        info('');
+        info('Tip: Configure SSH for WP-CLI to unlock all capabilities.');
+      }
+
+      info('\nReady! Try `localpress list` to see your media library.');
     });
 }
