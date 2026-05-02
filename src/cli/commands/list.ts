@@ -9,6 +9,7 @@
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { ListFilters, MediaItem } from '../../adapters/types.ts';
+import type { MediaBrowserAction } from '../components/MediaBrowser.tsx';
 import { SiteDb } from '../../engine/state/db.ts';
 import { loadConfig, getSiteDbPath, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson } from '../utils/output.ts';
@@ -74,7 +75,8 @@ export function registerListCommand(program: Command): void {
           result.items = result.items.filter((item) => !processedIds.has(item.id));
         }
 
-        let pendingAction: { type: string; id?: number; item?: MediaItem } | null = null;
+        // Box the action so TypeScript tracks mutation across the await boundary.
+        const pending: { action: MediaBrowserAction | null } = { action: null };
 
         const { waitUntilExit } = render(
           React.default.createElement(MediaBrowser, {
@@ -83,7 +85,7 @@ export function registerListCommand(program: Command): void {
             totalPages: result.totalPages,
             currentPage: filters.page ?? 1,
             processedIds,
-            onAction: (action) => { pendingAction = action; },
+            onAction: (action) => { pending.action = action; },
             onPageChange: async (page: number) => {
               const r = await adapter.listMediaPage({ ...filters, page });
               if (options.unoptimized) {
@@ -96,17 +98,15 @@ export function registerListCommand(program: Command): void {
 
         await waitUntilExit();
 
-        // Handle action taken inside the TUI.
-        if (pendingAction) {
-          const action = pendingAction as { type: string; id?: number; item?: MediaItem };
-          if (action.type === 'preview' && action.item) {
-            await showImagePreview(action.item);
-          } else if (action.type === 'optimize' && action.id !== undefined) {
-            info(`\nRun: localpress optimize ${action.id}`);
-          } else if (action.type === 'edit' && action.id !== undefined) {
-            info(`\nRun: localpress edit ${action.id}`);
-          } else if (action.type === 'show' && action.id !== undefined) {
-            info(`\nRun: localpress show ${action.id}`);
+        // Print the follow-up command for the action the user triggered.
+        const pendingAction = pending.action;
+        if (pendingAction && pendingAction.type !== 'quit') {
+          if (pendingAction.type === 'optimize') {
+            info(`\nRun: localpress optimize ${pendingAction.id}`);
+          } else if (pendingAction.type === 'edit') {
+            info(`\nRun: localpress edit ${pendingAction.id}`);
+          } else if (pendingAction.type === 'show') {
+            info(`\nRun: localpress show ${pendingAction.id}`);
           }
         }
 
@@ -172,35 +172,6 @@ export function registerListCommand(program: Command): void {
     });
 }
 
-async function showImagePreview(item: MediaItem): Promise<void> {
-  const supportsIterm2 =
-    process.env.TERM_PROGRAM === 'iTerm.app' ||
-    process.env.TERM_PROGRAM === 'WarpTerminal' ||
-    process.env.TERM_PROGRAM === 'WezTerm' ||
-    process.env.KITTY_WINDOW_ID !== undefined;
-
-  info(`\n  ${item.filename}  ·  #${item.id}  ·  ${item.mimeType}`);
-  if (item.width) info(`  ${item.width}×${item.height}px`);
-  if (item.sizeBytes) info(`  ${formatBytes(item.sizeBytes)}`);
-  info(`  ${item.url}`);
-
-  if (supportsIterm2 && item.url && item.mimeType.startsWith('image/')) {
-    try {
-      const response = await fetch(item.url);
-      const buffer = Buffer.from(await response.arrayBuffer());
-      const b64 = buffer.toString('base64');
-      const nameB64 = Buffer.from(item.filename).toString('base64');
-      // iTerm2 inline image protocol
-      process.stdout.write(
-        `\n\x1b]1337;File=name=${nameB64};size=${buffer.byteLength};inline=1;width=60;preserveAspectRatio=1:${b64}\x07\n`,
-      );
-    } catch {
-      info(`\n  (Preview unavailable — open in browser: ${item.url})`);
-    }
-  } else if (!supportsIterm2) {
-    info('\n  (Inline preview requires iTerm2, Warp, or WezTerm)');
-  }
-}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
