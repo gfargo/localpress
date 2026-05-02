@@ -31,6 +31,8 @@ export interface OptimizeOptions {
   maxWidth?: number;
   /** Resize: max height in pixels. */
   maxHeight?: number;
+  /** Encoder backend: 'sharp' (default) or 'jsquash' (WASM codecs). */
+  encoder?: 'sharp' | 'jsquash';
 }
 
 export interface OptimizeResult {

@@ -21,6 +21,7 @@ import type {
     OptimizeOptions,
     OptimizeResult,
 } from './types.ts';
+import { isJsquashSupported, jsquashEncode } from './jsquash.ts';
 
 /**
  * Optimize an image buffer according to the given options.
@@ -71,43 +72,65 @@ export async function optimizeImage(
   const mode: CompressionMode = opts.mode ?? defaultMode(targetFormat);
   const quality = opts.quality ?? defaultQuality(targetFormat, mode);
 
-  // Apply format-specific encoding.
-  switch (targetFormat) {
-    case 'jpeg':
-      pipeline = pipeline.jpeg({ quality, mozjpeg: true });
-      appliedSteps.push(`jpeg(q=${quality}, mozjpeg)`);
-      break;
-    case 'png':
-      pipeline = pipeline.png({ compressionLevel: 9, effort: 10 });
-      appliedSteps.push('png(level=9, effort=10)');
-      break;
-    case 'webp':
-      pipeline = pipeline.webp({
-        quality,
-        effort: 6,
-        lossless: mode === 'lossless',
-      });
-      appliedSteps.push(`webp(q=${quality}, ${mode}, effort=6)`);
-      break;
-    case 'avif':
-      pipeline = pipeline.avif({
-        quality,
-        effort: 6,
-        lossless: mode === 'lossless',
-      });
-      appliedSteps.push(`avif(q=${quality}, ${mode}, effort=6)`);
-      break;
-    case 'gif':
-      // Sharp has limited GIF support; pass through with basic optimization.
-      pipeline = pipeline.gif();
-      appliedSteps.push('gif(passthrough)');
-      break;
-    default:
-      appliedSteps.push(`passthrough(${targetFormat})`);
-      break;
+  // Choose encoding path: jsquash WASM codecs or sharp built-in.
+  const useJsquash = opts.encoder === 'jsquash' && isJsquashSupported(targetFormat);
+
+  let outputBuffer: Buffer;
+
+  if (useJsquash) {
+    // Use sharp for transforms (resize, rotate, strip) then extract raw pixels
+    // for jSquash encoding.
+    const rawBuffer = await pipeline.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const pixels = new Uint8ClampedArray(rawBuffer.data.buffer);
+
+    const jsResult = await jsquashEncode(
+      pixels,
+      rawBuffer.info.width,
+      rawBuffer.info.height,
+      targetFormat,
+      quality,
+    );
+    outputBuffer = jsResult.bytes;
+    appliedSteps.push(jsResult.codec);
+  } else {
+    // Apply format-specific encoding via sharp.
+    switch (targetFormat) {
+      case 'jpeg':
+        pipeline = pipeline.jpeg({ quality, mozjpeg: true });
+        appliedSteps.push(`jpeg(q=${quality}, mozjpeg)`);
+        break;
+      case 'png':
+        pipeline = pipeline.png({ compressionLevel: 9, effort: 10 });
+        appliedSteps.push('png(level=9, effort=10)');
+        break;
+      case 'webp':
+        pipeline = pipeline.webp({
+          quality,
+          effort: 6,
+          lossless: mode === 'lossless',
+        });
+        appliedSteps.push(`webp(q=${quality}, ${mode}, effort=6)`);
+        break;
+      case 'avif':
+        pipeline = pipeline.avif({
+          quality,
+          effort: 6,
+          lossless: mode === 'lossless',
+        });
+        appliedSteps.push(`avif(q=${quality}, ${mode}, effort=6)`);
+        break;
+      case 'gif':
+        pipeline = pipeline.gif();
+        appliedSteps.push('gif(passthrough)');
+        break;
+      default:
+        appliedSteps.push(`passthrough(${targetFormat})`);
+        break;
+    }
+
+    outputBuffer = await pipeline.toBuffer();
   }
 
-  const outputBuffer = await pipeline.toBuffer();
   const outputMetadata = await sharp(outputBuffer).metadata();
 
   const after: ImageInfo = {

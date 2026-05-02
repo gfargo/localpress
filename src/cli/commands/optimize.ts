@@ -60,6 +60,7 @@ export function registerOptimizeCommand(program: Command): void {
       'always upload as a new attachment, never attempt true replacement',
     )
     .option('--keep-original', 'do not replace; save the optimized copy as a separate attachment')
+    .option('--encoder <backend>', 'encoder: sharp (default) or jsquash (WASM codecs, better PNG via OxiPNG)', 'sharp')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -170,6 +171,7 @@ export function registerOptimizeCommand(program: Command): void {
         mode: options.mode,
         quality: options.quality,
         stripMetadata: true,
+        encoder: options.encoder === 'jsquash' ? 'jsquash' : 'sharp',
       };
 
       // Open the site DB for recording processing history.
