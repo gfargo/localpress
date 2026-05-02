@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-05-02
+
+### Added
+- **Full skill for AI agent integration** (`skill/SKILL.md`): complete command
+  reference with JSON output schemas, composition guide for WP MCP servers,
+  global flags reference, error handling guide, and key behavior documentation.
+  Ready for distribution via skill marketplaces.
+- **`--rembg` flag** on `remove-bg` command: shells out to system Python rembg
+  for users who have it installed (`pip install rembg[cli]`). Gives access to
+  rembg's full model zoo and GPU acceleration without bundling Python.
+- **`--rembg-model` flag**: pass any rembg model name (e.g. `isnet-general-use`,
+  `birefnet-general`) when using the system rembg path.
+
+### Changed
+- Version bumped to 1.0.0 — all planned features from the v1 implementation
+  plan are complete.
+
 ## [0.4.0] - 2026-05-02
 
 ### Added
@@ -104,7 +121,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/gfargo/localpress/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/gfargo/localpress/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/gfargo/localpress/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gfargo/localpress/compare/v0.1.0...v0.2.0
