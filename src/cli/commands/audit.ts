@@ -346,7 +346,8 @@ async function detectDuplicates(items: MediaItem[]): Promise<AuditFinding[]> {
   const imageItems = items.filter((i) => i.mimeType.startsWith('image/') && i.url);
   if (imageItems.length < 2) return [];
 
-  let sharp: typeof import('sharp').default;
+  // biome-ignore lint/suspicious/noExplicitAny: sharp is lazy-loaded and may not be installed
+  let sharp: any;
   try {
     sharp = (await import('sharp')).default;
   } catch {

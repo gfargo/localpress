@@ -75,7 +75,6 @@ export async function removeBackground(
   const { default: sharp } = await import('sharp');
   // onnxruntime-node is loaded dynamically — it has native binaries that
   // may not be present at typecheck time or in all environments.
-  // @ts-expect-error — onnxruntime-node may not be installed; fails at runtime with a clear error
   const ort = (await import('onnxruntime-node')) as import('./onnx-types.ts').OnnxRuntime;
 
   // 3. Load and prepare the input image.
