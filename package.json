@@ -1,6 +1,6 @@
 {
   "name": "localpress",
-  "version": "0.2.0",
+  "version": "0.3.0-dev",
   "description": "Local-compute WordPress media optimization. Your laptop, your library.",
   "license": "MIT",
   "author": "Griffen Fargo",
@@ -57,6 +57,7 @@
     "@jsquash/oxipng": "^2.3.0",
     "@jsquash/resize": "^2.1.1",
     "chokidar": "^3.6.0",
+    "onnxruntime-node": "^1.22.0",
     "pino": "^9.5.0",
     "undici": "^7.0.0"
   },
