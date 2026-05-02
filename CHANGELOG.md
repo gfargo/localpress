@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-02
+
+### Added
+- **`edit` command** — the round-trip editing workflow. Downloads an attachment
+  to a temp directory, opens it in the user's default editor (or `--with <app>`),
+  watches for saves via chokidar, and uploads changes back to WordPress
+  automatically. The workflow no incumbent offers.
+  - Cross-platform editor detection: macOS (`open`), Linux (`xdg-open`),
+    Windows (`start`), or explicit `--with Photoshop` / `--with gimp`.
+  - File watcher with debouncing and `awaitWriteFinish` to handle editors
+    that do atomic writes (temp file → rename).
+  - `--no-watch` to open without watching (manual upload via `push`).
+  - `--keep-file` to preserve the temp file after editing.
+  - `--to <dir>` to download to a specific directory.
+  - Each save is recorded as an 'edit' operation in SQLite.
+  - Standard replace-in-place fallback chain for uploads.
+
 ## [0.3.0] - 2026-05-02
 
 ### Added
@@ -87,7 +104,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/gfargo/localpress/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/gfargo/localpress/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gfargo/localpress/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/gfargo/localpress/releases/tag/v0.1.0
