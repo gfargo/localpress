@@ -1,0 +1,131 @@
+/**
+ * SSH command execution helper for the WP-CLI adapter.
+ *
+ * Shells out to the system `ssh` and `scp` binaries rather than using a
+ * Node SSH library. This avoids native module dependencies and works with
+ * the user's existing SSH agent, config, and key management.
+ */
+
+import { spawn } from 'node:child_process';
+import type { SshConfig } from '../types.ts';
+
+export interface SshExecResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+/**
+ * Execute a command on a remote host via SSH.
+ */
+export async function sshExec(ssh: SshConfig, command: string): Promise<SshExecResult> {
+  const args = buildSshArgs(ssh);
+  args.push(command);
+
+  return execProcess('ssh', args);
+}
+
+/**
+ * Copy a local file to a remote host via SCP.
+ */
+export async function scpUpload(
+  ssh: SshConfig,
+  localPath: string,
+  remotePath: string,
+): Promise<SshExecResult> {
+  const args: string[] = [];
+
+  if (ssh.port && ssh.port !== 22) {
+    args.push('-P', String(ssh.port));
+  }
+  if (ssh.identityFile) {
+    args.push('-i', ssh.identityFile);
+  }
+
+  // Disable strict host key checking for non-interactive use.
+  args.push('-o', 'StrictHostKeyChecking=accept-new');
+  args.push('-o', 'BatchMode=yes');
+
+  args.push(localPath);
+  args.push(`${ssh.host}:${remotePath}`);
+
+  return execProcess('scp', args);
+}
+
+/**
+ * Copy a remote file to a local path via SCP.
+ */
+export async function scpDownload(
+  ssh: SshConfig,
+  remotePath: string,
+  localPath: string,
+): Promise<SshExecResult> {
+  const args: string[] = [];
+
+  if (ssh.port && ssh.port !== 22) {
+    args.push('-P', String(ssh.port));
+  }
+  if (ssh.identityFile) {
+    args.push('-i', ssh.identityFile);
+  }
+
+  args.push('-o', 'StrictHostKeyChecking=accept-new');
+  args.push('-o', 'BatchMode=yes');
+
+  args.push(`${ssh.host}:${remotePath}`);
+  args.push(localPath);
+
+  return execProcess('scp', args);
+}
+
+// -- Internal helpers ---------------------------------------------------------
+
+function buildSshArgs(ssh: SshConfig): string[] {
+  const args: string[] = [];
+
+  if (ssh.port && ssh.port !== 22) {
+    args.push('-p', String(ssh.port));
+  }
+  if (ssh.identityFile) {
+    args.push('-i', ssh.identityFile);
+  }
+
+  // Disable strict host key checking for non-interactive use.
+  args.push('-o', 'StrictHostKeyChecking=accept-new');
+  args.push('-o', 'BatchMode=yes');
+
+  args.push(ssh.host);
+
+  return args;
+}
+
+function execProcess(command: string, args: string[]): Promise<SshExecResult> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(command, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    proc.on('error', (err) => {
+      reject(new Error(`Failed to execute ${command}: ${err.message}`));
+    });
+
+    proc.on('close', (code) => {
+      resolve({
+        stdout: stdout.trimEnd(),
+        stderr: stderr.trimEnd(),
+        exitCode: code ?? 1,
+      });
+    });
+  });
+}
