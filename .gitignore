@@ -50,6 +50,10 @@ scratch/
 # Same pattern as .wiki for project wikis.
 .tap/
 
+# Marketing website repo — checked out locally for reference/editing,
+# separate git repo (gfargo/localpress-www).
+.www/
+
 # Models (downloaded at runtime, not committed)
 models/
 *.onnx
