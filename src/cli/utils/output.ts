@@ -66,13 +66,4 @@ export function printJson<T>(record: T): void {
   }
 }
 
-/**
- * v0.1 placeholder: every command stub calls this so users see something
- * useful while we fill in implementations.
- */
-export function notImplemented(commandPath: string, plannedMilestone = 'v0.1'): never {
-  const message = `${commandPath} is not yet implemented in this scaffold (planned: ${plannedMilestone}).`;
-  error(message);
-  error('See docs/v1-plan.md for the implementation roadmap.');
-  process.exit(99); // ExitCode.NotImplemented
-}
+
