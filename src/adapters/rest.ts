@@ -109,46 +109,28 @@ export class RestAdapter implements WpBackend {
     const params: Record<string, string | number> = {
       per_page: filters.perPage ?? 20,
       page: filters.page ?? 1,
-      orderby: 'date',
-      order: 'desc',
+      ...restSortParams(filters),
     };
 
-    if (filters.type) {
-      params.media_type = filters.type.startsWith('image') ? 'image' : filters.type;
-    }
-    if (filters.postId) {
-      params.parent = filters.postId;
-    }
-    if (filters.since) {
-      params.after = filters.since;
-    }
-
+    applyCommonFilters(params, filters);
     const raw = await this.request<WpMediaResponse[]>(this.apiUrl('/media', params));
-    return raw.map(mapWpMediaToItem);
+    const items = raw.map(mapWpMediaToItem);
+    return applySizeSort(items, filters);
   }
 
   async listMediaPage(filters: ListFilters): Promise<import('./types.ts').PagedResult<MediaItem>> {
     const params: Record<string, string | number> = {
       per_page: Math.min(filters.perPage ?? 50, 100),
       page: filters.page ?? 1,
-      orderby: 'date',
-      order: 'desc',
+      ...restSortParams(filters),
     };
 
-    if (filters.type) {
-      params.media_type = filters.type.startsWith('image') ? 'image' : filters.type;
-    }
-    if (filters.postId) {
-      params.parent = filters.postId;
-    }
-    if (filters.since) {
-      params.after = filters.since;
-    }
-
+    applyCommonFilters(params, filters);
     const { data, headers } = await this.requestRaw<WpMediaResponse[]>(this.apiUrl('/media', params));
     const total = parseInt(headers.get('X-WP-Total') ?? '0', 10);
     const totalPages = parseInt(headers.get('X-WP-TotalPages') ?? '1', 10);
-    return { items: data.map(mapWpMediaToItem), total, totalPages };
+    const items = applySizeSort(data.map(mapWpMediaToItem), filters);
+    return { items, total, totalPages };
   }
 
   async getMedia(id: number): Promise<MediaItem> {
@@ -369,6 +351,40 @@ interface WpPostResponse {
   type: string;
   featured_media?: number;
   content?: { rendered: string; raw?: string };
+}
+
+// -- Sort / filter helpers ----------------------------------------------------
+
+function restSortParams(filters: ListFilters): Record<string, string> {
+  const wpOrderby: Record<string, string> = {
+    date: 'date',
+    name: 'title',
+    id: 'id',
+    // 'size' has no server-side equivalent — handled client-side
+  };
+  const sortBy = filters.sortBy ?? 'date';
+  return {
+    orderby: wpOrderby[sortBy] ?? 'date',
+    order: filters.sortOrder ?? 'desc',
+  };
+}
+
+function applyCommonFilters(params: Record<string, string | number>, filters: ListFilters): void {
+  if (filters.type) {
+    params.media_type = filters.type.startsWith('image') ? 'image' : filters.type;
+  }
+  if (filters.postId) {
+    params.parent = filters.postId;
+  }
+  if (filters.since) {
+    params.after = filters.since;
+  }
+}
+
+function applySizeSort(items: MediaItem[], filters: ListFilters): MediaItem[] {
+  if (filters.sortBy !== 'size') return items;
+  const dir = filters.sortOrder === 'asc' ? 1 : -1;
+  return [...items].sort((a, b) => dir * ((a.sizeBytes ?? 0) - (b.sizeBytes ?? 0)));
 }
 
 // -- Mapping helpers ----------------------------------------------------------

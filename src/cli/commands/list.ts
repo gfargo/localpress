@@ -8,7 +8,7 @@
 
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
-import type { ListFilters, MediaItem } from '../../adapters/types.ts';
+import type { ListFilters, MediaItem, SortField, SortOrder } from '../../adapters/types.ts';
 import type { MediaBrowserAction } from '../components/MediaBrowser.tsx';
 import { SiteDb } from '../../engine/state/db.ts';
 import { loadConfig, getSiteDbPath, resolveActiveSite } from '../utils/config.ts';
@@ -27,6 +27,8 @@ export function registerListCommand(program: Command): void {
     .option('--larger-than <bytes>', 'minimum size in bytes', (v) => Number.parseInt(v, 10))
     .option('--limit <n>', 'items per page (max 100)', (v) => Number.parseInt(v, 10))
     .option('--page <n>', 'page number (default 1)', (v) => Number.parseInt(v, 10))
+    .option('--sort <field>', 'sort by: date (default), name, size, id')
+    .option('--order <dir>', 'sort direction: desc (default) or asc')
     .option('-i, --interactive', 'browse with keyboard navigation')
     .action(async (options) => {
       const parentOpts = program.opts();
@@ -35,6 +37,9 @@ export function registerListCommand(program: Command): void {
       const resolver = new AdapterResolver(site);
       const adapter = resolver.resolve('list');
 
+      const VALID_SORT_FIELDS: SortField[] = ['date', 'name', 'size', 'id'];
+      const VALID_SORT_ORDERS: SortOrder[] = ['asc', 'desc'];
+
       const filters: ListFilters = {
         type: options.type,
         postId: options.post,
@@ -42,6 +47,8 @@ export function registerListCommand(program: Command): void {
         largerThan: options.largerThan,
         perPage: Math.min(options.limit ?? 50, 100),
         page: options.page ?? 1,
+        sortBy: VALID_SORT_FIELDS.includes(options.sort) ? (options.sort as SortField) : undefined,
+        sortOrder: VALID_SORT_ORDERS.includes(options.order) ? (options.order as SortOrder) : undefined,
       };
 
       // Interactive TUI mode.
@@ -85,6 +92,8 @@ export function registerListCommand(program: Command): void {
             totalPages: result.totalPages,
             currentPage: filters.page ?? 1,
             processedIds,
+            sortBy: filters.sortBy,
+            sortOrder: filters.sortOrder,
             onAction: (action) => { pending.action = action; },
             onPageChange: async (page: number) => {
               const r = await adapter.listMediaPage({ ...filters, page });
@@ -158,7 +167,10 @@ export function registerListCommand(program: Command): void {
       const from = (pageNum - 1) * perPage + 1;
       const to = Math.min(from + items.length - 1, total);
       const pageInfo = totalPages > 1 ? `  (page ${pageNum}/${totalPages})` : '';
-      info(`Showing ${from}–${to} of ${total} item(s)${pageInfo}:\n`);
+      const sortInfo = filters.sortBy && filters.sortBy !== 'date'
+        ? `  sorted by ${filters.sortBy} ${filters.sortOrder ?? 'desc'}`
+        : '';
+      info(`Showing ${from}–${to} of ${total} item(s)${pageInfo}${sortInfo}:\n`);
 
       for (const item of items) {
         const size = item.sizeBytes ? formatBytes(item.sizeBytes) : '?';
@@ -167,7 +179,8 @@ export function registerListCommand(program: Command): void {
       }
 
       if (pageNum < totalPages) {
-        info(`\nNext page: localpress list --page ${pageNum + 1}`);
+        const sortFlags = filters.sortBy ? ` --sort ${filters.sortBy}${filters.sortOrder ? ` --order ${filters.sortOrder}` : ''}` : '';
+        info(`\nNext page: localpress list --page ${pageNum + 1}${sortFlags}`);
       }
     });
 }

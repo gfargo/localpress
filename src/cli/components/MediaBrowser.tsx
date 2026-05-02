@@ -10,7 +10,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
-import type { MediaItem, PagedResult } from '../../adapters/types.ts';
+import type { MediaItem, PagedResult, SortField, SortOrder } from '../../adapters/types.ts';
 
 export type MediaBrowserAction =
   | { type: 'quit' }
@@ -24,6 +24,8 @@ interface Props {
   totalPages: number;
   currentPage: number;
   processedIds: Set<number>;
+  sortBy?: SortField;
+  sortOrder?: SortOrder;
   onAction: (action: MediaBrowserAction) => void;
   onPageChange: (page: number) => Promise<PagedResult<MediaItem>>;
 }
@@ -60,6 +62,8 @@ export function MediaBrowser({
   totalPages: initialTotalPages,
   currentPage: initialPage,
   processedIds,
+  sortBy,
+  sortOrder,
   onAction,
   onPageChange,
 }: Props) {
@@ -176,6 +180,9 @@ export function MediaBrowser({
         <Box gap={1}>
           <Text bold color="green">localPress</Text>
           <Text dimColor>— media library</Text>
+          {sortBy && sortBy !== 'date' && (
+            <Text dimColor>· {sortBy} {sortOrder ?? 'desc'}</Text>
+          )}
         </Box>
         <Text dimColor>Page {page}/{totalPages} · {total} total</Text>
       </Box>
