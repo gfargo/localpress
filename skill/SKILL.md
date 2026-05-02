@@ -177,6 +177,9 @@ localpress optimize --unoptimized --json
 # Execute for real:
 localpress optimize --unoptimized --apply --json
 
+# Use jSquash WASM codecs for better PNG compression (OxiPNG)
+localpress optimize 123 --encoder jsquash --json
+
 # Convert to WebP
 localpress convert 123 124 --to webp --json
 
@@ -194,6 +197,12 @@ localpress remove-bg 123 --bg "#ffffff" --json
 
 # Use lightweight model for faster processing
 localpress remove-bg 123 --model u2netp --json
+
+# Use system Python rembg instead of built-in ONNX (if installed)
+localpress remove-bg 123 --rembg --json
+
+# Use a specific rembg model (e.g. isnet-general-use)
+localpress remove-bg 123 --rembg --rembg-model isnet-general-use --json
 ```
 
 #### `optimize --json` output
@@ -306,4 +315,6 @@ On exit code 6, the message explains which capability is missing and what the us
 
 **Replace-in-place fallback.** When replacing an attachment, localpress tries WP-CLI first (if SSH is configured), then falls back to uploading as a new attachment. The `--strict` flag makes it fail instead of falling back. The fallback output includes a references report showing where the old attachment is used.
 
-**Background removal models.** The `remove-bg` command downloads an AI model on first use. Available models: `u2net` (~176MB, best quality), `u2netp` (~4.7MB, fast), `silueta` (~44MB, balanced). Use `--list-models` to check what's cached.
+**Background removal models.** The `remove-bg` command downloads an AI model on first use. Available models: `u2net` (~176MB, best quality), `u2netp` (~4.7MB, fast), `silueta` (~44MB, balanced). Use `--list-models` to check what's cached. Alternatively, use `--rembg` to shell out to system Python rembg if installed.
+
+**Encoder backends.** The `optimize` command uses sharp by default. Pass `--encoder jsquash` to use Squoosh-derived WASM codecs instead — particularly useful for PNG files where OxiPNG produces significantly smaller output than sharp's built-in PNG encoder.
