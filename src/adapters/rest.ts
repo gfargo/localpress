@@ -4,21 +4,21 @@
  * Always-available baseline. Authenticates with Application Passwords and
  * talks to /wp-json/wp/v2/* endpoints.
  *
- * Stub implementation — to be filled in during v0.1 implementation.
  * See docs/v1-plan.md §4 "Backend adapters" for the contract.
  */
 
 import type { SiteConfig } from '../types.ts';
 import type {
-  Capability,
-  ListFilters,
-  MediaItem,
-  PruneResult,
-  Reference,
-  ReferenceScope,
-  UpdateMetadata,
-  UploadMetadata,
-  WpBackend,
+    Capability,
+    ListFilters,
+    MediaItem,
+    MediaSize,
+    PruneResult,
+    Reference,
+    ReferenceScope,
+    UpdateMetadata,
+    UploadMetadata,
+    WpBackend,
 } from './types.ts';
 import { CapabilityUnavailableError } from './types.ts';
 
@@ -43,37 +43,111 @@ export class RestAdapter implements WpBackend {
   readonly name = 'rest' as const;
   readonly capabilities = REST_CAPABILITIES;
 
-  constructor(private readonly site: SiteConfig) {
-    // Stub-phase noop reference. Real usage (auth, request signing) lands in v0.1.
-    void this.site;
+  private readonly baseUrl: string;
+  private readonly authHeader: string;
+
+  constructor(site: SiteConfig) {
+    // Normalize: strip trailing slash from URL.
+    this.baseUrl = site.url.replace(/\/+$/, '');
+
+    // HTTP Basic auth with Application Password.
+    const credentials = `${site.username}:${site.appPassword}`;
+    this.authHeader = `Basic ${btoa(credentials)}`;
+  }
+
+  // -- Internal HTTP helpers --------------------------------------------------
+
+  private apiUrl(path: string, params?: Record<string, string | number>): string {
+    const url = new URL(`${this.baseUrl}/wp-json/wp/v2${path}`);
+    if (params) {
+      for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== null) {
+          url.searchParams.set(key, String(value));
+        }
+      }
+    }
+    return url.toString();
+  }
+
+  private async request<T>(url: string, init?: RequestInit): Promise<T> {
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        Authorization: this.authHeader,
+        ...init?.headers,
+      },
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      let wpMessage = '';
+      try {
+        const parsed = JSON.parse(body) as { message?: string; code?: string };
+        wpMessage = parsed.message ?? parsed.code ?? '';
+      } catch {
+        wpMessage = body.slice(0, 200);
+      }
+      throw new Error(
+        `WordPress REST API error: ${response.status} ${response.statusText}` +
+          (wpMessage ? ` — ${wpMessage}` : '') +
+          ` (${init?.method ?? 'GET'} ${url})`,
+      );
+    }
+
+    return response.json() as Promise<T>;
   }
 
   // Discovery -----------------------------------------------------------------
 
-  async listMedia(_filters: ListFilters): Promise<MediaItem[]> {
-    // TODO(v0.1): GET /wp-json/wp/v2/media with filter mapping.
-    //   - WP REST uses ?per_page, ?page, ?after, ?media_type
-    //   - Filter `unoptimized` is a localpress concept; cross-reference with
-    //     our SQLite state.
-    throw new Error('RestAdapter.listMedia not yet implemented');
+  async listMedia(filters: ListFilters): Promise<MediaItem[]> {
+    const params: Record<string, string | number> = {
+      per_page: filters.perPage ?? 20,
+      page: filters.page ?? 1,
+      orderby: 'date',
+      order: 'desc',
+    };
+
+    if (filters.type) {
+      params.media_type = filters.type.startsWith('image') ? 'image' : filters.type;
+    }
+    if (filters.postId) {
+      params.parent = filters.postId;
+    }
+    if (filters.since) {
+      params.after = filters.since;
+    }
+
+    const raw = await this.request<WpMediaResponse[]>(this.apiUrl('/media', params));
+    return raw.map(mapWpMediaToItem);
   }
 
-  async getMedia(_id: number): Promise<MediaItem> {
-    // TODO(v0.1): GET /wp-json/wp/v2/media/<id>
-    throw new Error('RestAdapter.getMedia not yet implemented');
+  async getMedia(id: number): Promise<MediaItem> {
+    const raw = await this.request<WpMediaResponse>(this.apiUrl(`/media/${id}`));
+    return mapWpMediaToItem(raw);
   }
 
   // Mutation ------------------------------------------------------------------
 
-  async upload(_file: Buffer, _metadata: UploadMetadata): Promise<MediaItem> {
-    // TODO(v0.1): POST /wp-json/wp/v2/media (multipart) with Content-Disposition.
-    throw new Error('RestAdapter.upload not yet implemented');
+  async upload(file: Buffer, metadata: UploadMetadata): Promise<MediaItem> {
+    const formData = new FormData();
+    formData.append('file', new Blob([file]), metadata.filename);
+
+    if (metadata.title) formData.append('title', metadata.title);
+    if (metadata.altText) formData.append('alt_text', metadata.altText);
+    if (metadata.caption) formData.append('caption', metadata.caption);
+    if (metadata.description) formData.append('description', metadata.description);
+    if (metadata.postId) formData.append('post', String(metadata.postId));
+
+    const raw = await this.request<WpMediaResponse>(this.apiUrl('/media'), {
+      method: 'POST',
+      body: formData,
+    });
+
+    return mapWpMediaToItem(raw);
   }
 
   async replaceInPlace(id: number, _file: Buffer): Promise<MediaItem> {
     // The REST API genuinely cannot replace attachment file bytes in place.
-    // Callers should catch CapabilityUnavailableError and fall back to either
-    // (a) the WpCliAdapter or (b) upload-as-new-attachment with reference rewriting.
     throw new CapabilityUnavailableError(
       'replace-in-place',
       'rest',
@@ -81,14 +155,28 @@ export class RestAdapter implements WpBackend {
     );
   }
 
-  async updateMetadata(_id: number, _metadata: UpdateMetadata): Promise<void> {
-    // TODO(v0.1): POST /wp-json/wp/v2/media/<id> with title, alt_text, caption, description.
-    throw new Error('RestAdapter.updateMetadata not yet implemented');
+  async updateMetadata(id: number, metadata: UpdateMetadata): Promise<void> {
+    const body: Record<string, string> = {};
+    if (metadata.title !== undefined) body.title = metadata.title;
+    if (metadata.altText !== undefined) body.alt_text = metadata.altText;
+    if (metadata.caption !== undefined) body.caption = metadata.caption;
+    if (metadata.description !== undefined) body.description = metadata.description;
+
+    await this.request<WpMediaResponse>(this.apiUrl(`/media/${id}`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
   }
 
-  async delete(_id: number, _options?: { force?: boolean }): Promise<void> {
-    // TODO(v0.1): DELETE /wp-json/wp/v2/media/<id> (?force=true to skip trash)
-    throw new Error('RestAdapter.delete not yet implemented');
+  async delete(id: number, options?: { force?: boolean }): Promise<void> {
+    const params: Record<string, string | number> = {};
+    if (options?.force) {
+      params.force = 'true';
+    }
+    await this.request<unknown>(this.apiUrl(`/media/${id}`, params), {
+      method: 'DELETE',
+    });
   }
 
   // Server-side ops -----------------------------------------------------------
@@ -103,7 +191,7 @@ export class RestAdapter implements WpBackend {
 
   // Reference finding ---------------------------------------------------------
 
-  async findReferences(_id: number, scope: ReferenceScope): Promise<Reference[]> {
+  async findReferences(id: number, scope: ReferenceScope): Promise<Reference[]> {
     if (scope === 'full') {
       throw new CapabilityUnavailableError(
         'full-references',
@@ -111,12 +199,201 @@ export class RestAdapter implements WpBackend {
         'Full reference scanning (content URLs + post meta) requires the WP-CLI adapter. The REST adapter can only do fast scans (featured images + Gutenberg block IDs).',
       );
     }
-    // TODO(v0.1): Fast scan implementation.
-    //   1. GET /wp-json/wp/v2/posts?meta_key=_thumbnail_id&meta_value=<id>
-    //      → featured-image references
-    //   2. Paginate /wp-json/wp/v2/posts and grep .content.raw for
-    //      `wp:image {"id":<id>}` → gutenberg-block references
-    //   3. Same for /wp-json/wp/v2/pages
-    throw new Error('RestAdapter.findReferences (fast) not yet implemented');
+
+    const references: Reference[] = [];
+
+    // 1. Featured images: find posts where _thumbnail_id = this attachment.
+    //    WP REST doesn't support meta_key/meta_value filtering directly,
+    //    so we use the featured_media field instead.
+    for (const postType of ['posts', 'pages'] as const) {
+      const posts = await this.paginateAll<WpPostResponse>(
+        this.apiUrl(`/${postType}`, {
+          per_page: 100,
+          _fields: 'id,title,type,featured_media',
+        }),
+      );
+
+      for (const post of posts) {
+        if (post.featured_media === id) {
+          references.push({
+            type: 'featured-image',
+            postId: post.id,
+            postTitle: renderTitle(post.title),
+            postType: post.type,
+          });
+        }
+      }
+    }
+
+    // 2. Gutenberg block references: search content for wp:image {"id":N}.
+    for (const postType of ['posts', 'pages'] as const) {
+      const posts = await this.paginateAll<WpPostResponse>(
+        this.apiUrl(`/${postType}`, {
+          per_page: 100,
+          _fields: 'id,title,type,content',
+        }),
+      );
+
+      for (const post of posts) {
+        const content = post.content?.rendered ?? post.content?.raw ?? '';
+        const occurrences = countBlockReferences(content, id);
+        if (occurrences > 0) {
+          // Avoid duplicating if we already have a featured-image ref for this post.
+          const alreadyReferenced = references.some(
+            (r) => r.postId === post.id && r.type === 'featured-image',
+          );
+          if (!alreadyReferenced) {
+            references.push({
+              type: 'gutenberg-block',
+              postId: post.id,
+              postTitle: renderTitle(post.title),
+              postType: post.type,
+              occurrences,
+            });
+          } else {
+            // Add as a separate gutenberg-block reference anyway — both are valid.
+            references.push({
+              type: 'gutenberg-block',
+              postId: post.id,
+              postTitle: renderTitle(post.title),
+              postType: post.type,
+              occurrences,
+            });
+          }
+        }
+      }
+    }
+
+    return references;
   }
+
+  /**
+   * Paginate through all pages of a WP REST collection endpoint.
+   * Follows the X-WP-TotalPages header.
+   */
+  private async paginateAll<T>(firstPageUrl: string): Promise<T[]> {
+    const results: T[] = [];
+    let url: string | null = firstPageUrl;
+    let page = 1;
+
+    while (url) {
+      const pageUrl = new URL(url);
+      pageUrl.searchParams.set('page', String(page));
+
+      const response = await fetch(pageUrl.toString(), {
+        headers: { Authorization: this.authHeader },
+      });
+
+      if (!response.ok) {
+        // If we get a 400 on page > 1, we've gone past the last page.
+        if (page > 1 && response.status === 400) break;
+        const body = await response.text().catch(() => '');
+        throw new Error(`WordPress REST API error: ${response.status} — ${body.slice(0, 200)}`);
+      }
+
+      const items = (await response.json()) as T[];
+      results.push(...items);
+
+      const totalPages = Number(response.headers.get('X-WP-TotalPages') ?? '1');
+      if (page >= totalPages) break;
+      page++;
+    }
+
+    return results;
+  }
+}
+
+// -- WP REST API response types -----------------------------------------------
+
+interface WpMediaResponse {
+  id: number;
+  title: { rendered: string; raw?: string };
+  source_url: string;
+  mime_type: string;
+  media_details?: {
+    width?: number;
+    height?: number;
+    file?: string;
+    filesize?: number;
+    sizes?: Record<
+      string,
+      {
+        width: number;
+        height: number;
+        source_url: string;
+        file: string;
+        filesize?: number;
+      }
+    >;
+  };
+  alt_text?: string;
+  caption?: { rendered: string; raw?: string };
+  description?: { rendered: string; raw?: string };
+  date: string;
+  slug: string;
+}
+
+interface WpPostResponse {
+  id: number;
+  title: { rendered: string; raw?: string };
+  type: string;
+  featured_media?: number;
+  content?: { rendered: string; raw?: string };
+}
+
+// -- Mapping helpers ----------------------------------------------------------
+
+function mapWpMediaToItem(raw: WpMediaResponse): MediaItem {
+  const sizes: Record<string, MediaSize> = {};
+  if (raw.media_details?.sizes) {
+    for (const [key, s] of Object.entries(raw.media_details.sizes)) {
+      sizes[key] = {
+        width: s.width,
+        height: s.height,
+        url: s.source_url,
+        filename: s.file,
+        sizeBytes: s.filesize,
+      };
+    }
+  }
+
+  return {
+    id: raw.id,
+    title: raw.title.raw ?? raw.title.rendered,
+    filename: raw.media_details?.file ?? raw.slug,
+    url: raw.source_url,
+    mimeType: raw.mime_type,
+    width: raw.media_details?.width,
+    height: raw.media_details?.height,
+    sizeBytes: raw.media_details?.filesize,
+    altText: raw.alt_text,
+    caption: raw.caption?.raw ?? stripHtml(raw.caption?.rendered),
+    description: raw.description?.raw ?? stripHtml(raw.description?.rendered),
+    uploadedAt: raw.date,
+    sizes: Object.keys(sizes).length > 0 ? sizes : undefined,
+  };
+}
+
+function renderTitle(title: { rendered: string; raw?: string }): string {
+  return title.raw ?? stripHtml(title.rendered) ?? '';
+}
+
+/** Minimal HTML tag stripping for rendered WP fields. */
+function stripHtml(html: string | undefined): string | undefined {
+  if (!html) return undefined;
+  return html.replace(/<[^>]*>/g, '').trim() || undefined;
+}
+
+/**
+ * Count occurrences of a Gutenberg block referencing a specific attachment ID.
+ * Matches patterns like: wp:image {"id":123  or  "id": 123
+ */
+function countBlockReferences(content: string, attachmentId: number): number {
+  // Match wp:image/gallery/cover/media-text blocks that reference this ID.
+  const pattern = new RegExp(
+    `wp:(?:image|gallery|cover|media-text)[^}]*"id"\\s*:\\s*${attachmentId}\\b`,
+    'g',
+  );
+  const matches = content.match(pattern);
+  return matches?.length ?? 0;
 }
