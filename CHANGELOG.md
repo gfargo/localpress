@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-05-02
+
+### Added
+- **`list --interactive` / `list -i`**: Ink-based TUI for browsing the media
+  library without leaving the terminal. Arrow keys / `j`/`k` navigate items;
+  `n`/`b` load the next/previous page; `o` emits an optimize command, `e`
+  an edit command, `↵` a show command, `v` a preview command — then exits.
+  On terminals ≥ 110 columns a sidebar renders the selected item's filename,
+  MIME type, dimensions, URL, and localpress processing status.
+- **`list --page <n>`**: explicit page selection for plain and JSON modes.
+  WP REST API pagination is fully exposed — `--limit` sets `per_page` (max
+  100), `--page` sets `page`.
+- **`list` total-count display**: plain output now shows
+  `Showing 1–50 of 355 item(s) (page 1/8)` and prints a
+  `Next page: localpress list --page 2` hint when more pages exist. JSON
+  output gains `total`, `totalPages`, and `page` fields.
+- **`list -v` image preview**: when the terminal supports iTerm2 inline
+  images (iTerm2, Warp, WezTerm, Kitty), pressing `v` in interactive mode
+  fetches the selected image and renders it inline via the iTerm2 protocol.
+  Falls back to printing the image URL on unsupported terminals.
+- **`PagedResult<T>` type** and **`listMediaPage()`** method on the
+  `WpBackend` interface. `RestAdapter` reads `X-WP-Total` and
+  `X-WP-TotalPages` response headers; `WpCliAdapter` delegates to
+  `listMedia()` and returns `totalPages: 1`.
+- **WP-CLI SSH Setup wiki guide** at `.wiki/WP-CLI-SSH-Setup.md` — covers
+  prerequisites, the SSH config block, common hosting setups (VPS, Kinsta /
+  WP Engine, cPanel), and troubleshooting.
+
+### Changed
+- `init` SSH tip now links directly to the wiki guide:
+  `localpress.griffen.codes/docs/wp-cli-ssh-setup`.
+- `list --limit` is now capped at 100 (WP REST API maximum) and defaults
+  to 50; previously the default was also 50 but the cap was not enforced.
+
 ## [1.2.0] - 2026-05-02
 
 ### Added
