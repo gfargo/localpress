@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-02
+
+### Added
+- **AI background removal** (`remove-bg` command): local inference using
+  ONNX Runtime + U2-Net models. No cloud API, no AGPL dependencies.
+  - Three model options: `u2net` (~176MB, best quality), `u2netp` (~4.7MB,
+    lightweight), `silueta` (~44MB, balanced).
+  - Models auto-download from HuggingFace on first use and cache locally.
+  - All models Apache-2.0 licensed.
+  - `--bg <color>` for solid background instead of transparency.
+  - `--trim` to remove transparent borders.
+  - `--list-models` to show available models and cache status.
+  - `--keep-original` to upload as new attachment.
+  - Standard replace-in-place fallback chain.
+- **ONNX type declarations** for type-safe inference without requiring
+  onnxruntime-node at typecheck time.
+- **Model manager** with download progress reporting and local caching
+  at `$XDG_CONFIG_HOME/localpress/models/`.
+
+### Dependencies
+- Added `onnxruntime-node` ^1.22.0 (MIT license).
+
 ## [0.2.0] - 2026-05-02
 
 ### Added
@@ -65,6 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/gfargo/localpress/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gfargo/localpress/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/gfargo/localpress/releases/tag/v0.1.0
