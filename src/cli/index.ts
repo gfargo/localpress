@@ -10,6 +10,7 @@ import { Command, Option } from 'commander';
 
 import packageJson from '../../package.json' with { type: 'json' };
 import { registerAuditCommand } from './commands/audit.ts';
+import { registerConvertCommand } from './commands/convert.ts';
 import { registerDoctorCommand } from './commands/doctor.ts';
 import { registerInitCommand } from './commands/init.ts';
 import { registerListCommand } from './commands/list.ts';
@@ -17,6 +18,7 @@ import { registerOptimizeCommand } from './commands/optimize.ts';
 import { registerPullCommand } from './commands/pull.ts';
 import { registerPushCommand } from './commands/push.ts';
 import { registerReferencesCommand } from './commands/references.ts';
+import { registerResizeCommand } from './commands/resize.ts';
 import { registerShowCommand } from './commands/show.ts';
 import { registerSitesCommand } from './commands/sites.ts';
 import { setOutputOptions } from './utils/output.ts';
@@ -50,7 +52,7 @@ program
     });
   });
 
-// Register all v0.1 commands.
+// Register all commands.
 registerInitCommand(program);
 registerSitesCommand(program);
 registerDoctorCommand(program);
@@ -58,6 +60,8 @@ registerListCommand(program);
 registerShowCommand(program);
 registerAuditCommand(program);
 registerOptimizeCommand(program);
+registerConvertCommand(program);
+registerResizeCommand(program);
 registerPullCommand(program);
 registerPushCommand(program);
 registerReferencesCommand(program);
