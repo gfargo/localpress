@@ -1,0 +1,51 @@
+version: "3.8"
+
+# Spins up a fresh WordPress instance with Application Passwords enabled
+# for localpress integration testing.
+#
+# Usage:
+#   docker compose -f test/integration/docker-compose.yml up -d
+#   bun test test/integration/
+#   docker compose -f test/integration/docker-compose.yml down -v
+
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wp
+      MYSQL_PASSWORD: wppass
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpass"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  wordpress:
+    image: wordpress:6.7-php8.3-apache
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8880:80"
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wppass
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DEBUG: "1"
+    volumes:
+      - wp_data:/var/www/html
+      - ./setup-wp.sh:/usr/local/bin/setup-wp.sh:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/wp-login.php"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  db_data:
+  wp_data:
