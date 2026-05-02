@@ -17,6 +17,10 @@ import { CapabilityUnavailableError } from '../../adapters/types.ts';
 import type { ModelName } from '../../engine/rembg/models.ts';
 import { DEFAULT_MODEL, isModelCached, listAvailableModels } from '../../engine/rembg/models.ts';
 import { removeBackground } from '../../engine/rembg/remove-bg.ts';
+import {
+    isSystemRembgAvailable,
+    removeBackgroundWithSystemRembg,
+} from '../../engine/rembg/system-rembg.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -34,6 +38,8 @@ export function registerRemoveBgCommand(program: Command): void {
     .option('--trim', 'trim transparent borders from the output')
     .option('--keep-original', 'upload as a new attachment instead of replacing')
     .option('--list-models', 'show available models and exit')
+    .option('--rembg', 'use system Python rembg instead of built-in ONNX pipeline')
+    .option('--rembg-model <name>', 'model name for system rembg (e.g. isnet-general-use)')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
 
@@ -75,6 +81,21 @@ export function registerRemoveBgCommand(program: Command): void {
         process.exit(2);
       }
 
+      // Check --rembg flag.
+      const useSystemRembg = options.rembg === true;
+      if (useSystemRembg) {
+        const available = await isSystemRembgAvailable();
+        if (!available) {
+          error(
+            'System rembg is not installed or not in PATH.\n' +
+              'Install it with: pip install rembg[cli]\n' +
+              'Or omit --rembg to use the built-in ONNX pipeline.',
+          );
+          process.exit(2);
+        }
+        info('  Using system Python rembg.');
+      }
+
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
       const resolver = new AdapterResolver(site);
@@ -106,17 +127,33 @@ export function registerRemoveBgCommand(program: Command): void {
           const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
 
           // Run background removal.
-          const result = await removeBackground(sourceBytes, {
-            model: modelName,
-            trim: options.trim,
-            backgroundColor: options.bg,
-            onProgress: (msg) => info(`    ${msg}`),
-          });
+          let resultBytes: Buffer;
+          let inferenceMs: number;
+          let totalMs: number;
 
-          const resultHash = createHash('sha256').update(result.bytes).digest('hex');
+          if (useSystemRembg) {
+            const sysResult = await removeBackgroundWithSystemRembg(sourceBytes, {
+              model: options.rembgModel,
+            });
+            resultBytes = sysResult.bytes;
+            inferenceMs = sysResult.durationMs;
+            totalMs = sysResult.durationMs;
+          } else {
+            const result = await removeBackground(sourceBytes, {
+              model: modelName,
+              trim: options.trim,
+              backgroundColor: options.bg,
+              onProgress: (msg) => info(`    ${msg}`),
+            });
+            resultBytes = result.bytes;
+            inferenceMs = result.inferenceMs;
+            totalMs = result.totalMs;
+          }
+
+          const resultHash = createHash('sha256').update(resultBytes).digest('hex');
 
           info(
-            `    ✓ Background removed (${result.inferenceMs}ms inference, ${result.totalMs}ms total)`,
+            `    ✓ Background removed (${inferenceMs}ms${useSystemRembg ? ' via system rembg' : ''})`,
           );
 
           // Upload the result.
@@ -126,7 +163,7 @@ export function registerRemoveBgCommand(program: Command): void {
             const replaceAdapter = resolver.tryResolve('replace-in-place');
             if (replaceAdapter) {
               try {
-                await replaceAdapter.replaceInPlace(id, result.bytes);
+                await replaceAdapter.replaceInPlace(id, resultBytes);
                 resultWpId = id;
               } catch (err) {
                 if (err instanceof CapabilityUnavailableError && !parentOpts.strict) {
@@ -143,7 +180,7 @@ export function registerRemoveBgCommand(program: Command): void {
           if (resultWpId === null) {
             const uploadAdapter = resolver.resolve('upload');
             const newFilename = item.filename.replace(/\.[^.]+$/, '-nobg.png');
-            const uploaded = await uploadAdapter.upload(result.bytes, {
+            const uploaded = await uploadAdapter.upload(resultBytes, {
               filename: newFilename,
               title: `${item.title} (background removed)`,
               altText: item.altText,
@@ -180,10 +217,10 @@ export function registerRemoveBgCommand(program: Command): void {
             sourceHash,
             resultHash,
             bytesBefore: sourceBytes.length,
-            bytesAfter: result.bytes.length,
+            bytesAfter: resultBytes.length,
             resultWpId: resultWpId !== item.id ? resultWpId : null,
             ranAt: Date.now(),
-            durationMs: result.totalMs,
+            durationMs: totalMs,
             status: 'success',
             errorMessage: null,
           });
@@ -191,9 +228,9 @@ export function registerRemoveBgCommand(program: Command): void {
           results.push({
             id: item.id,
             filename: item.filename,
-            model: modelName,
-            inferenceMs: result.inferenceMs,
-            totalMs: result.totalMs,
+            model: useSystemRembg ? `rembg:${options.rembgModel ?? 'default'}` : modelName,
+            inferenceMs,
+            totalMs,
             resultWpId,
           });
         } catch (err) {
