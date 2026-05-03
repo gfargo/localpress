@@ -65,6 +65,10 @@ export function registerOptimizeCommand(program: Command): void {
       'encoder: sharp (default) or jsquash (WASM codecs, better PNG via OxiPNG)',
       'sharp',
     )
+    .option('--preview', 'open a browser preview to adjust settings before applying')
+    .option('--preview-port <port>', 'port for the preview server (default: auto)', (v) =>
+      Number.parseInt(v, 10),
+    )
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -82,6 +86,131 @@ export function registerOptimizeCommand(program: Command): void {
             'Example: localpress optimize --unoptimized --apply',
         );
         process.exit(2);
+      }
+
+      // --preview: open a browser-based preview for a single attachment.
+      if (options.preview) {
+        if (!hasExplicitIds || idStrs.length !== 1) {
+          error(
+            '--preview requires exactly one attachment ID.\nExample: localpress optimize 123 --preview',
+          );
+          process.exit(2);
+        }
+        const id = Number.parseInt(idStrs[0], 10);
+        if (Number.isNaN(id)) {
+          error('Invalid attachment ID.');
+          process.exit(2);
+        }
+
+        const getAdapter = resolver.resolve('get');
+        info(`  Fetching attachment #${id}...`);
+        const item = await getAdapter.getMedia(id);
+
+        const response = await fetch(item.url);
+        if (!response.ok) {
+          error(`Failed to download image: ${response.status}`);
+          process.exit(4);
+        }
+        const sourceBytes = Buffer.from(await response.arrayBuffer());
+
+        const { startPreviewServer } = await import('../../engine/preview/server.ts');
+        const { buildOptimizeHtml } = await import('../../engine/preview/ui-optimize.ts');
+        type ProcessResult = import('../../engine/preview/server.ts').ProcessResult;
+        type ApplyResult = import('../../engine/preview/server.ts').ApplyResult;
+
+        info(`  Starting preview for #${id} (${item.filename})...`);
+
+        const { applied, result } = await startPreviewServer({
+          port: options.previewPort ?? 0,
+          sourceBytes,
+          filename: item.filename,
+          mimeType: item.mimeType,
+          width: item.width,
+          height: item.height,
+          wpId: id,
+          mode: 'optimize',
+          html: buildOptimizeHtml(),
+          onProcess: async (params): Promise<ProcessResult> => {
+            const opts: OptimizeOptions = {
+              toFormat:
+                typeof params.toFormat === 'string' ? (params.toFormat as ImageFormat) : undefined,
+              quality: typeof params.quality === 'number' ? params.quality : undefined,
+              maxWidth: typeof params.maxWidth === 'number' ? params.maxWidth : undefined,
+              maxHeight: typeof params.maxHeight === 'number' ? params.maxHeight : undefined,
+              encoder: params.encoder === 'jsquash' ? 'jsquash' : 'sharp',
+              stripMetadata: true,
+            };
+            const optResult = await optimizeImage(sourceBytes, item.mimeType, opts);
+            const mimeType =
+              optResult.after.format === 'webp'
+                ? 'image/webp'
+                : optResult.after.format === 'avif'
+                  ? 'image/avif'
+                  : optResult.after.format === 'png'
+                    ? 'image/png'
+                    : 'image/jpeg';
+            return {
+              bytes: optResult.bytes,
+              mimeType,
+              stats: {
+                before: optResult.before,
+                after: optResult.after,
+                savedBytes: optResult.savedBytes,
+                savedRatio: optResult.savedRatio,
+                appliedSteps: optResult.appliedSteps,
+              },
+            };
+          },
+          onApply: async (resultBytes): Promise<ApplyResult> => {
+            const db = SiteDb.init(getSiteDbPath(site.name));
+            db.ensureSite(site.name, site.url);
+
+            const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+            const resultHash = createHash('sha256').update(resultBytes).digest('hex');
+
+            let resultWpId: number | null = null;
+
+            if (!options.keepOriginal && options.replaceInPlace !== false) {
+              const replaceAdapter = resolver.tryResolve('replace-in-place');
+              if (replaceAdapter) {
+                try {
+                  await replaceAdapter.replaceInPlace(id, resultBytes);
+                  resultWpId = id;
+                } catch (err) {
+                  if (!(err instanceof CapabilityUnavailableError) || parentOpts.strict) {
+                    throw err;
+                  }
+                }
+              }
+            }
+
+            if (resultWpId === null) {
+              const uploadAdapter = resolver.resolve('upload');
+              const newFilename = item.filename.replace(/\.[^.]+$/, '-optimized.webp');
+              const uploaded = await uploadAdapter.upload(resultBytes, {
+                filename: newFilename,
+                title: item.title,
+                altText: item.altText,
+              });
+              resultWpId = uploaded.id;
+            }
+
+            recordSuccess(db, site.name, item, sourceHash, resultHash, {}, 0, {
+              bytesBefore: sourceBytes.length,
+              bytesAfter: resultBytes.length,
+              resultWpId: resultWpId !== item.id ? resultWpId : null,
+            });
+            db.close();
+            return { wpId: resultWpId, message: `Uploaded as #${resultWpId}` };
+          },
+        });
+
+        if (applied && result) {
+          info(`  ✓ Applied: uploaded to WordPress as #${result.wpId}`);
+        } else {
+          info('  Preview cancelled.');
+        }
+        return;
       }
 
       // Determine if this is a dry-run.

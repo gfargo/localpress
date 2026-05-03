@@ -338,7 +338,8 @@ export function buildRemoveBgHtml(): string {
       <div class="control-group">
         <label>Segmentation model</label>
         <select id="model">
-          <option value="isnet-general-use">isnet-general-use — best quality (~176 MB)</option>
+          <option value="birefnet-lite">birefnet-lite — state-of-the-art (~224 MB, best)</option>
+          <option value="isnet-general-use">isnet-general-use — great quality (~176 MB)</option>
           <option value="u2net">u2net — general purpose (~176 MB)</option>
           <option value="silueta">silueta — balanced (~44 MB)</option>
           <option value="u2netp">u2netp — lightweight (~4.7 MB, fast)</option>

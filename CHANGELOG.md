@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-05-03
+
+### Added
+- **Browser preview for `optimize` and `remove-bg`**: pass `--preview` to open a local web UI
+  where you can adjust settings (quality, format, model, alpha threshold, background color),
+  see before/after comparison with a draggable slider, and apply the result to WordPress with
+  one click. The preview server uses `Bun.serve()` on localhost with auto-assigned port.
+- **WebSocket heartbeat**: the preview server detects when the browser tab closes and shuts
+  down cleanly, returning control to the CLI without hanging.
+- **BiRefNet model** (`birefnet-lite`): state-of-the-art background removal model (MIT licensed,
+  ~224 MB). Uses Swin Transformer backbone with sigmoid output activation. Downloaded from
+  HuggingFace ONNX community on first use.
+- **ISNet model** (`isnet-general-use`): better edge quality than U2-Net for background removal
+  (~176 MB, Apache-2.0). Uses 1024×1024 input resolution vs U2-Net's 320×320.
+- **Quick browser image viewer** (`[P]` in interactive list): opens the selected image in the
+  system browser via a lightweight localhost server. Terminal-agnostic alternative to the
+  iTerm2 inline preview. Auto-shuts down when the tab closes.
+- **Preview keybindings in interactive list**: `[O]` opens the optimize settings overlay in
+  preview mode (opens browser after confirming settings), `[R]` opens remove-bg with browser
+  preview. Lowercase `[o]` and `[r]` remain the fast non-preview paths.
+- **Interactive list position persistence**: the page and cursor position are saved to SQLite
+  when you quit the interactive browser and restored on next launch. Schema v2 migration adds
+  a `preferences` key-value table.
+- **Per-model input sizes**: the remove-bg engine now uses model-specific input resolutions
+  (320×320 for U2-Net family, 1024×1024 for ISNet and BiRefNet) instead of a hardcoded constant.
+
+### Changed
+- **Default remove-bg model in preview UI**: the browser preview defaults to `birefnet-lite`
+  (best quality) with `isnet-general-use` as second option. CLI default remains `u2net` for
+  backward compatibility.
+- **Schema version**: bumped to v2 (migration adds `preferences` table).
+
 ## [1.5.0] - 2026-05-03
 
 ### Added

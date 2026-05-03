@@ -26,7 +26,11 @@ const MODEL_INPUT_SIZES: Record<string, number> = {
   u2netp: 320,
   silueta: 320,
   'isnet-general-use': 1024,
+  'birefnet-lite': 1024,
 };
+
+/** Models that use BiRefNet-style preprocessing (rescale only, sigmoid output). */
+const BIREFNET_MODELS = new Set(['birefnet-lite']);
 
 /** Normalization constants (ImageNet-style). */
 const MEAN = [0.485, 0.456, 0.406];
@@ -100,15 +104,23 @@ export async function removeBackground(
   //    Shape: [1, 3, inputSize, inputSize]
   const pixelCount = modelInputSize * modelInputSize;
   const inputTensor = new Float32Array(3 * pixelCount);
+  const isBiRefNet = BIREFNET_MODELS.has(modelName);
 
   for (let i = 0; i < pixelCount; i++) {
     const r = resizedBuffer[i * 3] / 255.0;
     const g = resizedBuffer[i * 3 + 1] / 255.0;
     const b = resizedBuffer[i * 3 + 2] / 255.0;
 
-    inputTensor[i] = (r - MEAN[0]) / STD[0]; // R channel
-    inputTensor[pixelCount + i] = (g - MEAN[1]) / STD[1]; // G channel
-    inputTensor[2 * pixelCount + i] = (b - MEAN[2]) / STD[2]; // B channel
+    if (isBiRefNet) {
+      // BiRefNet: simple rescale to [0, 1], then ImageNet normalize.
+      inputTensor[i] = (r - MEAN[0]) / STD[0];
+      inputTensor[pixelCount + i] = (g - MEAN[1]) / STD[1];
+      inputTensor[2 * pixelCount + i] = (b - MEAN[2]) / STD[2];
+    } else {
+      inputTensor[i] = (r - MEAN[0]) / STD[0]; // R channel
+      inputTensor[pixelCount + i] = (g - MEAN[1]) / STD[1]; // G channel
+      inputTensor[2 * pixelCount + i] = (b - MEAN[2]) / STD[2]; // B channel
+    }
   }
 
   // 5. Run inference.
@@ -130,25 +142,32 @@ export async function removeBackground(
   const inferenceMs = Date.now() - inferenceStart;
 
   // 6. Extract the mask from the first output.
-  //    U2-Net outputs multiple maps; the first (d0) is the finest.
   const outputName = session.outputNames[0];
   const outputTensor = results[outputName];
   const outputData = outputTensor.data as Float32Array;
 
-  // Normalize the mask to [0, 255].
-  let minVal = Number.POSITIVE_INFINITY;
-  let maxVal = Number.NEGATIVE_INFINITY;
-  for (let i = 0; i < outputData.length; i++) {
-    if (outputData[i] < minVal) minVal = outputData[i];
-    if (outputData[i] > maxVal) maxVal = outputData[i];
-  }
-
-  const range = maxVal - minVal || 1;
   const maskBuffer = Buffer.alloc(pixelCount);
-  for (let i = 0; i < pixelCount; i++) {
-    const normalized = ((outputData[i] - minVal) / range) * 255;
-    // Apply threshold: below threshold = fully transparent.
-    maskBuffer[i] = normalized > alphaThreshold ? Math.round(normalized) : 0;
+
+  if (isBiRefNet) {
+    // BiRefNet: output needs sigmoid activation, then scale to [0, 255].
+    for (let i = 0; i < pixelCount; i++) {
+      const sigmoid = 1 / (1 + Math.exp(-outputData[i]));
+      const val = sigmoid * 255;
+      maskBuffer[i] = val > alphaThreshold ? Math.round(val) : 0;
+    }
+  } else {
+    // U2-Net / ISNet: normalize output range to [0, 255].
+    let minVal = Number.POSITIVE_INFINITY;
+    let maxVal = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < outputData.length; i++) {
+      if (outputData[i] < minVal) minVal = outputData[i];
+      if (outputData[i] > maxVal) maxVal = outputData[i];
+    }
+    const range = maxVal - minVal || 1;
+    for (let i = 0; i < pixelCount; i++) {
+      const normalized = ((outputData[i] - minVal) / range) * 255;
+      maskBuffer[i] = normalized > alphaThreshold ? Math.round(normalized) : 0;
+    }
   }
 
   await session.release();

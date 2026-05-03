@@ -188,6 +188,37 @@ export function registerListCommand(program: Command): void {
           // Clear the TUI before running the subcommand.
           process.stdout.write('\x1b[2J\x1b[H');
 
+          // Browser preview: open image in browser directly (no subprocess).
+          if (pendingAction.type === 'browser-preview') {
+            const { quickViewInBrowser } = await import('../../engine/preview/quick-view.ts');
+            info(`  Opening #${pendingAction.id} in browser...`);
+            try {
+              const getAdapter = resolver.resolve('get');
+              const item = await getAdapter.getMedia(pendingAction.id);
+              const response = await fetch(item.url);
+              if (response.ok) {
+                const imageBytes = Buffer.from(await response.arrayBuffer());
+                await quickViewInBrowser({
+                  imageBytes,
+                  mimeType: item.mimeType,
+                  filename: item.filename,
+                  width: item.width,
+                  height: item.height,
+                  sizeBytes: item.sizeBytes,
+                  wpId: item.id,
+                });
+              }
+            } catch (err) {
+              error(err instanceof Error ? err.message : String(err));
+            }
+
+            interactivePage = pendingAction.page;
+            interactiveCursor = pendingAction.cursor;
+            saveBrowserPosition(interactivePage, interactiveCursor);
+            process.stdout.write('\x1b[2J\x1b[H');
+            continue;
+          }
+
           let subCmd: string;
           let extraArgs: string[] = [];
           switch (pendingAction.type) {

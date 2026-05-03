@@ -1,6 +1,6 @@
 # CLAUDE.md — handoff for the next agent
 
-You're picking up `localpress` at **v1.5.0**. The full v1.0 implementation plan is complete plus post-v1.0 enhancements. All 18 CLI commands are implemented and working. The project compiles, tests pass, and the CLI boots cleanly.
+You're picking up `localpress` at **v1.6.0**. The full v1.0 implementation plan is complete plus post-v1.0 enhancements. All 18 CLI commands are implemented and working. The project compiles, tests pass, and the CLI boots cleanly.
 
 **Read in this order before writing any code:**
 
@@ -13,8 +13,8 @@ You're picking up `localpress` at **v1.5.0**. The full v1.0 implementation plan 
 
 ## Current status
 
-**Version:** 1.5.0
-**Status:** All v1.0 plan features complete. Post-v1.0 enhancements shipped: advanced audit checks, config management, Homebrew distribution, interactive TUI browser, AI captioning, cumulative stats, media sort, full TUI action suite (optimize/convert/resize/remove-bg/caption settings overlays, open-in-WP, alt-text visibility).
+**Version:** 1.6.0
+**Status:** All v1.0 plan features complete. Post-v1.0 enhancements shipped: advanced audit checks, config management, Homebrew distribution, interactive TUI browser, AI captioning, cumulative stats, media sort, full TUI action suite, browser-based preview for optimize and remove-bg, BiRefNet model support, quick browser image viewer.
 
 ### What's implemented
 
@@ -22,7 +22,7 @@ You're picking up `localpress` at **v1.5.0**. The full v1.0 implementation plan 
 - Setup: `init` (Ink wizard), `sites` (list/add/use/remove), `doctor` (capability matrix + plugin detection + `--fix`)
 - Config: `config` (get/set/list, named optimization profiles)
 - Discovery: `list` (filters, sort `--sort`/`--order`, interactive TUI `-i`), `show`, `stats` (cumulative SQLite stats, `--all-sites`), `audit` (unoptimized/large/missing-alt/orphans/display-size/duplicates/broken-refs), `references` (fast + full scan, `--update-to` rewriting)
-- Processing: `optimize`, `convert`, `resize`, `remove-bg` (ONNX + system rembg), `caption` (local Ollama vision model, no cloud)
+- Processing: `optimize` (+ `--preview`), `convert`, `resize`, `remove-bg` (ONNX + system rembg + `--preview`), `caption` (local Ollama vision model, no cloud)
 - Round-trip: `edit` (download → editor → watch → sync)
 - Low-level: `pull`, `push`
 
@@ -33,8 +33,9 @@ You're picking up `localpress` at **v1.5.0**. The full v1.0 implementation plan 
 **Image processing:**
 - sharp (libvips) as the default encoding backend
 - jSquash WASM codecs as alternative (`--encoder jsquash`) — OxiPNG for PNG, MozJPEG, WebP, AVIF
-- AI background removal via ONNX Runtime + U2-Net (3 models: u2net, u2netp, silueta)
+- AI background removal via ONNX Runtime + 5 models: u2net, u2netp, silueta, isnet-general-use, birefnet-lite (MIT, state-of-the-art)
 - Optional system Python rembg via `--rembg` flag
+- Browser-based preview for `optimize` and `remove-bg` (`--preview` flag) — local Bun HTTP server with before/after comparison, parameter adjustment, and one-click upload to WordPress
 
 **AI captioning:**
 - Local Ollama vision models — no cloud API, no credits
@@ -46,8 +47,9 @@ You're picking up `localpress` at **v1.5.0**. The full v1.0 implementation plan 
 **State management:**
 - SQLite per-site databases with attachment tracking and processing history
 - Idempotent processing via SHA-256 hash comparison
-- Schema migrations support
+- Schema migrations support (currently v2 — added preferences table for UI state persistence)
 - `stats` command exposes cumulative savings, per-operation breakdown, last-run dates
+- Interactive browser position persistence across sessions (page + cursor saved to SQLite)
 
 **Config management:**
 - Named optimization profiles (`config set-profile hero --quality 75 --format webp --max-width 1920`)
@@ -87,6 +89,7 @@ You're picking up `localpress` at **v1.5.0**. The full v1.0 implementation plan 
 | v1.4.2 | `list -i` live search (`/`), client-side filter by filename/title, two-stage Esc behaviour |
 | v1.4.3 | CI docker compose rewrite (no more services: block), setup-wp.sh consolidation, all 9 integration tests local-reproducible via `act` |
 | v1.5.0 | TUI action suite: optimize/convert/resize settings overlays, open-in-WP (`[W]`), alt-text visibility in rows/sidebar/details; fix remove-bg 401 (GitHub URLs) + FK constraint crash |
+| v1.6.0 | Browser preview for optimize and remove-bg (`--preview`), BiRefNet + ISNet models, quick browser image viewer (`[P]`), preview keybindings (`[O]`/`[R]`), interactive list position persistence, WebSocket heartbeat for browser close detection, schema v2 (preferences table) |
 
 ---
 
@@ -101,7 +104,7 @@ These were debated and resolved during planning. **Don't relitigate without stro
 | Test runner | `bun test` | Bundled, no extra dep; runs `.ts` directly |
 | License | MIT | Matches the rembg/Squoosh/sharp ecosystem; agency-friendly |
 | Image processing | sharp + @jsquash WASM codecs | sharp for transforms, jsquash for encoding when `--encoder jsquash` |
-| AI background removal | `onnxruntime-node` + U2-Net ONNX models | `@imgly/background-removal-node` is **AGPL-3.0** — incompatible with MIT |
+| AI background removal | `onnxruntime-node` + U2-Net/ISNet/BiRefNet ONNX models | `@imgly/background-removal-node` is **AGPL-3.0** — incompatible with MIT |
 | AI captioning | Ollama HTTP API (local) | No cloud dependency; `moondream` runs fast on CPU; user owns their data |
 | WP integration | REST (always) + WP-CLI over SSH (opt-in) + MCP adapter (deferred to v1.x) | Auto-detect; pick best per operation |
 | Replace-in-place | Default; falls back to new attachment + references report | REST API cannot replace attachment file bytes |
@@ -187,10 +190,15 @@ localpress/
 │       │   ├── ollama.ts             ← Ollama HTTP API client (isAvailable, generate, listModels)
 │       │   └── types.ts              ← CaptionResult, CaptionOptions
 │       ├── rembg/
-│       │   ├── models.ts             ← ONNX model manager (download + cache)
-│       │   ├── remove-bg.ts          ← Background removal engine
+│       │   ├── models.ts             ← ONNX model manager (download + cache, 5 models)
+│       │   ├── remove-bg.ts          ← Background removal engine (U2-Net + ISNet + BiRefNet)
 │       │   ├── system-rembg.ts       ← System Python rembg integration
 │       │   └── onnx-types.ts         ← Type declarations for onnxruntime-node
+│       ├── preview/
+│       │   ├── server.ts             ← Ephemeral Bun.serve() preview server (WebSocket heartbeat)
+│       │   ├── ui-remove-bg.ts       ← Self-contained HTML UI for remove-bg preview
+│       │   ├── ui-optimize.ts        ← Self-contained HTML UI for optimize preview
+│       │   └── quick-view.ts         ← Lightweight browser image viewer
 │       ├── editor/
 │       │   ├── detect.ts             ← Editor detection and launching
 │       │   └── watcher.ts            ← File watcher for edit round-trip

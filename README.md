@@ -78,6 +78,12 @@ localpress resize 123 --max-width 1200
 # Remove background using local AI (downloads model on first use)
 localpress remove-bg 123
 
+# Preview background removal in the browser before applying
+localpress remove-bg 123 --preview
+
+# Preview optimization settings in the browser
+localpress optimize 123 --preview
+
 # Open in your editor, watch for saves, sync back automatically
 localpress edit 123
 

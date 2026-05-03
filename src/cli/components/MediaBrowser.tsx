@@ -45,7 +45,8 @@ export type MediaBrowserAction =
       cursor: number;
       maxWidth?: number;
       maxHeight?: number;
-    };
+    }
+  | { type: 'browser-preview'; id: number; page: number; cursor: number };
 
 interface Props {
   initialItems: MediaItem[];
@@ -553,6 +554,10 @@ export function MediaBrowser({
       if (item && onOpenInBrowser) onOpenInBrowser(item.id);
     } else if (input === 'p') {
       openPreview();
+    } else if (input === 'P') {
+      const item = filteredItems[cursor];
+      if (item?.mimeType.startsWith('image/'))
+        doExit({ type: 'browser-preview', id: item.id, page, cursor });
     }
   });
 
@@ -1233,6 +1238,12 @@ export function MediaBrowser({
                   <Text>
                     <Text color="cyan">[p]</Text>
                     <Text dimColor> preview image</Text>
+                  </Text>
+                )}
+                {selectedItem.mimeType.startsWith('image/') && (
+                  <Text>
+                    <Text color="cyan">[P]</Text>
+                    <Text dimColor> open in browser</Text>
                   </Text>
                 )}
               </>

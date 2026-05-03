@@ -277,6 +277,12 @@ localpress remove-bg 123 --json
 # Remove background with white fill instead of transparency
 localpress remove-bg 123 --bg "#ffffff" --json
 
+# Use best model (BiRefNet, state-of-the-art, ~224MB, MIT)
+localpress remove-bg 123 --model birefnet-lite --json
+
+# Use ISNet for better edge quality than U2-Net (~176MB)
+localpress remove-bg 123 --model isnet-general-use --json
+
 # Use lightweight model for faster processing
 localpress remove-bg 123 --model u2netp --json
 
@@ -438,6 +444,8 @@ On exit code 6, the message explains which capability is missing and what the us
 
 **Replace-in-place fallback.** When replacing an attachment, localpress tries WP-CLI first (if SSH is configured), then falls back to uploading as a new attachment. The `--strict` flag makes it fail instead of falling back. The fallback output includes a references report showing where the old attachment is used.
 
-**Background removal models.** The `remove-bg` command downloads an AI model on first use. Available models: `u2net` (~176MB, best quality), `u2netp` (~4.7MB, fast), `silueta` (~44MB, balanced). Use `--list-models` to check what's cached. Alternatively, use `--rembg` to shell out to system Python rembg if installed.
+**Background removal models.** The `remove-bg` command downloads an AI model on first use. Available models: `birefnet-lite` (~224MB, MIT, state-of-the-art), `isnet-general-use` (~176MB, great edge quality), `u2net` (~176MB, general purpose, default), `silueta` (~44MB, balanced), `u2netp` (~4.7MB, fast). Use `--list-models` to check what's cached. Pass `--preview` to open a browser UI for adjusting model, alpha threshold, and background color before applying. Alternatively, use `--rembg` to shell out to system Python rembg if installed.
 
 **Encoder backends.** The `optimize` command uses sharp by default. Pass `--encoder jsquash` to use Squoosh-derived WASM codecs instead — particularly useful for PNG files where OxiPNG produces significantly smaller output than sharp's built-in PNG encoder.
+
+**Browser preview.** Both `optimize` and `remove-bg` support `--preview` to open a local browser UI for adjusting settings visually before committing. The preview server runs on localhost, auto-opens the browser, and shuts down when the tab closes or the user applies/cancels. Note: `--preview` requires exactly one attachment ID (not bulk mode).

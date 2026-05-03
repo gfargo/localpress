@@ -9,13 +9,14 @@
  *   - u2netp: Lightweight variant (~4.7MB, Apache-2.0)
  *   - silueta: Optimized u2net variant (~44MB, Apache-2.0)
  *   - isnet-general-use: ISNet general-purpose model (~176MB, Apache-2.0) — better edge quality
+ *   - birefnet-lite: BiRefNet lightweight variant (~224MB, MIT) — state-of-the-art quality
  */
 
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir } from '../../cli/utils/config.ts';
 
-export type ModelName = 'u2net' | 'u2netp' | 'silueta' | 'isnet-general-use';
+export type ModelName = 'u2net' | 'u2netp' | 'silueta' | 'isnet-general-use' | 'birefnet-lite';
 
 interface ModelInfo {
   name: ModelName;
@@ -57,6 +58,13 @@ const MODEL_REGISTRY: Record<ModelName, ModelInfo> = {
     filename: 'isnet-general-use.onnx',
     sizeApprox: '~176 MB',
     license: 'Apache-2.0',
+  },
+  'birefnet-lite': {
+    name: 'birefnet-lite',
+    url: 'https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model.onnx',
+    filename: 'birefnet-lite.onnx',
+    sizeApprox: '~224 MB',
+    license: 'MIT',
   },
 };
 
