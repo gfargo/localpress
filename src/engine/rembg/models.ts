@@ -25,27 +25,27 @@ interface ModelInfo {
 }
 
 /**
- * Model registry. URLs point to HuggingFace-hosted ONNX files.
- * These are the same models used by the Python rembg project.
+ * Model registry. Primary URLs are GitHub release assets (no auth required).
+ * HuggingFace mirrors are kept as fallback comments but now require auth.
  */
 const MODEL_REGISTRY: Record<ModelName, ModelInfo> = {
   u2net: {
     name: 'u2net',
-    url: 'https://huggingface.co/danielgatis/rembg/resolve/main/u2net.onnx',
+    url: 'https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx',
     filename: 'u2net.onnx',
     sizeApprox: '~176 MB',
     license: 'Apache-2.0',
   },
   u2netp: {
     name: 'u2netp',
-    url: 'https://huggingface.co/danielgatis/rembg/resolve/main/u2netp.onnx',
+    url: 'https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx',
     filename: 'u2netp.onnx',
     sizeApprox: '~4.7 MB',
     license: 'Apache-2.0',
   },
   silueta: {
     name: 'silueta',
-    url: 'https://huggingface.co/danielgatis/rembg/resolve/main/silueta.onnx',
+    url: 'https://github.com/danielgatis/rembg/releases/download/v0.0.0/silueta.onnx',
     filename: 'silueta.onnx',
     sizeApprox: '~44 MB',
     license: 'Apache-2.0',

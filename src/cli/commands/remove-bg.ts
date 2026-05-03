@@ -122,6 +122,21 @@ export function registerRemoveBgCommand(program: Command): void {
           const item = await getAdapter.getMedia(id);
           info(`  Processing #${id} (${item.filename})...`);
 
+          // Ensure the attachment row exists before any recordProcessing call
+          // (processing_history has a FK on attachments). This runs unconditionally
+          // so failures during model download / inference don't hit a FK violation.
+          db.upsertAttachment({
+            siteName: site.name,
+            wpId: item.id,
+            sourceUrl: item.url,
+            sourceHash: null,
+            sizeBytes: item.sizeBytes ?? null,
+            width: item.width ?? null,
+            height: item.height ?? null,
+            mimeType: item.mimeType,
+            lastSeenAt: Date.now(),
+          });
+
           // Download source image.
           const response = await fetch(item.url);
           if (!response.ok) throw new Error(`Failed to download: ${response.status}`);

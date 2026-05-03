@@ -55,15 +55,32 @@ export function registerListCommand(program: Command): void {
 
       // Interactive TUI mode.
       if (options.interactive) {
-        const { render } = await import('ink');
+        const { render, useApp, useInput: useInkInput, Text: InkText } = await import('ink');
         const React = await import('react');
+        const { useState: useReactState, useEffect: useReactEffect } = React.default;
         const { MediaBrowser } = await import('../components/MediaBrowser.tsx');
         const { spawnSync } = await import('node:child_process');
 
         // argv[1] is a .ts script in dev mode; the compiled binary repeats argv[0].
         const isDevMode = /\.(ts|mts|js|mjs)$/.test(process.argv[1] ?? '');
-        const selfArgs = (cmd: string, id: string) =>
-          isDevMode ? [process.argv[1], cmd, id] : [cmd, id];
+        const selfArgs = (cmd: string, id: string, extra: string[] = []) =>
+          isDevMode ? [process.argv[1], cmd, id, ...extra] : [cmd, id, ...extra];
+
+        const { spawn: spawnBg } = await import('node:child_process');
+        const openInBrowser = (id: number) => {
+          const adminUrl = `${site.url.replace(/\/+$/, '')}/wp-admin/post.php?post=${id}&action=edit`;
+          if (process.platform === 'win32') {
+            spawnBg('cmd', ['/c', 'start', '', adminUrl], {
+              detached: true,
+              stdio: 'ignore',
+            }).unref();
+          } else {
+            spawnBg(process.platform === 'darwin' ? 'open' : 'xdg-open', [adminUrl], {
+              detached: true,
+              stdio: 'ignore',
+            }).unref();
+          }
+        };
 
         // Reload processedIds from SQLite (called on first launch and after optimize).
         const loadProcessedIds = () => {
@@ -114,6 +131,8 @@ export function registerListCommand(program: Command): void {
               processedIds,
               sortBy: filters.sortBy,
               sortOrder: filters.sortOrder,
+              onFetchItem: (id: number) => adapter.getMedia(id),
+              onOpenInBrowser: openInBrowser,
               onAction: (action) => {
                 pending.action = action;
               },
@@ -135,37 +154,80 @@ export function registerListCommand(program: Command): void {
           // Clear the TUI before running the subcommand.
           process.stdout.write('\x1b[2J\x1b[H');
 
-          const subCmd =
-            pendingAction.type === 'optimize'
-              ? 'optimize'
-              : pendingAction.type === 'edit'
-                ? 'edit'
-                : 'show';
+          let subCmd: string;
+          let extraArgs: string[] = [];
+          switch (pendingAction.type) {
+            case 'optimize':
+              subCmd = 'optimize';
+              if (pendingAction.quality !== undefined)
+                extraArgs.push('--quality', String(pendingAction.quality));
+              if (pendingAction.to) extraArgs.push('--to', pendingAction.to);
+              if (pendingAction.keepOriginal) extraArgs.push('--keep-original');
+              break;
+            case 'remove-bg':
+              subCmd = 'remove-bg';
+              break;
+            case 'caption':
+              subCmd = 'caption';
+              break;
+            case 'convert':
+              subCmd = 'convert';
+              extraArgs = ['--to', pendingAction.to];
+              if (pendingAction.quality !== undefined)
+                extraArgs.push('--quality', String(pendingAction.quality));
+              break;
+            case 'resize':
+              subCmd = 'resize';
+              if (pendingAction.maxWidth)
+                extraArgs.push('--max-width', String(pendingAction.maxWidth));
+              if (pendingAction.maxHeight)
+                extraArgs.push('--max-height', String(pendingAction.maxHeight));
+              break;
+            default:
+              subCmd = 'edit';
+          }
 
-          spawnSync(process.argv[0], selfArgs(subCmd, String(pendingAction.id)), {
+          spawnSync(process.argv[0], selfArgs(subCmd, String(pendingAction.id), extraArgs), {
             stdio: 'inherit',
           });
 
-          // Let the user read the output before the TUI repaints.
-          process.stdout.write('\n\x1b[2m── Press any key to return to the browser ──\x1b[0m');
+          // Use Ink for the "press any key" prompt so stdin is managed correctly.
+          // The 80ms ready-delay drains any buffered keystroke (e.g. the 'o'/'e' that
+          // triggered the action) before we start listening for a new keypress.
           await new Promise<void>((resolve) => {
-            if (process.stdin.isTTY) {
-              process.stdin.setRawMode(true);
-              process.stdin.resume();
-              process.stdin.once('data', () => {
-                process.stdin.setRawMode(false);
-                process.stdin.pause();
-                resolve();
+            function PressAnyKey() {
+              const [ready, setReady] = useReactState(false);
+              const { exit } = useApp();
+              useReactEffect(() => {
+                const t = setTimeout(() => setReady(true), 80);
+                return () => clearTimeout(t);
+              }, []);
+              useInkInput(() => {
+                if (ready) {
+                  exit();
+                  resolve();
+                }
               });
-            } else {
-              resolve();
+              return React.default.createElement(
+                InkText,
+                { dimColor: true },
+                '\n── Press any key to return to the browser ──',
+              );
             }
+            render(React.default.createElement(PressAnyKey, null));
           });
 
           // Restore position and refresh processedIds before re-entering the TUI.
           interactivePage = pendingAction.page;
           interactiveCursor = pendingAction.cursor;
-          if (pendingAction.type === 'optimize') processedIds = loadProcessedIds();
+          const processingTypes = new Set([
+            'optimize',
+            'resize',
+            'convert',
+            'remove-bg',
+            'caption',
+          ]);
+          if (processingTypes.has(pendingAction.type)) processedIds = loadProcessedIds();
 
           process.stdout.write('\x1b[2J\x1b[H');
         }

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-05-03
+
+### Added
+- **`list -i` expanded sidebar actions**: image items now show `[r]` remove-bg, `[c]` convert,
+  `[s]` resize, and `[a]` caption alongside the existing `[o]` optimize and `[e]` edit actions.
+  Non-image items show only the actions that apply to them.
+- **`list -i` optimize settings overlay**: pressing `[o]` now opens a settings form before
+  dispatching — choose quality (0–100), target format (`keep`/webp/avif/jpeg/png, cycled with
+  `←→`), and keep-original toggle. Press `↵` with blank fields to use CLI defaults.
+- **`list -i` convert quality step**: after picking a format with `[c]`, a second prompt lets
+  you enter a quality value (0–100) before confirming. `Esc` goes back to format selection.
+- **`list -i` open in WordPress (`[W]`)**: `Shift+W` opens the WP admin media editor for the
+  selected item in the system browser without leaving the TUI.
+- **`list -i` alt text visibility**: list rows show a yellow `⚠` indicator for any image
+  missing alt text. The sidebar shows `⚠ no alt text` / `✓ alt: <text>`. The details overlay
+  always shows the Alt text field for images with an actionable hint when missing.
+- **`list -i` details overlay enriched**: now shows Caption, Description, and a `⚠ missing`
+  hint for images without alt text suggesting `[a]` to generate.
+
+### Fixed
+- **`remove-bg` model download 401**: switched ONNX model URLs from HuggingFace
+  (now auth-gated) to GitHub release assets (`github.com/danielgatis/rembg/releases/download/v0.0.0/`).
+  Existing cached models are unaffected.
+- **`remove-bg` FOREIGN KEY constraint**: failure records were written to
+  `processing_history` before the corresponding `attachments` row existed (e.g. when a
+  model download failed on first use). Fixed by moving `upsertAttachment` to immediately
+  after `getMedia` succeeds, ahead of any potentially-failing work.
+
 ## [1.4.3] - 2026-05-03
 
 ### Fixed
