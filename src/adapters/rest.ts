@@ -100,7 +100,15 @@ export class RestAdapter implements WpBackend {
       );
     }
 
-    const data = (await response.json()) as T;
+    const text = await response.text();
+    let data: T;
+    try {
+      data = JSON.parse(text) as T;
+    } catch {
+      throw new Error(
+        `WordPress REST API: expected JSON but got ${response.status} ${response.headers.get('content-type') ?? 'unknown content-type'} (${init?.method ?? 'GET'} ${response.url})\nBody: ${text.slice(0, 500)}`,
+      );
+    }
     return { data, headers: response.headers };
   }
 
