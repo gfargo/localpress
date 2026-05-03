@@ -10,6 +10,7 @@ import { Command, Option } from 'commander';
 
 import packageJson from '../../package.json' with { type: 'json' };
 import { registerAuditCommand } from './commands/audit.ts';
+import { registerCaptionCommand } from './commands/caption.ts';
 import { registerConfigCommand } from './commands/config.ts';
 import { registerConvertCommand } from './commands/convert.ts';
 import { registerDoctorCommand } from './commands/doctor.ts';
@@ -64,6 +65,7 @@ registerConfigCommand(program);
 registerListCommand(program);
 registerShowCommand(program);
 registerStatsCommand(program);
+registerCaptionCommand(program);
 registerAuditCommand(program);
 registerOptimizeCommand(program);
 registerConvertCommand(program);
