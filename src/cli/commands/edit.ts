@@ -50,7 +50,7 @@ export function registerEditCommand(program: Command): void {
       const getAdapter = resolver.resolve('get');
 
       // 1. Fetch attachment metadata.
-      let item;
+      let item: import('../../adapters/types.ts').MediaItem;
       try {
         item = await getAdapter.getMedia(id);
       } catch (err) {

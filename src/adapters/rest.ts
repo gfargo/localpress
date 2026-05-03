@@ -9,16 +9,16 @@
 
 import type { SiteConfig } from '../types.ts';
 import type {
-    Capability,
-    ListFilters,
-    MediaItem,
-    MediaSize,
-    PruneResult,
-    Reference,
-    ReferenceScope,
-    UpdateMetadata,
-    UploadMetadata,
-    WpBackend,
+  Capability,
+  ListFilters,
+  MediaItem,
+  MediaSize,
+  PruneResult,
+  Reference,
+  ReferenceScope,
+  UpdateMetadata,
+  UploadMetadata,
+  WpBackend,
 } from './types.ts';
 import { CapabilityUnavailableError } from './types.ts';
 
@@ -74,7 +74,10 @@ export class RestAdapter implements WpBackend {
     return data;
   }
 
-  private async requestRaw<T>(url: string, init?: RequestInit): Promise<{ data: T; headers: Headers }> {
+  private async requestRaw<T>(
+    url: string,
+    init?: RequestInit,
+  ): Promise<{ data: T; headers: Headers }> {
     const response = await fetch(url, {
       ...init,
       headers: {
@@ -93,13 +96,11 @@ export class RestAdapter implements WpBackend {
         wpMessage = body.slice(0, 200);
       }
       throw new Error(
-        `WordPress REST API error: ${response.status} ${response.statusText}` +
-          (wpMessage ? ` — ${wpMessage}` : '') +
-          ` (${init?.method ?? 'GET'} ${url})`,
+        `WordPress REST API error: ${response.status} ${response.statusText}${wpMessage ? ` — ${wpMessage}` : ''} (${init?.method ?? 'GET'} ${url})`,
       );
     }
 
-    const data = await response.json() as T;
+    const data = (await response.json()) as T;
     return { data, headers: response.headers };
   }
 
@@ -126,9 +127,11 @@ export class RestAdapter implements WpBackend {
     };
 
     applyCommonFilters(params, filters);
-    const { data, headers } = await this.requestRaw<WpMediaResponse[]>(this.apiUrl('/media', params));
-    const total = parseInt(headers.get('X-WP-Total') ?? '0', 10);
-    const totalPages = parseInt(headers.get('X-WP-TotalPages') ?? '1', 10);
+    const { data, headers } = await this.requestRaw<WpMediaResponse[]>(
+      this.apiUrl('/media', params),
+    );
+    const total = Number.parseInt(headers.get('X-WP-Total') ?? '0', 10);
+    const totalPages = Number.parseInt(headers.get('X-WP-TotalPages') ?? '1', 10);
     const items = applySizeSort(data.map(mapWpMediaToItem), filters);
     return { items, total, totalPages };
   }
@@ -285,7 +288,7 @@ export class RestAdapter implements WpBackend {
    */
   private async paginateAll<T>(firstPageUrl: string): Promise<T[]> {
     const results: T[] = [];
-    let url: string | null = firstPageUrl;
+    const url: string | null = firstPageUrl;
     let page = 1;
 
     while (url) {

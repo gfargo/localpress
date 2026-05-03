@@ -7,7 +7,7 @@
 
 import type { Command } from 'commander';
 import { SiteDb } from '../../engine/state/db.ts';
-import { loadConfig, getSiteDbPath, resolveActiveSite } from '../utils/config.ts';
+import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson } from '../utils/output.ts';
 
 export function registerStatsCommand(program: Command): void {
@@ -64,21 +64,30 @@ export function registerStatsCommand(program: Command): void {
         }
 
         if (stats.totalOps === 0) {
-          info(`No processing history yet for "${site}". Run localpress optimize, convert, resize, or remove-bg to start.`);
+          info(
+            `No processing history yet for "${site}". Run localpress optimize, convert, resize, or remove-bg to start.`,
+          );
           continue;
         }
 
         const saved = formatBytes(stats.bytesSaved);
-        const pct = stats.bytesIn > 0
-          ? ` (${((stats.bytesSaved / stats.bytesIn) * 100).toFixed(1)}% reduction)`
-          : '';
+        const pct =
+          stats.bytesIn > 0
+            ? ` (${((stats.bytesSaved / stats.bytesIn) * 100).toFixed(1)}% reduction)`
+            : '';
         const lastRan = stats.lastRanAt
-          ? new Date(stats.lastRanAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+          ? new Date(stats.lastRanAt).toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric',
+            })
           : '—';
 
         info(`\n  Site            ${site}`);
         info(`  Files touched   ${stats.filesTouched.toLocaleString()}`);
-        info(`  Operations      ${stats.succeeded.toLocaleString()} succeeded  /  ${(stats.totalOps - stats.succeeded).toLocaleString()} failed`);
+        info(
+          `  Operations      ${stats.succeeded.toLocaleString()} succeeded  /  ${(stats.totalOps - stats.succeeded).toLocaleString()} failed`,
+        );
         info(`  Bytes saved     ${saved}${pct}`);
         info(`  Last run        ${lastRan}`);
 

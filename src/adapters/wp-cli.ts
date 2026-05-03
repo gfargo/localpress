@@ -11,15 +11,15 @@ import { join } from 'node:path';
 import type { SiteConfig, SshConfig } from '../types.ts';
 import { scpUpload, sshExec } from './ssh.ts';
 import type {
-    Capability,
-    ListFilters,
-    MediaItem,
-    PruneResult,
-    Reference,
-    ReferenceScope,
-    UpdateMetadata,
-    UploadMetadata,
-    WpBackend,
+  Capability,
+  ListFilters,
+  MediaItem,
+  PruneResult,
+  Reference,
+  ReferenceScope,
+  UpdateMetadata,
+  UploadMetadata,
+  WpBackend,
 } from './types.ts';
 
 const WP_CLI_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
@@ -57,9 +57,7 @@ export class WpCliAdapter implements WpBackend {
     const result = await sshExec(this.ssh, fullCommand);
 
     if (result.exitCode !== 0) {
-      throw new Error(
-        `WP-CLI error (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
-      );
+      throw new Error(`WP-CLI error (exit ${result.exitCode}): ${result.stderr || result.stdout}`);
     }
 
     return result.stdout;
@@ -199,9 +197,7 @@ export class WpCliAdapter implements WpBackend {
 
   async replaceInPlace(id: number, file: Buffer): Promise<MediaItem> {
     // Get the current attachment's file path on the server.
-    const currentFile = await this.wp(
-      `post meta get ${id} _wp_attached_file`,
-    );
+    const currentFile = await this.wp(`post meta get ${id} _wp_attached_file`);
     const uploadsDir = await this.wp(
       `eval 'echo wp_upload_dir()["basedir"];' 2>/dev/null || echo "/var/www/html/wp-content/uploads"`,
     );
@@ -260,9 +256,7 @@ export class WpCliAdapter implements WpBackend {
 
   async pruneOrphans(): Promise<PruneResult> {
     // Get the uploads directory.
-    const uploadsDir = await this.wp(
-      `eval 'echo wp_upload_dir()["basedir"];'`,
-    );
+    const uploadsDir = await this.wp(`eval 'echo wp_upload_dir()["basedir"];'`);
 
     // List all files in uploads.
     const filesOutput = await sshExec(
@@ -319,7 +313,7 @@ export class WpCliAdapter implements WpBackend {
     // Find missing: attachments in DB whose file is gone.
     const missingFiles: number[] = [];
     const attachmentsOutput = await this.wp(
-      `post list --post_type=attachment --post_status=inherit --fields=ID --format=json`,
+      'post list --post_type=attachment --post_status=inherit --fields=ID --format=json',
     );
     const attachments = JSON.parse(attachmentsOutput) as Array<{ ID: number }>;
 
@@ -327,7 +321,10 @@ export class WpCliAdapter implements WpBackend {
       try {
         const filePath = await this.wp(`post meta get ${att.ID} _wp_attached_file`);
         const fullPath = `${uploadsDir.trim()}/${filePath.trim()}`;
-        const existsResult = await sshExec(this.ssh, `test -f "${fullPath}" && echo "yes" || echo "no"`);
+        const existsResult = await sshExec(
+          this.ssh,
+          `test -f "${fullPath}" && echo "yes" || echo "no"`,
+        );
         if (existsResult.stdout.trim() === 'no') {
           missingFiles.push(att.ID);
         }

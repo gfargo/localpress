@@ -22,9 +22,7 @@ export function registerConvertCommand(program: Command): void {
     .command('convert <ids...>')
     .description('Convert attachments to a different format (webp, avif, jpeg, png)')
     .requiredOption('--to <format>', 'target format: webp, avif, jpeg, or png')
-    .option('--quality <n>', 'quality value 0-100 (codec-specific)', (v) =>
-      Number.parseInt(v, 10),
-    )
+    .option('--quality <n>', 'quality value 0-100 (codec-specific)', (v) => Number.parseInt(v, 10))
     .option('--keep-original', 'upload as a new attachment instead of replacing')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
@@ -49,7 +47,13 @@ export function registerConvertCommand(program: Command): void {
       const db = SiteDb.init(getSiteDbPath(site.name));
       db.ensureSite(site.name, site.url);
 
-      const results: Array<{ id: number; filename: string; from: string; to: string; savedBytes: number }> = [];
+      const results: Array<{
+        id: number;
+        filename: string;
+        from: string;
+        to: string;
+        savedBytes: number;
+      }> = [];
       let failures = 0;
 
       for (const id of ids) {
@@ -105,7 +109,9 @@ export function registerConvertCommand(program: Command): void {
             });
             resultWpId = uploaded.id;
             if (!options.keepOriginal) {
-              warn(`    ⚠ Uploaded as new attachment #${resultWpId} (in-place replacement not available).`);
+              warn(
+                `    ⚠ Uploaded as new attachment #${resultWpId} (in-place replacement not available).`,
+              );
             }
           }
 
@@ -162,7 +168,9 @@ export function registerConvertCommand(program: Command): void {
         printJson({ converted: results.length, failures, results });
       } else if (results.length > 0) {
         const totalSaved = results.reduce((sum, r) => sum + r.savedBytes, 0);
-        info(`\n  Done: ${results.length} converted, ${failures} failed. Saved ${formatBytes(totalSaved)}.`);
+        info(
+          `\n  Done: ${results.length} converted, ${failures} failed. Saved ${formatBytes(totalSaved)}.`,
+        );
       }
 
       if (failures > 0) process.exit(1);

@@ -8,8 +8,8 @@
  *   └ footer: keybindings ─────────────────────────────────────┘
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import { Box, Text, useInput, useApp } from 'ink';
+import { Box, Text, useApp, useInput } from 'ink';
+import { useCallback, useEffect, useState } from 'react';
 import type { MediaItem, PagedResult, SortField, SortOrder } from '../../adapters/types.ts';
 
 export type MediaBrowserAction =
@@ -97,7 +97,9 @@ export function MediaBrowser({
     return () => clearInterval(id);
   }, [loading]);
 
-  // Auto-load thumbnail when selection changes.
+  // Auto-load thumbnail when selection changes. Keyed on item ID so the fetch
+  // only reruns when a different item is selected, not on every render.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on item id, not the full items array
   useEffect(() => {
     if (!canImages || !items[cursor]?.mimeType.startsWith('image/')) {
       setImageB64(null);
@@ -161,30 +163,45 @@ export function MediaBrowser({
     else if (input === 'n' || key.rightArrow) loadPage(page + 1);
     else if (input === 'b' || key.leftArrow) loadPage(page - 1);
     else if (input === 'q' || key.escape) doExit({ type: 'quit' });
-    else if (key.return) { const item = items[cursor]; if (item) doExit({ type: 'show', id: item.id }); }
-    else if (input === 'o') { const item = items[cursor]; if (item) doExit({ type: 'optimize', id: item.id }); }
-    else if (input === 'e') { const item = items[cursor]; if (item) doExit({ type: 'edit', id: item.id }); }
+    else if (key.return) {
+      const item = items[cursor];
+      if (item) doExit({ type: 'show', id: item.id });
+    } else if (input === 'o') {
+      const item = items[cursor];
+      if (item) doExit({ type: 'optimize', id: item.id });
+    } else if (input === 'e') {
+      const item = items[cursor];
+      if (item) doExit({ type: 'edit', id: item.id });
+    }
   });
 
   const selectedItem = items[cursor];
-  const scrollStart = Math.max(0, Math.min(cursor - Math.floor(listHeight / 2), items.length - listHeight));
+  const scrollStart = Math.max(
+    0,
+    Math.min(cursor - Math.floor(listHeight / 2), items.length - listHeight),
+  );
   const visibleItems = items.slice(scrollStart, scrollStart + listHeight);
   const hasPrev = page > 1;
   const hasNext = page < totalPages;
 
   return (
     <Box flexDirection="column" width={termWidth}>
-
       {/* ── Header ── */}
       <Box paddingX={1} justifyContent="space-between">
         <Box gap={1}>
-          <Text bold color="green">localPress</Text>
+          <Text bold color="green">
+            localPress
+          </Text>
           <Text dimColor>— media library</Text>
           {sortBy && sortBy !== 'date' && (
-            <Text dimColor>· {sortBy} {sortOrder ?? 'desc'}</Text>
+            <Text dimColor>
+              · {sortBy} {sortOrder ?? 'desc'}
+            </Text>
           )}
         </Box>
-        <Text dimColor>Page {page}/{totalPages} · {total} total</Text>
+        <Text dimColor>
+          Page {page}/{totalPages} · {total} total
+        </Text>
       </Box>
 
       {/* ── Page navigation bar ── */}
@@ -193,7 +210,9 @@ export function MediaBrowser({
           {hasPrev ? '← [b] prev page' : '              '}
         </Text>
         {loading && (
-          <Text color="green">{SPIN_FRAMES[spinFrame]} loading page {page}…</Text>
+          <Text color="green">
+            {SPIN_FRAMES[spinFrame]} loading page {page}…
+          </Text>
         )}
         <Text color={hasNext ? 'green' : undefined} dimColor={!hasNext}>
           {hasNext ? '[n] next page →' : '              '}
@@ -206,18 +225,14 @@ export function MediaBrowser({
 
       {/* ── Main ── */}
       <Box flexDirection="row">
-
         {/* List panel */}
         <Box flexDirection="column" width={listWidth}>
           {loading ? (
             // Full-panel spinner while page is in flight.
-            <Box
-              height={listHeight}
-              alignItems="center"
-              justifyContent="center"
-            >
+            <Box height={listHeight} alignItems="center" justifyContent="center">
               <Text color="green">
-                {SPIN_FRAMES[spinFrame]}{'  '}Loading page {page}…
+                {SPIN_FRAMES[spinFrame]}
+                {'  '}Loading page {page}…
               </Text>
             </Box>
           ) : loadError ? (
@@ -250,12 +265,8 @@ export function MediaBrowser({
                     {isSelected ? '▶ ' : '  '}
                     <Text color={isSelected ? undefined : 'cyan'}>
                       #{String(item.id).padEnd(5)}
-                    </Text>
-                    {' '}
-                    {name}
-                    {' '}
-                    <Text dimColor={!isSelected}>{ext}</Text>
-                    {' '}
+                    </Text>{' '}
+                    {name} <Text dimColor={!isSelected}>{ext}</Text>{' '}
                     <Text dimColor={!isSelected}>{size.padStart(8)}</Text>
                   </Text>
                 </Box>
@@ -287,9 +298,7 @@ export function MediaBrowser({
                     ) : (
                       <Box height={IMAGE_ROWS} alignItems="center" justifyContent="center">
                         <Text dimColor>
-                          {imageLoading
-                            ? `${SPIN_FRAMES[spinFrame]} loading preview…`
-                            : ''}
+                          {imageLoading ? `${SPIN_FRAMES[spinFrame]} loading preview…` : ''}
                         </Text>
                       </Box>
                     )}
@@ -297,25 +306,38 @@ export function MediaBrowser({
                 )}
 
                 {/* ── Metadata ── */}
-                <Text bold color="green" wrap="truncate">{selectedItem.filename}</Text>
+                <Text bold color="green" wrap="truncate">
+                  {selectedItem.filename}
+                </Text>
                 <Text dimColor>#{selectedItem.id}</Text>
                 <Text dimColor>{selectedItem.mimeType}</Text>
                 {selectedItem.sizeBytes !== undefined && (
                   <Text dimColor>{formatBytes(selectedItem.sizeBytes)}</Text>
                 )}
                 {selectedItem.width !== undefined && (
-                  <Text dimColor>{selectedItem.width}×{selectedItem.height}px</Text>
+                  <Text dimColor>
+                    {selectedItem.width}×{selectedItem.height}px
+                  </Text>
                 )}
-                {processedIds.has(selectedItem.id) && (
-                  <Text color="green">✓ optimized</Text>
-                )}
+                {processedIds.has(selectedItem.id) && <Text color="green">✓ optimized</Text>}
                 <Text> </Text>
-                <Text dimColor wrap="truncate">{selectedItem.url}</Text>
+                <Text dimColor wrap="truncate">
+                  {selectedItem.url}
+                </Text>
                 <Text> </Text>
                 <Text dimColor>──────────────────────</Text>
-                <Text><Text color="green">[o]</Text><Text dimColor> optimize</Text></Text>
-                <Text><Text color="green">[e]</Text><Text dimColor> edit (round-trip)</Text></Text>
-                <Text><Text color="green">[↵]</Text><Text dimColor> show details</Text></Text>
+                <Text>
+                  <Text color="green">[o]</Text>
+                  <Text dimColor> optimize</Text>
+                </Text>
+                <Text>
+                  <Text color="green">[e]</Text>
+                  <Text dimColor> edit (round-trip)</Text>
+                </Text>
+                <Text>
+                  <Text color="green">[↵]</Text>
+                  <Text dimColor> show details</Text>
+                </Text>
               </>
             ) : (
               <Text dimColor>No selection</Text>
@@ -330,10 +352,9 @@ export function MediaBrowser({
       </Box>
       <Box paddingX={1}>
         <Text dimColor>
-          [↑↓/jk] navigate  [←→/n/b] page  [o] optimize  [e] edit  [↵] details  [q] quit
+          [↑↓/jk] navigate [←→/n/b] page [o] optimize [e] edit [↵] details [q] quit
         </Text>
       </Box>
-
     </Box>
   );
 }

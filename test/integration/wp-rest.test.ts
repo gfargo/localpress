@@ -16,10 +16,10 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 
-import { RestAdapter } from '../../src/adapters/rest.ts';
 import { AdapterResolver } from '../../src/adapters/resolver.ts';
-import type { SiteConfig } from '../../src/types.ts';
+import { RestAdapter } from '../../src/adapters/rest.ts';
 import { SiteDb } from '../../src/engine/state/db.ts';
+import type { SiteConfig } from '../../src/types.ts';
 
 const WP_URL = process.env.WP_TEST_URL;
 const WP_USER = process.env.WP_TEST_USER;
@@ -191,7 +191,7 @@ describe.skipIf(!canRun)('WordPress REST API integration', () => {
     // Verify getLastProcessing returns the record.
     const last = db.getLastProcessing(testSite.name, item.id);
     expect(last).not.toBeNull();
-    expect(last!.sourceHash).toBe('test-hash-123');
-    expect(last!.bytesAfter).toBe(20000);
+    expect(last?.sourceHash).toBe('test-hash-123');
+    expect(last?.bytesAfter).toBe(20000);
   });
 });

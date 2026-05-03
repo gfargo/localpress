@@ -71,8 +71,7 @@ export async function loadConfig(): Promise<Config> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `Failed to read config at ${configPath}: ${message}\n` +
-        'If the file is corrupt, you can delete it and run `localpress init` again.',
+      `Failed to read config at ${configPath}: ${message}\nIf the file is corrupt, you can delete it and run \`localpress init\` again.`,
     );
   }
 }
@@ -86,7 +85,7 @@ export async function saveConfig(config: Config): Promise<void> {
   mkdirSync(getSitesDir(), { recursive: true });
 
   // Write JSON with 2-space indent.
-  await Bun.write(configPath, JSON.stringify(config, null, 2) + '\n');
+  await Bun.write(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
   // Restrict permissions on POSIX (Application Passwords are sensitive).
   if (process.platform !== 'win32') {

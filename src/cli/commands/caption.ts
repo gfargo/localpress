@@ -48,7 +48,9 @@ export function registerCaptionCommand(program: Command): void {
       // --list-models
       if (options.listModels) {
         if (!(await isOllamaAvailable(options.ollamaUrl))) {
-          error(`Ollama is not running at ${options.ollamaUrl}.\nStart it with: ollama serve`);
+          error(
+            `Ollama is not running at ${options.ollamaUrl}.\n\n  Start it:     ollama serve\n  Setup guide:  https://localpress.griffen.codes/docs/ollama-setup`,
+          );
           process.exit(2);
         }
         const models = await listOllamaModels(options.ollamaUrl);
@@ -68,16 +70,14 @@ export function registerCaptionCommand(program: Command): void {
         for (const m of list) {
           info(`  ${m.name.padEnd(30)} ${formatBytes(m.size)}`);
         }
-        info(`\nPull a model: ollama pull moondream`);
+        info('\nPull a model: ollama pull moondream');
         return;
       }
 
       // Validate Ollama is reachable before doing any work.
       if (!(await isOllamaAvailable(options.ollamaUrl))) {
         error(
-          `Ollama is not running at ${options.ollamaUrl}.\n` +
-            'Start it with: ollama serve\n' +
-            `Then pull a vision model: ollama pull ${options.model}`,
+          `Ollama is not running at ${options.ollamaUrl}.\n\n  Start it:       ollama serve\n  Pull a model:   ollama pull ${options.model}\n\n  Setup guide:    https://localpress.griffen.codes/docs/ollama-setup`,
         );
         process.exit(2);
       }
@@ -141,7 +141,9 @@ export function registerCaptionCommand(program: Command): void {
 
           // Skip if alt text already set and --overwrite not passed.
           if (item.altText?.trim() && !options.overwrite) {
-            info(`  — #${id} (${item.filename}) already has alt text — skipping. (use --overwrite to replace)`);
+            info(
+              `  — #${id} (${item.filename}) already has alt text — skipping. (use --overwrite to replace)`,
+            );
             results.push({
               id,
               filename: item.filename,
@@ -188,7 +190,10 @@ export function registerCaptionCommand(program: Command): void {
               siteName: site.name,
               wpId: item.id,
               operation: 'caption',
-              paramsJson: JSON.stringify({ model: result.model, overwrite: options.overwrite ?? false }),
+              paramsJson: JSON.stringify({
+                model: result.model,
+                overwrite: options.overwrite ?? false,
+              }),
               sourceHash: null,
               resultHash: null,
               bytesBefore: null,
@@ -248,7 +253,9 @@ export function registerCaptionCommand(program: Command): void {
       const acted = results.filter((r) => !r.skipped);
       if (acted.length > 0 || failures > 0) {
         const dryNote = options.dryRun ? ' (dry run — WordPress not updated)' : '';
-        info(`\n  Done: ${acted.length} captioned, ${results.filter((r) => r.skipped).length} skipped, ${failures} failed${dryNote}.`);
+        info(
+          `\n  Done: ${acted.length} captioned, ${results.filter((r) => r.skipped).length} skipped, ${failures} failed${dryNote}.`,
+        );
       }
 
       if (failures > 0) process.exit(1);

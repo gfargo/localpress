@@ -130,8 +130,8 @@ export async function removeBackground(
   const outputData = outputTensor.data as Float32Array;
 
   // Normalize the mask to [0, 255].
-  let minVal = Infinity;
-  let maxVal = -Infinity;
+  let minVal = Number.POSITIVE_INFINITY;
+  let maxVal = Number.NEGATIVE_INFINITY;
   for (let i = 0; i < outputData.length; i++) {
     if (outputData[i] < minVal) minVal = outputData[i];
     if (outputData[i] > maxVal) maxVal = outputData[i];
@@ -156,7 +156,7 @@ export async function removeBackground(
     .toBuffer();
 
   // 8. Composite: apply mask as alpha channel to the original image.
-  let outputPipeline = sharp(imageBytes).ensureAlpha();
+  const outputPipeline = sharp(imageBytes).ensureAlpha();
 
   // Extract raw RGBA pixels.
   const rgbaBuffer = await outputPipeline.raw().toBuffer();

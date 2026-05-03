@@ -212,8 +212,9 @@ export class SiteDb {
   // Stats ---------------------------------------------------------------------
 
   getStats(siteName: string): SiteStats {
-    const ops = this.db.query(
-      `SELECT operation,
+    const ops = this.db
+      .query(
+        `SELECT operation,
               COUNT(*)                                          AS total,
               SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS succeeded,
               SUM(CASE WHEN status = 'failure' THEN 1 ELSE 0 END) AS failed,
@@ -226,10 +227,12 @@ export class SiteDb {
        WHERE site_name = ?
        GROUP BY operation
        ORDER BY total DESC`,
-    ).all(siteName) as RawOpStat[];
+      )
+      .all(siteName) as RawOpStat[];
 
-    const totals = this.db.query(
-      `SELECT COUNT(DISTINCT wp_id)                                       AS files_touched,
+    const totals = this.db
+      .query(
+        `SELECT COUNT(DISTINCT wp_id)                                       AS files_touched,
               SUM(CASE WHEN bytes_before > bytes_after THEN bytes_before - bytes_after ELSE 0 END) AS bytes_saved,
               SUM(bytes_before)                                           AS bytes_in,
               COUNT(*)                                                    AS total_ops,
@@ -237,7 +240,8 @@ export class SiteDb {
               MAX(ran_at)                                                 AS last_ran_at
        FROM processing_history
        WHERE site_name = ?`,
-    ).get(siteName) as RawTotalStat | null;
+      )
+      .get(siteName) as RawTotalStat | null;
 
     return {
       siteName,

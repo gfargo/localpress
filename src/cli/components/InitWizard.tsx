@@ -11,8 +11,8 @@
  *   7. Save confirmation
  */
 
-import { useState, useEffect } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
+import { useEffect, useState } from 'react';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { SiteConfig } from '../../types.ts';
 import { loadConfig, saveConfig } from '../utils/config.ts';
@@ -53,7 +53,8 @@ export function InitWizard({
   const [authenticatedAs, setAuthenticatedAs] = useState('');
   const [capabilities, setCapabilities] = useState<Array<{ name: string; available: boolean }>>([]);
 
-  // Skip steps that already have values.
+  // Skip steps that already have values. Runs once on mount — deps intentionally empty.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only effect
   useEffect(() => {
     if (step === 'url' && initialUrl) {
       setUrl(normalizeUrl(initialUrl));
@@ -74,6 +75,7 @@ export function InitWizard({
   }, []);
 
   // Run connection test when we reach the testing step.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: stable refs; re-running on each dep change would break the wizard flow
   useEffect(() => {
     if (step !== 'testing') return;
 
@@ -89,9 +91,7 @@ export function InitWizard({
 
         if (!response.ok) {
           if (response.status === 401) {
-            setErrorMessage(
-              'Authentication failed. Check your username and Application Password.',
-            );
+            setErrorMessage('Authentication failed. Check your username and Application Password.');
           } else {
             setErrorMessage(`Connection failed: ${response.status} ${response.statusText}`);
           }
@@ -131,9 +131,7 @@ export function InitWizard({
         setSiteName(siteConfig.name);
         setStep('report');
       } catch (err) {
-        setErrorMessage(
-          `Could not connect: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        setErrorMessage(`Could not connect: ${err instanceof Error ? err.message : String(err)}`);
         setStep('error');
       }
     };
@@ -268,9 +266,7 @@ export function InitWizard({
       {/* Step 4: Password */}
       {step === 'password' ? (
         <Box flexDirection="column">
-          <Text dimColor>
-            Application Passwords: {url}/wp-admin/profile.php
-          </Text>
+          <Text dimColor>Application Passwords: {url}/wp-admin/profile.php</Text>
           <Box>
             <Text>Application Password: </Text>
             <Text color="green">{'*'.repeat(inputValue.length)}</Text>
@@ -309,18 +305,14 @@ export function InitWizard({
           <Text bold>Capabilities:</Text>
           {capabilities.map((cap) => (
             <Box key={cap.name}>
-              <Text>  </Text>
-              <Text color={cap.available ? 'green' : 'red'}>
-                {cap.available ? '✓' : '✗'}
-              </Text>
+              <Text> </Text>
+              <Text color={cap.available ? 'green' : 'red'}>{cap.available ? '✓' : '✗'}</Text>
               <Text> {cap.name}</Text>
             </Box>
           ))}
           <Text> </Text>
           {capabilities.some((c) => !c.available) ? (
-            <Text dimColor>
-              Tip: Configure SSH for WP-CLI to unlock all capabilities.
-            </Text>
+            <Text dimColor>Tip: Configure SSH for WP-CLI to unlock all capabilities.</Text>
           ) : null}
           <Text> </Text>
           <Text color="green" bold>
