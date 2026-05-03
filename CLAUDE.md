@@ -1,6 +1,6 @@
 # CLAUDE.md — handoff for the next agent
 
-You're picking up `localpress` at **v1.4.0**. The full v1.0 implementation plan is complete plus post-v1.0 enhancements. All 18 CLI commands are implemented and working. The project compiles, tests pass, and the CLI boots cleanly.
+You're picking up `localpress` at **v1.4.3**. The full v1.0 implementation plan is complete plus post-v1.0 enhancements. All 18 CLI commands are implemented and working. The project compiles, tests pass, and the CLI boots cleanly.
 
 **Read in this order before writing any code:**
 
@@ -13,7 +13,7 @@ You're picking up `localpress` at **v1.4.0**. The full v1.0 implementation plan 
 
 ## Current status
 
-**Version:** 1.4.0
+**Version:** 1.4.3
 **Status:** All v1.0 plan features complete. Post-v1.0 enhancements shipped: advanced audit checks, config management, Homebrew distribution, interactive TUI browser, AI captioning, cumulative stats, media sort.
 
 ### What's implemented
@@ -83,6 +83,9 @@ You're picking up `localpress` at **v1.4.0**. The full v1.0 implementation plan 
 | v1.3.0 | Interactive TUI media browser (`list -i`) with inline thumbnails, spinner, page-nav hints |
 | v1.3.1 | TypeScript narrowing fix for `list --interactive`; TUI sidebar thumbnail always-on |
 | v1.4.0 | `caption` command (local Ollama alt-text), `stats` command, `list --sort`/`--order`, integration test CI fixes |
+| v1.4.1 | `list -i` preview on-demand (`[p]`), full-screen overlay mode, no more layout gaps from iTerm2 escape sequences |
+| v1.4.2 | `list -i` live search (`/`), client-side filter by filename/title, two-stage Esc behaviour |
+| v1.4.3 | CI docker compose rewrite (no more services: block), setup-wp.sh consolidation, all 9 integration tests local-reproducible via `act` |
 
 ---
 

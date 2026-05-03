@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-05-03
+
+### Fixed
+- **CI integration tests**: replaced GitHub Actions `services:` block and manual
+  `docker run` / `docker exec` steps with `docker compose -f test/integration/docker-compose.yml`.
+  The old approach used `${{ job.services.db.network }}` which `act` cannot resolve locally,
+  making local CI reproduction impossible. The new approach works identically in both
+  `act push -j integration-test` and the real GitHub Actions runner.
+- **`setup-wp.sh` consolidated all WP setup**: pretty-permalinks, Apache `SetEnvIf`
+  auth passthrough, must-use plugin for Application Passwords on HTTP, and
+  `chown -R www-data:www-data wp-content` so the REST API upload test can write
+  to directories that WP-CLI created as root.
+
 ## [1.4.2] - 2026-05-03
 
 ### Added
