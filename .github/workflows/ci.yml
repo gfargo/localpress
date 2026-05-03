@@ -33,21 +33,6 @@ jobs:
     name: Integration tests (Docker WP)
     runs-on: ubuntu-latest
     needs: lint-and-test
-    services:
-      db:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: rootpass
-          MYSQL_DATABASE: wordpress
-          MYSQL_USER: wp
-          MYSQL_PASSWORD: wppass
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h localhost -u root -prootpass"
-          --health-interval=5s
-          --health-timeout=3s
-          --health-retries=10
 
     steps:
       - uses: actions/checkout@v5
@@ -59,85 +44,17 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Start WordPress
+      - name: Start WordPress + MySQL
         run: |
-          docker run -d --name wp-test \
-            --network ${{ job.services.db.network }} \
-            -e WORDPRESS_DB_HOST=db \
-            -e WORDPRESS_DB_USER=wp \
-            -e WORDPRESS_DB_PASSWORD=wppass \
-            -e WORDPRESS_DB_NAME=wordpress \
-            -p 8880:80 \
-            wordpress:6.7-php8.3-apache
-
-      - name: Wait for WordPress
-        run: |
-          echo "Waiting for Apache to start..."
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:8880/wp-login.php > /dev/null 2>&1; then
-              echo "Apache is ready"
-              exit 0
-            fi
-            echo "Waiting... ($i/30)"
-            sleep 5
-          done
-          echo "ERROR: Apache never became ready"
-          exit 1
+          docker compose -f test/integration/docker-compose.yml up -d --wait --timeout 120
+          echo "WordPress and MySQL are healthy"
 
       - name: Setup WordPress
         run: |
-          # Install WP-CLI in the container
-          docker exec wp-test bash -c '
-            curl -sO https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
-            chmod +x wp-cli.phar
-            mv wp-cli.phar /usr/local/bin/wp
-
-            # URL must match the host:port that tests will use (stored in WP db)
-            wp core install \
-              --url="http://localhost:8880" \
-              --title="localpress CI" \
-              --admin_user=admin \
-              --admin_password=admin123 \
-              --admin_email=admin@test.local \
-              --path=/var/www/html \
-              --allow-root \
-              --skip-email
-
-            # Pretty permalinks are required for /wp-json/ REST API routing.
-            wp rewrite structure "/%postname%/" \
-              --path=/var/www/html --allow-root
-            wp rewrite flush --hard \
-              --path=/var/www/html --allow-root
-
-            # WordPress 5.9+ disables Application Passwords on non-SSL sites.
-            # Add a must-use plugin to re-enable them for this HTTP test environment.
-            mkdir -p /var/www/html/wp-content/mu-plugins
-            echo '<?php add_filter("wp_is_application_passwords_available", "__return_true");' \
-              > /var/www/html/wp-content/mu-plugins/enable-app-passwords.php
-
-            APP_PASS=$(wp user application-password create admin "ci-test" \
-              --porcelain --path=/var/www/html --allow-root)
-            echo "APP_PASS=$APP_PASS" > /tmp/wp-test-env
-          '
-          # Keep the .htaccess rewrite-level passthrough as a fallback.
-          docker exec wp-test sed -i \
-            's|RewriteEngine On|RewriteEngine On\nRewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]|' \
-            /var/www/html/.htaccess
-          # The definitive fix: add a SetEnvIf directive at the Apache config level.
-          # mod_php should populate PHP_AUTH_USER/PW automatically, but in some Docker
-          # Apache builds it does not. SetEnvIf copies the header into an env var that
-          # WordPress Application Password auth reads as a fallback.
-          # Write the Apache conf on the host (single quotes keep $1 literal),
-          # then docker cp into the container — avoids stdin/pipe quirks with
-          # docker exec -i that can silently drop content on GH Actions runners.
-          echo 'SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1' > /tmp/auth-pass.conf
-          docker cp /tmp/auth-pass.conf wp-test:/etc/apache2/conf-available/auth-pass.conf
-          echo "=== auth-pass.conf content ==="
-          docker exec wp-test cat /etc/apache2/conf-available/auth-pass.conf
-          docker exec wp-test a2enconf auth-pass
-          docker exec wp-test apache2ctl graceful
-          # Extract the app password
-          docker cp wp-test:/tmp/wp-test-env /tmp/wp-test-env
+          docker compose -f test/integration/docker-compose.yml exec -T wordpress \
+            bash /usr/local/bin/setup-wp.sh
+          docker compose -f test/integration/docker-compose.yml exec -T wordpress \
+            cat /tmp/wp-test-env > /tmp/wp-test-env
           source /tmp/wp-test-env
           echo "WP_TEST_APP_PASSWORD=$APP_PASS" >> $GITHUB_ENV
           echo "WP_TEST_URL=http://localhost:8880" >> $GITHUB_ENV
@@ -182,25 +99,12 @@ jobs:
             "http://localhost:8880/wp-json/wp/v2/media?per_page=1&page=1&orderby=date&order=desc" \
             2>&1 | head -60
 
-      - name: Upload test images
-        run: |
-          docker exec wp-test bash -c '
-            php -r '\''
-              $img = imagecreatetruecolor(800, 600);
-              $bg = imagecolorallocate($img, 100, 150, 200);
-              imagefill($img, 0, 0, $bg);
-              imagejpeg($img, "/tmp/test-1.jpg", 95);
-              imagedestroy($img);
-            '\''
-            wp media import /tmp/test-1.jpg --path=/var/www/html --allow-root --title="test-image-1"
-          '
-
       - name: Run integration tests
         run: bun test test/integration/
 
       - name: Cleanup
         if: always()
-        run: docker rm -f wp-test || true
+        run: docker compose -f test/integration/docker-compose.yml down -v
 
   build-binaries:
     name: Build binaries
