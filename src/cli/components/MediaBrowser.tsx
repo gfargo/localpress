@@ -127,10 +127,10 @@ export function MediaBrowser({
     setCursor(0);
   }, [searchQuery]);
 
-  // Spinner animation while a page is loading.
+  // Spinner animation while a page is loading (nav-bar indicator only).
   useEffect(() => {
     if (!loading) return;
-    const id = setInterval(() => setSpinFrame((f) => (f + 1) % SPIN_FRAMES.length), 80);
+    const id = setInterval(() => setSpinFrame((f) => (f + 1) % SPIN_FRAMES.length), 150);
     return () => clearInterval(id);
   }, [loading]);
 
@@ -418,14 +418,7 @@ export function MediaBrowser({
       <Box flexDirection="row">
         {/* List panel */}
         <Box flexDirection="column" width={listWidth}>
-          {loading ? (
-            <Box height={listHeight} alignItems="center" justifyContent="center">
-              <Text color="green">
-                {SPIN_FRAMES[spinFrame]}
-                {'  '}Loading page {page}…
-              </Text>
-            </Box>
-          ) : loadError ? (
+          {loadError ? (
             <Box paddingX={2} paddingY={1}>
               <Text color="red">Error: {loadError}</Text>
             </Box>
@@ -435,8 +428,10 @@ export function MediaBrowser({
             </Box>
           ) : (
             visibleItems.map((item, i) => {
-              const isSelected = scrollStart + i === cursor;
-              const isProcessed = processedIds.has(item.id);
+              // Keep the previous page's rows visible (dimmed) while loading —
+              // avoids the tall-box → rows layout thrash that causes flicker.
+              const isSelected = !loading && scrollStart + i === cursor;
+              const isProcessed = !loading && processedIds.has(item.id);
               const size = item.sizeBytes ? formatBytes(item.sizeBytes) : '     ';
               const ext = (item.mimeType.split('/')[1] ?? '').slice(0, 4).padEnd(4);
               const maxName = listWidth - 27;
@@ -450,14 +445,14 @@ export function MediaBrowser({
                   <Text
                     inverse={isSelected}
                     color={isSelected ? undefined : isProcessed ? 'green' : undefined}
-                    dimColor={!isSelected && !isProcessed}
+                    dimColor={loading || (!isSelected && !isProcessed)}
                   >
                     {isSelected ? '▶ ' : '  '}
                     <Text color={isSelected ? undefined : 'cyan'}>
                       #{String(item.id).padEnd(5)}
                     </Text>{' '}
-                    {name} <Text dimColor={!isSelected}>{ext}</Text>{' '}
-                    <Text dimColor={!isSelected}>{size.padStart(8)}</Text>
+                    {name} <Text dimColor={loading || !isSelected}>{ext}</Text>{' '}
+                    <Text dimColor={loading || !isSelected}>{size.padStart(8)}</Text>
                   </Text>
                 </Box>
               );

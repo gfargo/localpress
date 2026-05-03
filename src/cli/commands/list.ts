@@ -113,16 +113,23 @@ export function registerListCommand(program: Command): void {
 
         await waitUntilExit();
 
-        // Print the follow-up command for the action the user triggered.
+        // Execute the follow-up command the user triggered from the TUI.
         const pendingAction = pending.action;
         if (pendingAction && pendingAction.type !== 'quit') {
-          if (pendingAction.type === 'optimize') {
-            info(`\nRun: localpress optimize ${pendingAction.id}`);
-          } else if (pendingAction.type === 'edit') {
-            info(`\nRun: localpress edit ${pendingAction.id}`);
-          } else if (pendingAction.type === 'show') {
-            info(`\nRun: localpress show ${pendingAction.id}`);
-          }
+          const subCmd =
+            pendingAction.type === 'optimize'
+              ? 'optimize'
+              : pendingAction.type === 'edit'
+                ? 'edit'
+                : 'show';
+
+          const { spawnSync } = await import('node:child_process');
+          // argv[1] is a .ts script in dev mode; the compiled binary repeats argv[0].
+          const isDevMode = /\.(ts|mts|js|mjs)$/.test(process.argv[1] ?? '');
+          const spawnArgs = isDevMode
+            ? [process.argv[1], subCmd, String(pendingAction.id)]
+            : [subCmd, String(pendingAction.id)];
+          spawnSync(process.argv[0], spawnArgs, { stdio: 'inherit' });
         }
 
         return;
