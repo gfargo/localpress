@@ -112,7 +112,10 @@ export function registerResizeCommand(program: Command): void {
 
           if (resultWpId === null) {
             const uploadAdapter = resolver.resolve('upload');
-            const newFilename = item.filename.replace(/\.[^.]+$/, `-resized.${result.after.format}`);
+            const newFilename = item.filename.replace(
+              /\.[^.]+$/,
+              `-resized.${result.after.format}`,
+            );
             const uploaded = await uploadAdapter.upload(result.bytes, {
               filename: newFilename,
               title: item.title,
@@ -120,12 +123,16 @@ export function registerResizeCommand(program: Command): void {
             });
             resultWpId = uploaded.id;
             if (!options.keepOriginal) {
-              warn(`    ⚠ Uploaded as new attachment #${resultWpId} (in-place replacement not available).`);
+              warn(
+                `    ⚠ Uploaded as new attachment #${resultWpId} (in-place replacement not available).`,
+              );
             }
           }
 
           const saved = sourceBytes.length - result.bytes.length;
-          info(`    ✓ ${dims} → ${newDims}  ${formatBytes(sourceBytes.length)} → ${formatBytes(result.bytes.length)} (${durationMs}ms)`);
+          info(
+            `    ✓ ${dims} → ${newDims}  ${formatBytes(sourceBytes.length)} → ${formatBytes(result.bytes.length)} (${durationMs}ms)`,
+          );
 
           // Record in SQLite.
           db.upsertAttachment({

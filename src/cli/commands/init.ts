@@ -54,8 +54,8 @@ export function registerInitCommand(program: Command): void {
 
       // Non-interactive path (flags required).
       let siteUrl = options.url as string | undefined;
-      let username = options.username as string | undefined;
-      let appPassword = options.appPassword as string | undefined;
+      const username = options.username as string | undefined;
+      const appPassword = options.appPassword as string | undefined;
       let siteName = options.name as string | undefined;
 
       if (!siteUrl || !username || !appPassword) {
@@ -91,8 +91,7 @@ export function registerInitCommand(program: Command): void {
         if (!response.ok) {
           if (response.status === 401) {
             error(
-              'Authentication failed. Check your username and Application Password.\n' +
-                `Application Passwords: ${siteUrl}/wp-admin/profile.php`,
+              `Authentication failed. Check your username and Application Password.\nApplication Passwords: ${siteUrl}/wp-admin/profile.php`,
             );
           } else {
             error(`Connection failed: ${response.status} ${response.statusText}`);
@@ -103,7 +102,9 @@ export function registerInitCommand(program: Command): void {
         const user = (await response.json()) as { name?: string; slug?: string };
         info(`  ✓ Authenticated as ${user.name ?? user.slug ?? username}`);
       } catch (err) {
-        error(`Could not connect to ${siteUrl}: ${err instanceof Error ? err.message : String(err)}`);
+        error(
+          `Could not connect to ${siteUrl}: ${err instanceof Error ? err.message : String(err)}`,
+        );
         process.exit(4);
       }
 

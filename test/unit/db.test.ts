@@ -90,15 +90,15 @@ describe('attachment CRUD', () => {
 
     const att = db.getAttachment('test-site', 42);
     expect(att).not.toBeNull();
-    expect(att!.siteName).toBe('test-site');
-    expect(att!.wpId).toBe(42);
-    expect(att!.sourceUrl).toBe('https://example.test/wp-content/uploads/photo.jpg');
-    expect(att!.sourceHash).toBe('abc123');
-    expect(att!.sizeBytes).toBe(2048);
-    expect(att!.width).toBe(1920);
-    expect(att!.height).toBe(1080);
-    expect(att!.mimeType).toBe('image/jpeg');
-    expect(att!.lastSeenAt).toBe(now);
+    expect(att?.siteName).toBe('test-site');
+    expect(att?.wpId).toBe(42);
+    expect(att?.sourceUrl).toBe('https://example.test/wp-content/uploads/photo.jpg');
+    expect(att?.sourceHash).toBe('abc123');
+    expect(att?.sizeBytes).toBe(2048);
+    expect(att?.width).toBe(1920);
+    expect(att?.height).toBe(1080);
+    expect(att?.mimeType).toBe('image/jpeg');
+    expect(att?.lastSeenAt).toBe(now);
 
     db.close();
   });
@@ -137,10 +137,10 @@ describe('attachment CRUD', () => {
     });
 
     const att = db.getAttachment('test-site', 1);
-    expect(att!.sourceUrl).toBe('https://example.test/new.jpg');
-    expect(att!.sourceHash).toBe('hash2');
-    expect(att!.sizeBytes).toBe(2000);
-    expect(att!.lastSeenAt).toBe(2000);
+    expect(att?.sourceUrl).toBe('https://example.test/new.jpg');
+    expect(att?.sourceHash).toBe('hash2');
+    expect(att?.sizeBytes).toBe(2000);
+    expect(att?.lastSeenAt).toBe(2000);
 
     db.close();
   });
@@ -192,11 +192,11 @@ describe('attachment CRUD', () => {
     });
 
     const att = db.getAttachment('test-site', 1);
-    expect(att!.sourceHash).toBeNull();
-    expect(att!.sizeBytes).toBeNull();
-    expect(att!.width).toBeNull();
-    expect(att!.height).toBeNull();
-    expect(att!.mimeType).toBeNull();
+    expect(att?.sourceHash).toBeNull();
+    expect(att?.sizeBytes).toBeNull();
+    expect(att?.width).toBeNull();
+    expect(att?.height).toBeNull();
+    expect(att?.mimeType).toBeNull();
 
     db.close();
   });
@@ -239,12 +239,12 @@ describe('processing history', () => {
 
     const record = db.getLastProcessing('test-site', 10);
     expect(record).not.toBeNull();
-    expect(record!.id).toBe(id);
-    expect(record!.operation).toBe('optimize');
-    expect(record!.bytesBefore).toBe(5000);
-    expect(record!.bytesAfter).toBe(1200);
-    expect(record!.status).toBe('success');
-    expect(record!.durationMs).toBe(350);
+    expect(record?.id).toBe(id);
+    expect(record?.operation).toBe('optimize');
+    expect(record?.bytesBefore).toBe(5000);
+    expect(record?.bytesAfter).toBe(1200);
+    expect(record?.status).toBe('success');
+    expect(record?.durationMs).toBe(350);
 
     db.close();
   });
@@ -298,8 +298,8 @@ describe('processing history', () => {
     });
 
     const record = db.getLastProcessing('test-site', 20);
-    expect(record!.ranAt).toBe(now);
-    expect(record!.bytesAfter).toBe(1500);
+    expect(record?.ranAt).toBe(now);
+    expect(record?.bytesAfter).toBe(1500);
 
     db.close();
   });
@@ -353,12 +353,12 @@ describe('processing history', () => {
     });
 
     const optimizeRecord = db.getLastProcessing('test-site', 30, 'optimize');
-    expect(optimizeRecord!.operation).toBe('optimize');
-    expect(optimizeRecord!.bytesAfter).toBe(2000);
+    expect(optimizeRecord?.operation).toBe('optimize');
+    expect(optimizeRecord?.bytesAfter).toBe(2000);
 
     const convertRecord = db.getLastProcessing('test-site', 30, 'convert');
-    expect(convertRecord!.operation).toBe('convert');
-    expect(convertRecord!.bytesAfter).toBe(1000);
+    expect(convertRecord?.operation).toBe('convert');
+    expect(convertRecord?.bytesAfter).toBe(1000);
 
     db.close();
   });
@@ -402,8 +402,8 @@ describe('processing history', () => {
     });
 
     const record = db.getLastProcessing('test-site', 40);
-    expect(record!.status).toBe('failure');
-    expect(record!.errorMessage).toBe('Codec error: unsupported format');
+    expect(record?.status).toBe('failure');
+    expect(record?.errorMessage).toBe('Codec error: unsupported format');
 
     db.close();
   });

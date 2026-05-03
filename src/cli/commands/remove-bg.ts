@@ -18,8 +18,8 @@ import type { ModelName } from '../../engine/rembg/models.ts';
 import { DEFAULT_MODEL, isModelCached, listAvailableModels } from '../../engine/rembg/models.ts';
 import { removeBackground } from '../../engine/rembg/remove-bg.ts';
 import {
-    isSystemRembgAvailable,
-    removeBackgroundWithSystemRembg,
+  isSystemRembgAvailable,
+  removeBackgroundWithSystemRembg,
 } from '../../engine/rembg/system-rembg.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
@@ -31,7 +31,9 @@ export function registerRemoveBgCommand(program: Command): void {
     .description('Remove backgrounds from images using local AI (U2-Net)')
     .option(
       '--model <name>',
-      `model to use: ${listAvailableModels().map((m) => m.name).join(', ')} (default: ${DEFAULT_MODEL})`,
+      `model to use: ${listAvailableModels()
+        .map((m) => m.name)
+        .join(', ')} (default: ${DEFAULT_MODEL})`,
       DEFAULT_MODEL,
     )
     .option('--bg <color>', 'background color instead of transparency (hex, e.g. #ffffff)')

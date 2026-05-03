@@ -60,7 +60,11 @@ export function registerOptimizeCommand(program: Command): void {
       'always upload as a new attachment, never attempt true replacement',
     )
     .option('--keep-original', 'do not replace; save the optimized copy as a separate attachment')
-    .option('--encoder <backend>', 'encoder: sharp (default) or jsquash (WASM codecs, better PNG via OxiPNG)', 'sharp')
+    .option(
+      '--encoder <backend>',
+      'encoder: sharp (default) or jsquash (WASM codecs, better PNG via OxiPNG)',
+      'sharp',
+    )
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -246,7 +250,7 @@ export function registerOptimizeCommand(program: Command): void {
             // Upload as new attachment (fallback or --keep-original).
             const uploadAdapter = resolver.resolve('upload');
             const ext = result.after.format ? `.${result.after.format}` : '';
-            const newFilename = item.filename.replace(/\.[^.]+$/, '') + `-optimized${ext}`;
+            const newFilename = `${item.filename.replace(/\.[^.]+$/, '')}-optimized${ext}`;
             const uploaded = await uploadAdapter.upload(result.bytes, {
               filename: newFilename,
               title: item.title,

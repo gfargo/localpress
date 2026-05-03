@@ -10,6 +10,7 @@ import { Command, Option } from 'commander';
 
 import packageJson from '../../package.json' with { type: 'json' };
 import { registerAuditCommand } from './commands/audit.ts';
+import { registerCaptionCommand } from './commands/caption.ts';
 import { registerConfigCommand } from './commands/config.ts';
 import { registerConvertCommand } from './commands/convert.ts';
 import { registerDoctorCommand } from './commands/doctor.ts';
@@ -23,8 +24,8 @@ import { registerReferencesCommand } from './commands/references.ts';
 import { registerRemoveBgCommand } from './commands/remove-bg.ts';
 import { registerResizeCommand } from './commands/resize.ts';
 import { registerShowCommand } from './commands/show.ts';
-import { registerStatsCommand } from './commands/stats.ts';
 import { registerSitesCommand } from './commands/sites.ts';
+import { registerStatsCommand } from './commands/stats.ts';
 import { setOutputOptions } from './utils/output.ts';
 
 const program = new Command();
@@ -64,6 +65,7 @@ registerConfigCommand(program);
 registerListCommand(program);
 registerShowCommand(program);
 registerStatsCommand(program);
+registerCaptionCommand(program);
 registerAuditCommand(program);
 registerOptimizeCommand(program);
 registerConvertCommand(program);

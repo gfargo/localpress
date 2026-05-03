@@ -104,8 +104,7 @@ export function registerSitesCommand(program: Command): void {
       if (!config.sites[name]) {
         const known = Object.keys(config.sites);
         error(
-          `Unknown site '${name}'.` +
-            (known.length ? ` Known sites: ${known.join(', ')}` : ' No sites configured.'),
+          `Unknown site '${name}'.${known.length ? ` Known sites: ${known.join(', ')}` : ' No sites configured.'}`,
         );
         process.exit(3);
       }

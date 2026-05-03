@@ -14,14 +14,14 @@
  * reports stats. It doesn't know about WordPress or the CLI.
  */
 
-import type {
-    CompressionMode,
-    ImageFormat,
-    ImageInfo,
-    OptimizeOptions,
-    OptimizeResult,
-} from './types.ts';
 import { isJsquashSupported, jsquashEncode } from './jsquash.ts';
+import type {
+  CompressionMode,
+  ImageFormat,
+  ImageInfo,
+  OptimizeOptions,
+  OptimizeResult,
+} from './types.ts';
 
 /**
  * Optimize an image buffer according to the given options.

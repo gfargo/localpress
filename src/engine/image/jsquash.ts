@@ -71,8 +71,7 @@ export async function jsquashEncode(
 
     default:
       throw new Error(
-        `jSquash encoder does not support format '${format}'. ` +
-          'Supported: jpeg, png, webp, avif. Use --encoder sharp for other formats.',
+        `jSquash encoder does not support format '${format}'. Supported: jpeg, png, webp, avif. Use --encoder sharp for other formats.`,
       );
   }
 }

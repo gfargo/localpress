@@ -72,14 +72,17 @@ jobs:
 
       - name: Wait for WordPress
         run: |
+          echo "Waiting for Apache to start..."
           for i in $(seq 1 30); do
             if curl -sf http://localhost:8880/wp-login.php > /dev/null 2>&1; then
-              echo "WordPress is ready"
-              break
+              echo "Apache is ready"
+              exit 0
             fi
-            echo "Waiting for WordPress... ($i/30)"
+            echo "Waiting... ($i/30)"
             sleep 5
           done
+          echo "ERROR: Apache never became ready"
+          exit 1
 
       - name: Setup WordPress
         run: |
@@ -89,8 +92,9 @@ jobs:
             chmod +x wp-cli.phar
             mv wp-cli.phar /usr/local/bin/wp
 
+            # URL must match the host:port that tests will use (stored in WP db)
             wp core install \
-              --url="http://localhost:80" \
+              --url="http://localhost:8880" \
               --title="localpress CI" \
               --admin_user=admin \
               --admin_password=admin123 \
@@ -99,16 +103,75 @@ jobs:
               --allow-root \
               --skip-email
 
+            # Pretty permalinks are required for /wp-json/ REST API routing.
+            wp rewrite structure "/%postname%/" \
+              --path=/var/www/html --allow-root
+            wp rewrite flush --hard \
+              --path=/var/www/html --allow-root
+
             APP_PASS=$(wp user application-password create admin "ci-test" \
               --porcelain --path=/var/www/html --allow-root)
             echo "APP_PASS=$APP_PASS" > /tmp/wp-test-env
           '
+          # Keep the .htaccess rewrite-level passthrough as a fallback.
+          docker exec wp-test sed -i \
+            's|RewriteEngine On|RewriteEngine On\nRewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]|' \
+            /var/www/html/.htaccess
+          # The definitive fix: add a SetEnvIf directive at the Apache config level.
+          # mod_php should populate PHP_AUTH_USER/PW automatically, but in some Docker
+          # Apache builds it does not. SetEnvIf copies the header into an env var that
+          # WordPress Application Password auth reads as a fallback.
+          # Use docker exec -i + heredoc to write the file — no quoting issues.
+          docker exec -i wp-test tee /etc/apache2/conf-available/auth-pass.conf << 'APACHEEOF'
+SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+APACHEEOF
+          docker exec wp-test a2enconf auth-pass
+          docker exec wp-test apache2ctl graceful
           # Extract the app password
           docker cp wp-test:/tmp/wp-test-env /tmp/wp-test-env
           source /tmp/wp-test-env
           echo "WP_TEST_APP_PASSWORD=$APP_PASS" >> $GITHUB_ENV
           echo "WP_TEST_URL=http://localhost:8880" >> $GITHUB_ENV
           echo "WP_TEST_USER=admin" >> $GITHUB_ENV
+
+      - name: Verify WordPress REST API
+        run: |
+          source /tmp/wp-test-env
+          echo "Polling REST API until it returns JSON..."
+          for i in $(seq 1 20); do
+            CT=$(curl -sIL -u "admin:$APP_PASS" \
+              http://localhost:8880/wp-json/wp/v2/media/ 2>/dev/null \
+              | grep -i "^content-type" | tail -1)
+            if echo "$CT" | grep -qi "application/json"; then
+              echo "REST API is ready (JSON response confirmed)"
+              break
+            fi
+            echo "content-type: ${CT:-none}, retrying ($i/20)..."
+            sleep 3
+          done
+          if ! echo "$CT" | grep -qi "application/json"; then
+            echo "ERROR: REST API never returned JSON"
+            curl -vL -u "admin:$APP_PASS" http://localhost:8880/wp-json/wp/v2/media/ || true
+            exit 1
+          fi
+          echo "Verifying authenticated write access (/users/me requires auth)..."
+          ME_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" \
+            -u "admin:$APP_PASS" \
+            http://localhost:8880/wp-json/wp/v2/users/me)
+          if [ "$ME_STATUS" != "200" ]; then
+            echo "ERROR: Auth check failed — /users/me returned $ME_STATUS (expected 200)"
+            curl -sL -u "admin:$APP_PASS" http://localhost:8880/wp-json/wp/v2/users/me | head -c 500
+            exit 1
+          fi
+          echo "Auth check: OK (HTTP $ME_STATUS)"
+
+      - name: Debug REST API response
+        run: |
+          source /tmp/wp-test-env
+          echo "=== Headers + body for media endpoint (with query params, no trailing slash) ==="
+          curl -sLD - -u "admin:$APP_PASS" \
+            "http://localhost:8880/wp-json/wp/v2/media?per_page=1&page=1&orderby=date&order=desc" \
+            2>&1 | head -60
 
       - name: Upload test images
         run: |

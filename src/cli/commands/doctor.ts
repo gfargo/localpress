@@ -47,7 +47,8 @@ const KNOWN_PLUGINS: Array<{
     slug: 'wp-smush-pro',
     name: 'Smush Pro',
     capability: 'conflict awareness',
-    description: 'Smush may re-process images after localpress uploads — consider disabling auto-smush',
+    description:
+      'Smush may re-process images after localpress uploads — consider disabling auto-smush',
   },
   {
     slug: 'shortpixel-image-optimiser',
@@ -145,8 +146,9 @@ export function registerDoctorCommand(program: Command): void {
         if (!availability.wpCli) {
           issues.push({
             severity: 'info',
-            message: 'WP-CLI (SSH) not configured — replace-in-place and full reference scanning unavailable',
-            fix: 'Run `localpress init --site ' + name + '` and add SSH config to unlock these capabilities',
+            message:
+              'WP-CLI (SSH) not configured — replace-in-place and full reference scanning unavailable',
+            fix: `Run \`localpress init --site ${name}\` and add SSH config to unlock these capabilities`,
           });
         }
 
@@ -160,9 +162,7 @@ export function registerDoctorCommand(program: Command): void {
         const conflictPlugins = plugins.filter(
           (p) =>
             p.active &&
-            ['wp-smush-pro', 'shortpixel-image-optimiser', 'ewww-image-optimizer'].includes(
-              p.slug,
-            ),
+            ['wp-smush-pro', 'shortpixel-image-optimiser', 'ewww-image-optimizer'].includes(p.slug),
         );
         for (const p of conflictPlugins) {
           issues.push({
@@ -241,7 +241,8 @@ export function registerDoctorCommand(program: Command): void {
             info('');
             info('  Issues:');
             for (const issue of issues) {
-              const icon = issue.severity === 'error' ? '✗' : issue.severity === 'warning' ? '⚠' : 'ℹ';
+              const icon =
+                issue.severity === 'error' ? '✗' : issue.severity === 'warning' ? '⚠' : 'ℹ';
               info(`    ${icon} ${issue.message}`);
               if (issue.fix) {
                 info(`      → ${issue.fix}`);
@@ -302,7 +303,7 @@ async function detectPlugins(site: SiteConfig): Promise<PluginStatus[]> {
   return KNOWN_PLUGINS.map((known) => {
     const installed = rawPlugins.find(
       (p) =>
-        p.plugin.startsWith(known.slug + '/') ||
+        p.plugin.startsWith(`${known.slug}/`) ||
         p.plugin === known.slug ||
         p.name.toLowerCase().includes(known.name.toLowerCase()),
     );
@@ -310,7 +311,9 @@ async function detectPlugins(site: SiteConfig): Promise<PluginStatus[]> {
     return {
       slug: known.slug,
       name: known.name,
-      active: installed ? installed.status === 'active' || installed.status === 'network-active' : false,
+      active: installed
+        ? installed.status === 'active' || installed.status === 'network-active'
+        : false,
       capability: known.capability,
       description: known.description,
       version: installed?.version,

@@ -63,14 +63,8 @@ export function registerAuditCommand(program: Command): void {
       '--display-size',
       'flag images significantly larger than their largest registered WP thumbnail size',
     )
-    .option(
-      '--duplicates',
-      'flag perceptually identical or near-identical images (requires sharp)',
-    )
-    .option(
-      '--broken-refs',
-      'flag attachment URLs referenced in post content that return 404',
-    )
+    .option('--duplicates', 'flag perceptually identical or near-identical images (requires sharp)')
+    .option('--broken-refs', 'flag attachment URLs referenced in post content that return 404')
     .action(async (options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -325,9 +319,7 @@ interface SizeEntry {
   height: number;
 }
 
-function findLargestRegisteredSize(
-  sizes: NonNullable<MediaItem['sizes']>,
-): SizeEntry | null {
+function findLargestRegisteredSize(sizes: NonNullable<MediaItem['sizes']>): SizeEntry | null {
   let largest: SizeEntry | null = null;
   for (const [name, size] of Object.entries(sizes)) {
     if (name === 'full') continue; // 'full' is the source itself
@@ -368,11 +360,7 @@ async function detectDuplicates(items: MediaItem[]): Promise<AuditFinding[]> {
       const buffer = Buffer.from(await response.arrayBuffer());
 
       // Resize to 9×8 grayscale for dHash computation.
-      const pixels = await sharp(buffer)
-        .resize(9, 8, { fit: 'fill' })
-        .grayscale()
-        .raw()
-        .toBuffer();
+      const pixels = await sharp(buffer).resize(9, 8, { fit: 'fill' }).grayscale().raw().toBuffer();
 
       let hash = 0n;
       for (let row = 0; row < 8; row++) {

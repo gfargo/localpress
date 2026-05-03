@@ -9,9 +9,9 @@
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { ListFilters, MediaItem, SortField, SortOrder } from '../../adapters/types.ts';
-import type { MediaBrowserAction } from '../components/MediaBrowser.tsx';
 import { SiteDb } from '../../engine/state/db.ts';
-import { loadConfig, getSiteDbPath, resolveActiveSite } from '../utils/config.ts';
+import type { MediaBrowserAction } from '../components/MediaBrowser.tsx';
+import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson } from '../utils/output.ts';
 
 export function registerListCommand(program: Command): void {
@@ -48,7 +48,9 @@ export function registerListCommand(program: Command): void {
         perPage: Math.min(options.limit ?? 50, 100),
         page: options.page ?? 1,
         sortBy: VALID_SORT_FIELDS.includes(options.sort) ? (options.sort as SortField) : undefined,
-        sortOrder: VALID_SORT_ORDERS.includes(options.order) ? (options.order as SortOrder) : undefined,
+        sortOrder: VALID_SORT_ORDERS.includes(options.order)
+          ? (options.order as SortOrder)
+          : undefined,
       };
 
       // Interactive TUI mode.
@@ -78,7 +80,9 @@ export function registerListCommand(program: Command): void {
             const db = SiteDb.init(getSiteDbPath(site.name));
             processedIds = db.listProcessedWpIds(site.name);
             db.close();
-          } catch { /* DB doesn't exist yet — all items unoptimized */ }
+          } catch {
+            /* DB doesn't exist yet — all items unoptimized */
+          }
           result.items = result.items.filter((item) => !processedIds.has(item.id));
         }
 
@@ -94,7 +98,9 @@ export function registerListCommand(program: Command): void {
             processedIds,
             sortBy: filters.sortBy,
             sortOrder: filters.sortOrder,
-            onAction: (action) => { pending.action = action; },
+            onAction: (action) => {
+              pending.action = action;
+            },
             onPageChange: async (page: number) => {
               const r = await adapter.listMediaPage({ ...filters, page });
               if (options.unoptimized) {
@@ -149,7 +155,9 @@ export function registerListCommand(program: Command): void {
           const processed = db.listProcessedWpIds(site.name);
           items = items.filter((item) => !processed.has(item.id));
           db.close();
-        } catch { /* If the DB doesn't exist yet, all items are unoptimized. */ }
+        } catch {
+          /* If the DB doesn't exist yet, all items are unoptimized. */
+        }
       }
 
       if (parentOpts.json) {
@@ -167,9 +175,10 @@ export function registerListCommand(program: Command): void {
       const from = (pageNum - 1) * perPage + 1;
       const to = Math.min(from + items.length - 1, total);
       const pageInfo = totalPages > 1 ? `  (page ${pageNum}/${totalPages})` : '';
-      const sortInfo = filters.sortBy && filters.sortBy !== 'date'
-        ? `  sorted by ${filters.sortBy} ${filters.sortOrder ?? 'desc'}`
-        : '';
+      const sortInfo =
+        filters.sortBy && filters.sortBy !== 'date'
+          ? `  sorted by ${filters.sortBy} ${filters.sortOrder ?? 'desc'}`
+          : '';
       info(`Showing ${from}–${to} of ${total} item(s)${pageInfo}${sortInfo}:\n`);
 
       for (const item of items) {
@@ -179,12 +188,13 @@ export function registerListCommand(program: Command): void {
       }
 
       if (pageNum < totalPages) {
-        const sortFlags = filters.sortBy ? ` --sort ${filters.sortBy}${filters.sortOrder ? ` --order ${filters.sortOrder}` : ''}` : '';
+        const sortFlags = filters.sortBy
+          ? ` --sort ${filters.sortBy}${filters.sortOrder ? ` --order ${filters.sortOrder}` : ''}`
+          : '';
         info(`\nNext page: localpress list --page ${pageNum + 1}${sortFlags}`);
       }
     });
 }
-
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

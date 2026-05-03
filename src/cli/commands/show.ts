@@ -6,7 +6,7 @@
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import { SiteDb } from '../../engine/state/db.ts';
-import { loadConfig, getSiteDbPath, resolveActiveSite } from '../utils/config.ts';
+import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson } from '../utils/output.ts';
 
 export function registerShowCommand(program: Command): void {
@@ -26,7 +26,7 @@ export function registerShowCommand(program: Command): void {
       const resolver = new AdapterResolver(site);
       const adapter = resolver.resolve('get');
 
-      let item;
+      let item: import('../../adapters/types.ts').MediaItem;
       try {
         item = await adapter.getMedia(id);
       } catch (err) {

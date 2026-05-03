@@ -8,8 +8,8 @@
 
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
-import type { ReferenceScope } from '../../adapters/types.ts';
 import { sshExec } from '../../adapters/ssh.ts';
+import type { ReferenceScope } from '../../adapters/types.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -64,7 +64,7 @@ export function registerReferencesCommand(program: Command): void {
           `cd ${site.ssh.wpPath} && wp db query "UPDATE wp_postmeta SET meta_value='${newId}' WHERE meta_key='_thumbnail_id' AND meta_value='${id}'" --allow-root`,
         );
         if (!isDryRun) {
-          info(`  ✓ Updated _thumbnail_id references.`);
+          info('  ✓ Updated _thumbnail_id references.');
         }
 
         // 2. Search-replace the old URL with the new URL in post content.
@@ -122,7 +122,7 @@ export function registerReferencesCommand(program: Command): void {
         );
       }
 
-      let references;
+      let references: import('../../adapters/types.ts').Reference[];
       try {
         references = await adapter.findReferences(id, scope);
       } catch (err) {
@@ -143,9 +143,7 @@ export function registerReferencesCommand(program: Command): void {
         for (const ref of references) {
           const occ = ref.occurrences && ref.occurrences > 1 ? ` (${ref.occurrences}×)` : '';
           const meta = ref.metaKey ? ` [meta: ${ref.metaKey}]` : '';
-          info(
-            `  ${ref.postType} #${ref.postId}  "${ref.postTitle}"  ${ref.type}${occ}${meta}`,
-          );
+          info(`  ${ref.postType} #${ref.postId}  "${ref.postTitle}"  ${ref.type}${occ}${meta}`);
         }
         info(`\n  Total: ${references.length} reference(s).`);
       }

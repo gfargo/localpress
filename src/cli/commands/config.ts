@@ -167,7 +167,9 @@ export function registerConfigCommand(program: Command): void {
       const profile = config.profiles?.[name];
 
       if (!profile) {
-        error(`Profile '${name}' not found. Run \`localpress config list-profiles\` to see available profiles.`);
+        error(
+          `Profile '${name}' not found. Run \`localpress config list-profiles\` to see available profiles.`,
+        );
         process.exit(2);
       }
 
@@ -225,7 +227,7 @@ export function registerConfigCommand(program: Command): void {
         process.exit(2);
       }
 
-      delete config.profiles![name];
+      delete config.profiles?.[name];
       await saveConfig(config);
 
       if (parentOpts.json) {

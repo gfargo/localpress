@@ -63,15 +63,13 @@ export function registerPushCommand(program: Command): void {
         // Fallback: upload as new attachment.
         if (parentOpts.strict) {
           error(
-            `True in-place replacement is not available for site '${site.name}'. ` +
-              'Configure SSH for WP-CLI access, or remove --strict to allow fallback.',
+            `True in-place replacement is not available for site '${site.name}'. Configure SSH for WP-CLI access, or remove --strict to allow fallback.`,
           );
           process.exit(6);
         }
 
         warn(
-          'In-place replacement not available. Uploading as a new attachment. ' +
-            `Run \`localpress references ${options.replace}\` to see where the old attachment is used.`,
+          `In-place replacement not available. Uploading as a new attachment. Run \`localpress references ${options.replace}\` to see where the old attachment is used.`,
         );
       }
 
@@ -96,9 +94,7 @@ export function registerPushCommand(program: Command): void {
         } else {
           info(`✓ Uploaded as attachment #${result.id} (${filename}).`);
           if (options.replace) {
-            info(
-              `  ⚠ This is a new attachment, not a replacement of #${options.replace}.`,
-            );
+            info(`  ⚠ This is a new attachment, not a replacement of #${options.replace}.`);
             info(
               `  Run \`localpress references ${options.replace} --update-to ${result.id}\` to rewrite references (v0.5).`,
             );

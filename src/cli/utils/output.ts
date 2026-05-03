@@ -65,5 +65,3 @@ export function printJson<T>(record: T): void {
     process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
   }
 }
-
-
