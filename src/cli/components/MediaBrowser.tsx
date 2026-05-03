@@ -23,15 +23,16 @@ import type { MediaItem, PagedResult, SortField, SortOrder } from '../../adapter
 
 export type MediaBrowserAction =
   | { type: 'quit' }
-  | { type: 'optimize'; id: number }
-  | { type: 'edit'; id: number }
-  | { type: 'show'; id: number };
+  | { type: 'optimize'; id: number; page: number; cursor: number }
+  | { type: 'edit'; id: number; page: number; cursor: number }
+  | { type: 'show'; id: number; page: number; cursor: number };
 
 interface Props {
   initialItems: MediaItem[];
   total: number;
   totalPages: number;
   currentPage: number;
+  initialCursor?: number;
   processedIds: Set<number>;
   sortBy?: SortField;
   sortOrder?: SortOrder;
@@ -80,6 +81,7 @@ export function MediaBrowser({
   total,
   totalPages: initialTotalPages,
   currentPage: initialPage,
+  initialCursor,
   processedIds,
   sortBy,
   sortOrder,
@@ -91,7 +93,9 @@ export function MediaBrowser({
   const [items, setItems] = useState(initialItems);
   const [page, setPage] = useState(initialPage);
   const [totalPages, setTotalPages] = useState(initialTotalPages);
-  const [cursor, setCursor] = useState(0);
+  const [cursor, setCursor] = useState(() =>
+    Math.min(initialCursor ?? 0, Math.max(0, initialItems.length - 1)),
+  );
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [spinFrame, setSpinFrame] = useState(0);
@@ -263,13 +267,13 @@ export function MediaBrowser({
       }
     } else if (key.return) {
       const item = filteredItems[cursor];
-      if (item) doExit({ type: 'show', id: item.id });
+      if (item) doExit({ type: 'show', id: item.id, page, cursor });
     } else if (input === 'o') {
       const item = filteredItems[cursor];
-      if (item) doExit({ type: 'optimize', id: item.id });
+      if (item) doExit({ type: 'optimize', id: item.id, page, cursor });
     } else if (input === 'e') {
       const item = filteredItems[cursor];
-      if (item) doExit({ type: 'edit', id: item.id });
+      if (item) doExit({ type: 'edit', id: item.id, page, cursor });
     } else if (input === 'p') {
       openPreview();
     }

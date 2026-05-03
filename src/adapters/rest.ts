@@ -153,7 +153,10 @@ export class RestAdapter implements WpBackend {
 
   async upload(file: Buffer, metadata: UploadMetadata): Promise<MediaItem> {
     const formData = new FormData();
-    formData.append('file', new Blob([file]), metadata.filename);
+    // Strip characters that break the multipart Content-Disposition header
+    // (double-quotes are the most common offender in WP filenames).
+    const safeFilename = metadata.filename.replace(/"/g, '').replace(/\\/g, '-');
+    formData.append('file', new Blob([file]), safeFilename);
 
     if (metadata.title) formData.append('title', metadata.title);
     if (metadata.altText) formData.append('alt_text', metadata.altText);
