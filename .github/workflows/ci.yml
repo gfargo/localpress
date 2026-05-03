@@ -121,10 +121,13 @@ jobs:
           # mod_php should populate PHP_AUTH_USER/PW automatically, but in some Docker
           # Apache builds it does not. SetEnvIf copies the header into an env var that
           # WordPress Application Password auth reads as a fallback.
-          # printf with single quotes prevents $1 shell expansion; avoids a
-          # heredoc whose content would sit at column 0 and break YAML parsing.
-          printf 'SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1\n' \
-            | docker exec -i wp-test tee /etc/apache2/conf-available/auth-pass.conf
+          # Write the Apache conf on the host (single quotes keep $1 literal),
+          # then docker cp into the container — avoids stdin/pipe quirks with
+          # docker exec -i that can silently drop content on GH Actions runners.
+          echo 'SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1' > /tmp/auth-pass.conf
+          docker cp /tmp/auth-pass.conf wp-test:/etc/apache2/conf-available/auth-pass.conf
+          echo "=== auth-pass.conf content ==="
+          docker exec wp-test cat /etc/apache2/conf-available/auth-pass.conf
           docker exec wp-test a2enconf auth-pass
           docker exec wp-test apache2ctl graceful
           # Extract the app password
