@@ -31,10 +31,11 @@ export type MediaBrowserAction =
       quality?: number;
       to?: string;
       keepOriginal?: boolean;
+      preview?: boolean;
     }
   | { type: 'edit'; id: number; page: number; cursor: number }
   | { type: 'show'; id: number; page: number; cursor: number }
-  | { type: 'remove-bg'; id: number; page: number; cursor: number }
+  | { type: 'remove-bg'; id: number; page: number; cursor: number; preview?: boolean }
   | { type: 'caption'; id: number; page: number; cursor: number }
   | { type: 'convert'; id: number; page: number; cursor: number; to: string; quality?: number }
   | {
@@ -141,8 +142,9 @@ export function MediaBrowser({
   const [detailsItem, setDetailsItem] = useState<MediaItem | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
 
-  // Optimize settings overlay ([o]).
+  // Optimize settings overlay ([o] / [O] for preview).
   const [optimizeMode, setOptimizeMode] = useState(false);
+  const [optimizePreview, setOptimizePreview] = useState(false);
   const [optimizeQuality, setOptimizeQuality] = useState('');
   const [optimizeFormat, setOptimizeFormat] = useState<OptimizeFormat>('keep');
   const [optimizeKeepOriginal, setOptimizeKeepOriginal] = useState(false);
@@ -279,6 +281,7 @@ export function MediaBrowser({
       const item = filteredItems[cursor];
       if (key.escape) {
         setOptimizeMode(false);
+        setOptimizePreview(false);
         setOptimizeQuality('');
         setOptimizeFormat('keep');
         setOptimizeKeepOriginal(false);
@@ -330,12 +333,14 @@ export function MediaBrowser({
         const quality = q >= 0 && q <= 100 ? q : undefined;
         const to = optimizeFormat === 'keep' ? undefined : optimizeFormat;
         const keepOriginal = optimizeKeepOriginal || undefined;
+        const preview = optimizePreview || undefined;
         setOptimizeMode(false);
+        setOptimizePreview(false);
         setOptimizeQuality('');
         setOptimizeFormat('keep');
         setOptimizeKeepOriginal(false);
         setOptimizeActiveField('quality');
-        doExit({ type: 'optimize', id: item.id, page, cursor, quality, to, keepOriginal });
+        doExit({ type: 'optimize', id: item.id, page, cursor, quality, to, keepOriginal, preview });
       }
       return;
     }
@@ -497,12 +502,29 @@ export function MediaBrowser({
         setOptimizeFormat('keep');
         setOptimizeKeepOriginal(false);
         setOptimizeActiveField('quality');
+        setOptimizePreview(false);
         setOptimizeMode(true);
       }
     } else if (input === 'r') {
       const item = filteredItems[cursor];
       if (item?.mimeType.startsWith('image/'))
         doExit({ type: 'remove-bg', id: item.id, page, cursor });
+    } else if (input === 'R') {
+      const item = filteredItems[cursor];
+      if (item?.mimeType.startsWith('image/'))
+        doExit({ type: 'remove-bg', id: item.id, page, cursor, preview: true });
+    } else if (input === 'O') {
+      const item = filteredItems[cursor];
+      if (item) {
+        setOptimizeQuality('');
+        setOptimizeFormat('keep');
+        setOptimizeKeepOriginal(false);
+        setOptimizeActiveField('quality');
+        setOptimizeMode(true);
+        // Flag that this optimize session should use --preview.
+        // We store it in a ref-like pattern via the state.
+        setOptimizePreview(true);
+      }
     } else if (input === 'c') {
       const item = filteredItems[cursor];
       if (item?.mimeType.startsWith('image/')) {
@@ -556,6 +578,7 @@ export function MediaBrowser({
             <Text bold color="green">
               Optimize
             </Text>
+            {optimizePreview && <Text color="cyan"> (browser preview)</Text>}
             {item && (
               <Text dimColor>
                 — {item.filename}
@@ -1162,11 +1185,19 @@ export function MediaBrowser({
                   <Text color="green">[o]</Text>
                   <Text dimColor> optimize…</Text>
                 </Text>
+                <Text>
+                  <Text color="cyan">[O]</Text>
+                  <Text dimColor> optimize (preview)…</Text>
+                </Text>
                 {selectedItem.mimeType.startsWith('image/') && (
                   <>
                     <Text>
                       <Text color="green">[r]</Text>
                       <Text dimColor> remove background</Text>
+                    </Text>
+                    <Text>
+                      <Text color="cyan">[R]</Text>
+                      <Text dimColor> remove bg (preview)</Text>
                     </Text>
                     <Text>
                       <Text color="green">[c]</Text>
@@ -1221,13 +1252,14 @@ export function MediaBrowser({
       <Box paddingX={1}>
         {selectedItem?.mimeType.startsWith('image/') ? (
           <Text dimColor>
-            [jk] nav [nb] page [/] search [o] opt [r] rembg [c] conv [s] resize [a] cap [e] edit [W]
-            WP [↵] details{canImages ? '  [p] preview' : ''} [q] quit
+            [jk] nav [nb] page [/] search [o] opt [O] opt+preview [r] rembg [R] rembg+preview [c]
+            conv [s] resize [a] cap [e] edit [W] WP [↵] details
+            {canImages ? '  [p] preview' : ''} [q] quit
           </Text>
         ) : (
           <Text dimColor>
-            [↑↓/jk] navigate [←→/n/b] page [/] search [o] optimize [e] edit [W] open in WP [↵]
-            details [q] quit
+            [↑↓/jk] navigate [←→/n/b] page [/] search [o] optimize [O] opt+preview [e] edit [W] open
+            in WP [↵] details [q] quit
           </Text>
         )}
       </Box>

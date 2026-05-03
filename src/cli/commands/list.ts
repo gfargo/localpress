@@ -163,9 +163,11 @@ export function registerListCommand(program: Command): void {
                 extraArgs.push('--quality', String(pendingAction.quality));
               if (pendingAction.to) extraArgs.push('--to', pendingAction.to);
               if (pendingAction.keepOriginal) extraArgs.push('--keep-original');
+              if (pendingAction.preview) extraArgs.push('--preview');
               break;
             case 'remove-bg':
               subCmd = 'remove-bg';
+              if (pendingAction.preview) extraArgs.push('--preview');
               break;
             case 'caption':
               subCmd = 'caption';
