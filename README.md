@@ -250,6 +250,8 @@ bun run build:all        # cross-compile for all 5 platforms
 
 Integration tests require Docker. They spin up WordPress 6.7 + MySQL 8.0 via `test/integration/docker-compose.yml` and are skipped automatically when the environment variables aren't set.
 
+To run CI workflows locally before pushing, install [`act`](https://github.com/nektos/act) (`brew install act`) and run `act push -j integration-test`.
+
 ---
 
 ## Docs
