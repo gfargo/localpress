@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-05-03
+
+### Fixed
+- **`list --interactive` inline image preview**: removed auto-fetch on selection change — the
+  previous behaviour fetched the full image on every cursor move, causing visible lag and
+  cancelling in-flight requests. Preview is now **on-demand only**: press `[p]` to fetch and
+  display. Subsequent presses on the same item reuse the cached download; selecting a new item
+  clears the cache so `[p]` always shows the correct image.
+- **`list --interactive` layout disruption from iTerm2 inline images**: the sidebar previously
+  embedded the inline image escape sequence in a `<Box height={10}>` flex child. The iTerm2
+  protocol rows propagated through the Yoga layout, creating a large vertical gap in the list
+  panel. Images are now rendered only in a dedicated **preview overlay mode** (a completely
+  separate Ink render tree with no list flex siblings), which eliminates the height-push
+  entirely.
+
+### Changed
+- **`list --interactive` preview UX**: image preview is now a full-screen overlay triggered by
+  `[p]`. The overlay shows the image scaled to the full terminal width/height, with a metadata
+  strip and `[p] / [Esc]` to return to the list. The sidebar retains all metadata (filename,
+  MIME type, dimensions, URL, optimized status) but no longer contains the inline image.
+- Footer and sidebar keybinding hints show `[p] preview image` only on terminals that support
+  the iTerm2 inline image protocol (iTerm2, Warp, WezTerm, Kitty).
+
 ## [1.4.0] - 2026-05-03
 
 ### Added

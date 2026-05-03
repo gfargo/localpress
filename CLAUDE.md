@@ -1,6 +1,6 @@
 # CLAUDE.md — handoff for the next agent
 
-You're picking up `localpress` at **v1.2.0**. The full v1.0 implementation plan is complete plus post-v1.0 enhancements. All 15 CLI commands are implemented and working. The project compiles, tests pass, and the CLI boots cleanly.
+You're picking up `localpress` at **v1.4.0**. The full v1.0 implementation plan is complete plus post-v1.0 enhancements. All 18 CLI commands are implemented and working. The project compiles, tests pass, and the CLI boots cleanly.
 
 **Read in this order before writing any code:**
 
@@ -13,16 +13,16 @@ You're picking up `localpress` at **v1.2.0**. The full v1.0 implementation plan 
 
 ## Current status
 
-**Version:** 1.2.0
-**Status:** All v1.0 plan features complete. Post-v1.0 enhancements shipped: advanced audit checks, config management, Homebrew distribution.
+**Version:** 1.4.0
+**Status:** All v1.0 plan features complete. Post-v1.0 enhancements shipped: advanced audit checks, config management, Homebrew distribution, interactive TUI browser, AI captioning, cumulative stats, media sort.
 
 ### What's implemented
 
-**15 CLI commands:**
+**18 CLI commands:**
 - Setup: `init` (Ink wizard), `sites` (list/add/use/remove), `doctor` (capability matrix + plugin detection + `--fix`)
 - Config: `config` (get/set/list, named optimization profiles)
-- Discovery: `list`, `show`, `audit` (unoptimized/large/missing-alt/orphans/display-size/duplicates/broken-refs), `references` (fast + full scan, `--update-to` rewriting)
-- Processing: `optimize`, `convert`, `resize`, `remove-bg` (ONNX + system rembg)
+- Discovery: `list` (filters, sort `--sort`/`--order`, interactive TUI `-i`), `show`, `stats` (cumulative SQLite stats, `--all-sites`), `audit` (unoptimized/large/missing-alt/orphans/display-size/duplicates/broken-refs), `references` (fast + full scan, `--update-to` rewriting)
+- Processing: `optimize`, `convert`, `resize`, `remove-bg` (ONNX + system rembg), `caption` (local Ollama vision model, no cloud)
 - Round-trip: `edit` (download → editor → watch → sync)
 - Low-level: `pull`, `push`
 
@@ -36,10 +36,18 @@ You're picking up `localpress` at **v1.2.0**. The full v1.0 implementation plan 
 - AI background removal via ONNX Runtime + U2-Net (3 models: u2net, u2netp, silueta)
 - Optional system Python rembg via `--rembg` flag
 
+**AI captioning:**
+- Local Ollama vision models — no cloud API, no credits
+- `caption --missing-alt` bulk-captions everything with no alt text
+- `caption --list-models` shows locally available vision models
+- Recommended model: `moondream` (~1.7 GB, fast); `llava` for higher quality
+- See [Ollama Setup guide](https://localpress.griffen.codes/docs/ollama-setup)
+
 **State management:**
 - SQLite per-site databases with attachment tracking and processing history
 - Idempotent processing via SHA-256 hash comparison
 - Schema migrations support
+- `stats` command exposes cumulative savings, per-operation breakdown, last-run dates
 
 **Config management:**
 - Named optimization profiles (`config set-profile hero --quality 75 --format webp --max-width 1920`)
@@ -54,11 +62,11 @@ You're picking up `localpress` at **v1.2.0**. The full v1.0 implementation plan 
 
 **Testing:**
 - 36 unit tests (SQLite, config, adapter resolver)
-- 11 integration tests (Docker WordPress, skip when env vars not set)
+- 9 integration tests (Docker WordPress, fully passing — including write-auth via Application Passwords)
 
 **CI:**
 - GitHub Actions: typecheck + lint + unit tests on PR
-- Integration tests against Dockerized WordPress
+- Integration tests against Dockerized WordPress (with proper pretty-permalinks + Apache auth-header passthrough)
 - Binary builds + GitHub Release + Homebrew formula update on v* tag
 
 ### Release history
@@ -72,6 +80,9 @@ You're picking up `localpress` at **v1.2.0**. The full v1.0 implementation plan 
 | v1.0.0 | Full skill, --rembg flag for system Python rembg |
 | v1.1.0 | Ink interactive wizard, jSquash WASM codec integration |
 | v1.2.0 | Advanced audit (display-size, duplicates, broken-refs), doctor --fix + plugin detection, config command + named profiles, Homebrew tap |
+| v1.3.0 | Interactive TUI media browser (`list -i`) with inline thumbnails, spinner, page-nav hints |
+| v1.3.1 | TypeScript narrowing fix for `list --interactive`; TUI sidebar thumbnail always-on |
+| v1.4.0 | `caption` command (local Ollama alt-text), `stats` command, `list --sort`/`--order`, integration test CI fixes |
 
 ---
 
@@ -87,6 +98,7 @@ These were debated and resolved during planning. **Don't relitigate without stro
 | License | MIT | Matches the rembg/Squoosh/sharp ecosystem; agency-friendly |
 | Image processing | sharp + @jsquash WASM codecs | sharp for transforms, jsquash for encoding when `--encoder jsquash` |
 | AI background removal | `onnxruntime-node` + U2-Net ONNX models | `@imgly/background-removal-node` is **AGPL-3.0** — incompatible with MIT |
+| AI captioning | Ollama HTTP API (local) | No cloud dependency; `moondream` runs fast on CPU; user owns their data |
 | WP integration | REST (always) + WP-CLI over SSH (opt-in) + MCP adapter (deferred to v1.x) | Auto-detect; pick best per operation |
 | Replace-in-place | Default; falls back to new attachment + references report | REST API cannot replace attachment file bytes |
 | State management | SQLite (source of truth) + WP post meta mirror (v1.x) | Local fast cache + portable |
@@ -120,6 +132,7 @@ These were debated and resolved during planning. **Don't relitigate without stro
 - **Don't ship a companion WordPress plugin.** Use REST + Application Passwords + opt-in WP-CLI.
 - **Don't bundle `@imgly/background-removal-node`.** AGPL-3.0.
 - **Don't build a custom MCP server.** Ship the markdown skill instead.
+- **Don't use a cloud vision API for `caption`.** Ollama keeps processing local and free.
 
 ---
 
@@ -143,14 +156,15 @@ localpress/
 ├── src/
 │   ├── types.ts                      ← shared types (SiteConfig, ExitCode, OptimizationProfile)
 │   ├── cli/
-│   │   ├── index.ts                  ← entry point; commander setup, 15 commands
+│   │   ├── index.ts                  ← entry point; commander setup, 18 commands
 │   │   ├── commands/                 ← one file per command (all implemented)
 │   │   │   ├── init.ts, sites.ts, doctor.ts, config.ts
-│   │   │   ├── list.ts, show.ts, audit.ts, references.ts
-│   │   │   ├── optimize.ts, convert.ts, resize.ts, remove-bg.ts
+│   │   │   ├── list.ts, show.ts, stats.ts, audit.ts, references.ts
+│   │   │   ├── optimize.ts, convert.ts, resize.ts, remove-bg.ts, caption.ts
 │   │   │   ├── edit.ts, pull.ts, push.ts
 │   │   ├── components/
-│   │   │   └── InitWizard.tsx        ← Ink React wizard for init
+│   │   │   ├── InitWizard.tsx        ← Ink React wizard for init
+│   │   │   └── MediaBrowser.tsx      ← Ink TUI for list --interactive
 │   │   └── utils/
 │   │       ├── config.ts             ← config file load/save
 │   │       └── output.ts             ← info/warn/error/printJson
@@ -165,6 +179,9 @@ localpress/
 │       │   ├── types.ts              ← ImageFormat, OptimizeOptions
 │       │   ├── optimize.ts           ← Image optimization engine (sharp + jsquash)
 │       │   └── jsquash.ts            ← jSquash WASM codec integration
+│       ├── caption/
+│       │   ├── ollama.ts             ← Ollama HTTP API client (isAvailable, generate, listModels)
+│       │   └── types.ts              ← CaptionResult, CaptionOptions
 │       ├── rembg/
 │       │   ├── models.ts             ← ONNX model manager (download + cache)
 │       │   ├── remove-bg.ts          ← Background removal engine
@@ -175,19 +192,23 @@ localpress/
 │       │   └── watcher.ts            ← File watcher for edit round-trip
 │       └── state/
 │           ├── schema.ts             ← SQL DDL, migrations
-│           └── db.ts                 ← SiteDb wrapper (bun:sqlite)
+│           └── db.ts                 ← SiteDb wrapper (bun:sqlite) + getStats()
 ├── test/
 │   ├── unit/
-│   │   ├── smoke.test.ts             ← 10 adapter/type tests
-│   │   ├── db.test.ts                ← 17 SQLite tests
-│   │   └── config.test.ts            ← 9 config tests
+│   │   ├── smoke.test.ts             ← adapter/type tests
+│   │   ├── db.test.ts                ← SQLite tests
+│   │   └── config.test.ts            ← config tests
 │   ├── integration/
 │   │   ├── docker-compose.yml        ← WordPress 6.7 + MySQL 8.0
 │   │   ├── setup-wp.sh               ← WP-CLI setup + test data
-│   │   └── wp-rest.test.ts           ← 11 integration tests
+│   │   └── wp-rest.test.ts           ← 9 integration tests (fully passing)
 │   └── fixtures/
 ├── skill/
 │   └── SKILL.md                      ← Full AI agent skill with JSON schemas
+├── .wiki/                            ← GitHub Wiki source (committed here)
+│   ├── Commands-Reference.md
+│   ├── Ollama-Setup.md
+│   └── ...
 ├── .tap/                             ← Homebrew tap repo checkout (gitignored)
 └── .github/
     └── workflows/
@@ -220,9 +241,7 @@ These are deferred features from the plan, not blocking any release. See `docs/r
 
 - **McpAdapter** — third backend adapter for users with a WP MCP server connected
 - **Multi-site bulk operations** — `--all-sites` flag or `localpress sites run`
-- **`caption` command** — AI alt-text generation using local vision models
 - **`watch` command** — continuous directory sync to WordPress
-- **`stats` command** — cumulative savings tracking and library health dashboard
 - **Scheduled audits** — cron mode or `--watch`
 - **System keychain integration** — macOS Keychain / Windows Credential Manager
 - **Auto-update mechanism** — notify-only vs apply

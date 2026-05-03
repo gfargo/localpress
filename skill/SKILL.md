@@ -19,7 +19,9 @@ Trigger this skill when the user asks to:
 - Optimize, compress, or convert images on their WordPress site
 - Remove backgrounds from product photos or portraits
 - Resize images in their media library
+- Generate alt text for images using a local vision model
 - Audit their media library (find oversized, unused, or missing-alt-text images)
+- View processing stats and bytes saved across the media library
 - Find where a specific image is used across posts and pages
 - Open a WP image in a desktop editor, edit it, and sync back
 - Bulk-process images across their WordPress media library
@@ -145,8 +147,23 @@ localpress list --unoptimized --json
 # List large images (>1MB)
 localpress list --larger-than 1048576 --json
 
+# Sort by file size, largest first
+localpress list --sort size --json
+
+# Sort by name, alphabetically
+localpress list --sort name --order asc --json
+
+# Paginate
+localpress list --page 2 --limit 25 --json
+
 # Show details for a specific attachment
 localpress show 123 --json
+
+# Processing stats (no network call)
+localpress stats --json
+
+# Stats across all configured sites
+localpress stats --all-sites --json
 
 # Audit the library for issues
 localpress audit --json
@@ -194,6 +211,27 @@ localpress references 123 --json
     { "type": "broken-ref", "attachmentId": 303, "filename": "old-banner.jpg", "detail": "URL returns HTTP 404" }
   ],
   "summary": { "unoptimized": 45, "large": 12, "missingAlt": 23, "displaySize": 8, "duplicates": 3, "brokenRefs": 2, "orphan": 0, "missingFile": 0 }
+}
+```
+
+#### `stats --json` output
+
+```json
+{
+  "site": "production",
+  "filesProcessed": 142,
+  "operationsSucceeded": 139,
+  "operationsFailed": 3,
+  "bytesBefore": 524288000,
+  "bytesAfter": 131072000,
+  "bytesSaved": 393216000,
+  "percentReduction": 75.0,
+  "lastRunAt": "2026-05-03T14:22:00.000Z",
+  "breakdown": [
+    { "operation": "optimize", "count": 120, "bytesSaved": 350000000, "avgDurationMs": 450 },
+    { "operation": "convert", "count": 12, "bytesSaved": 40000000, "avgDurationMs": 310 },
+    { "operation": "resize", "count": 7, "bytesSaved": 3216000, "avgDurationMs": 200 }
+  ]
 }
 ```
 
@@ -283,6 +321,47 @@ localpress remove-bg 123 --rembg --rembg-model isnet-general-use --json
   ]
 }
 ```
+
+```bash
+# Generate alt text for specific attachments (requires Ollama running locally)
+localpress caption 123 124 --json
+
+# Bulk-caption all images with no alt text (dry-run by default)
+localpress caption --missing-alt --json
+
+# Execute the bulk caption run
+localpress caption --missing-alt --apply --json
+
+# Use a specific model
+localpress caption 123 --model llava --json
+
+# Overwrite existing alt text
+localpress caption 123 --overwrite --json
+
+# List available vision models installed in Ollama
+localpress caption --list-models --json
+```
+
+#### `caption --json` output
+
+```json
+{
+  "processed": 3,
+  "failures": 0,
+  "results": [
+    {
+      "id": 123,
+      "filename": "product-shot.jpg",
+      "altText": "A red ceramic mug on a white background with steam rising from the top",
+      "model": "moondream",
+      "durationMs": 1200,
+      "skipped": false
+    }
+  ]
+}
+```
+
+> **Requires Ollama** — install at [https://ollama.com](https://ollama.com) then `ollama pull moondream`. The `caption` command talks to `http://localhost:11434` by default.
 
 ### Round-trip editing
 

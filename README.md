@@ -84,6 +84,15 @@ localpress edit 123
 # Find every place an attachment is used
 localpress references 1234
 
+# Generate alt text for all images missing it (requires Ollama)
+localpress caption --missing-alt
+
+# View cumulative processing stats
+localpress stats
+
+# Sort media by file size, largest first
+localpress list --sort size
+
 # Audit the library for issues (oversized, duplicates, broken refs, and more)
 localpress audit
 ```
@@ -98,12 +107,14 @@ localpress audit
 | `sites` | List, add, switch, or remove configured sites |
 | `doctor` | Show backend availability, capability matrix, plugin detection, `--fix` |
 | `config` | Read/write config values, manage named optimization profiles |
-| `list` | List media with filters (`--unoptimized`, `--type`, `--larger-than`) |
+| `list` | List media with filters, sorting (`--sort size`/`name`/`id`), and interactive TUI |
 | `show <id>` | Show metadata and optimization history for an attachment |
+| `stats` | Cumulative processing stats from local SQLite — files touched, bytes saved, per-op breakdown |
 | `audit` | Find unoptimized, large, missing-alt, oversized, duplicate, and orphan media |
 | `optimize` | Compress and optionally convert media (the marquee command) |
 | `convert` | Convert between formats (webp, avif, jpeg, png) |
 | `resize` | Resize preserving aspect ratio, regenerate WP thumbnails |
+| `caption` | AI alt-text generation using a local [Ollama](https://ollama.com) vision model — no cloud API |
 | `remove-bg` | AI background removal using local ONNX Runtime + U2-Net |
 | `edit` | Open in desktop editor, watch for saves, sync back to WP |
 | `pull` | Download attachments to local directory |
@@ -179,6 +190,7 @@ localpress config get-profile hero
                     │  Engine layer  │
                     │  sharp/jsquash │
                     │  ONNX Runtime  │
+                    │  Ollama vision │
                     │  SQLite state  │
                     └───────┬────────┘
                     ┌───────┴────────┐
@@ -192,6 +204,8 @@ The CLI talks to WordPress through a **backend adapter** that auto-detects what'
 **Two encoding backends:** sharp (default, native libvips) or jSquash WASM codecs (`--encoder jsquash`) for OxiPNG-level PNG compression and cross-platform consistency.
 
 **AI background removal:** ONNX Runtime + U2-Net models (Apache-2.0), or system Python rembg via `--rembg` flag.
+
+**AI alt-text generation:** `caption` command drives a local [Ollama](https://ollama.com) vision model — no cloud API, no credits, no data leaving your machine. Recommended model: `moondream` (~1.7 GB). See the [Ollama Setup guide](https://localpress.griffen.codes/docs/ollama-setup).
 
 ---
 
@@ -227,7 +241,7 @@ bun install              # install deps
 bun run dev -- --help    # run the CLI from source
 bun run typecheck        # tsc --noEmit
 bun run lint             # biome check
-bun test                 # run all tests (36 unit + 11 integration)
+bun test                 # run all tests (36 unit + 9 integration)
 bun test test/unit/      # unit tests only
 bun run build            # compile to single binary at ./dist/localpress
 bun run build:all        # cross-compile for all 5 platforms
