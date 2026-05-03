@@ -103,6 +103,12 @@ jobs:
               --allow-root \
               --skip-email
 
+            # Pretty permalinks are required for /wp-json/ REST API routing.
+            wp rewrite structure '/%postname%/' \
+              --path=/var/www/html --allow-root
+            wp rewrite flush --hard \
+              --path=/var/www/html --allow-root
+
             APP_PASS=$(wp user application-password create admin "ci-test" \
               --porcelain --path=/var/www/html --allow-root)
             echo "APP_PASS=$APP_PASS" > /tmp/wp-test-env
@@ -117,19 +123,19 @@ jobs:
       - name: Verify WordPress REST API
         run: |
           source /tmp/wp-test-env
-          echo "Polling REST API until ready..."
+          echo "Polling REST API until it returns JSON..."
           for i in $(seq 1 20); do
-            STATUS=$(curl -sL -o /dev/null -w "%{http_code}" \
-              -u "admin:$APP_PASS" \
-              http://localhost:8880/wp-json/wp/v2/media/)
-            if [ "$STATUS" = "200" ]; then
-              echo "REST API is ready (HTTP $STATUS)"
+            CT=$(curl -sIL -u "admin:$APP_PASS" \
+              http://localhost:8880/wp-json/wp/v2/media/ 2>/dev/null \
+              | grep -i "^content-type" | tail -1)
+            if echo "$CT" | grep -qi "application/json"; then
+              echo "REST API is ready (JSON response confirmed)"
               exit 0
             fi
-            echo "REST API returned $STATUS, retrying ($i/20)..."
+            echo "content-type: ${CT:-none}, retrying ($i/20)..."
             sleep 3
           done
-          echo "ERROR: REST API never became ready"
+          echo "ERROR: REST API never returned JSON"
           curl -vL -u "admin:$APP_PASS" http://localhost:8880/wp-json/wp/v2/media/ || true
           exit 1
 
