@@ -72,14 +72,17 @@ jobs:
 
       - name: Wait for WordPress
         run: |
+          echo "Waiting for Apache to start..."
           for i in $(seq 1 30); do
             if curl -sf http://localhost:8880/wp-login.php > /dev/null 2>&1; then
-              echo "WordPress is ready"
-              break
+              echo "Apache is ready"
+              exit 0
             fi
-            echo "Waiting for WordPress... ($i/30)"
+            echo "Waiting... ($i/30)"
             sleep 5
           done
+          echo "ERROR: Apache never became ready"
+          exit 1
 
       - name: Setup WordPress
         run: |
@@ -89,8 +92,9 @@ jobs:
             chmod +x wp-cli.phar
             mv wp-cli.phar /usr/local/bin/wp
 
+            # URL must match the host:port that tests will use (stored in WP db)
             wp core install \
-              --url="http://localhost:80" \
+              --url="http://localhost:8880" \
               --title="localpress CI" \
               --admin_user=admin \
               --admin_password=admin123 \
@@ -109,6 +113,25 @@ jobs:
           echo "WP_TEST_APP_PASSWORD=$APP_PASS" >> $GITHUB_ENV
           echo "WP_TEST_URL=http://localhost:8880" >> $GITHUB_ENV
           echo "WP_TEST_USER=admin" >> $GITHUB_ENV
+
+      - name: Verify WordPress REST API
+        run: |
+          source /tmp/wp-test-env
+          echo "Polling REST API until ready..."
+          for i in $(seq 1 20); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              -u "admin:$APP_PASS" \
+              http://localhost:8880/wp-json/wp/v2/media)
+            if [ "$STATUS" = "200" ]; then
+              echo "REST API is ready (HTTP $STATUS)"
+              exit 0
+            fi
+            echo "REST API returned $STATUS, retrying ($i/20)..."
+            sleep 3
+          done
+          echo "ERROR: REST API never became ready"
+          curl -v -u "admin:$APP_PASS" http://localhost:8880/wp-json/wp/v2/media || true
+          exit 1
 
       - name: Upload test images
         run: |
