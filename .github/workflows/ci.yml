@@ -113,13 +113,18 @@ jobs:
               --porcelain --path=/var/www/html --allow-root)
             echo "APP_PASS=$APP_PASS" > /tmp/wp-test-env
           '
-          # Pass the Authorization header through Apache rewrite rules to PHP.
-          # Apache strips it in some configurations before PHP sees PHP_AUTH_USER/PW,
-          # which breaks WordPress Application Password auth. Run outside bash -c to
-          # avoid single-quote nesting issues.
+          # Keep the .htaccess rewrite-level passthrough as a fallback.
           docker exec wp-test sed -i \
             's|RewriteEngine On|RewriteEngine On\nRewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]|' \
             /var/www/html/.htaccess
+          # The definitive fix: add a SetEnvIf directive at the Apache config level.
+          # mod_php should populate PHP_AUTH_USER/PW automatically, but in some Docker
+          # Apache builds it does not. SetEnvIf copies the header into an env var that
+          # WordPress Application Password auth reads as a fallback.
+          # Using python3 to write the file avoids all shell-quoting edge cases.
+          docker exec wp-test python3 -c "open('/etc/apache2/conf-available/auth-pass.conf','w').write('SetEnvIf Authorization \"(.*)\" HTTP_AUTHORIZATION=\$1\n')"
+          docker exec wp-test a2enconf auth-pass
+          docker exec wp-test apache2ctl graceful
           # Extract the app password
           docker cp wp-test:/tmp/wp-test-env /tmp/wp-test-env
           source /tmp/wp-test-env
@@ -137,14 +142,26 @@ jobs:
               | grep -i "^content-type" | tail -1)
             if echo "$CT" | grep -qi "application/json"; then
               echo "REST API is ready (JSON response confirmed)"
-              exit 0
+              break
             fi
             echo "content-type: ${CT:-none}, retrying ($i/20)..."
             sleep 3
           done
-          echo "ERROR: REST API never returned JSON"
-          curl -vL -u "admin:$APP_PASS" http://localhost:8880/wp-json/wp/v2/media/ || true
-          exit 1
+          if ! echo "$CT" | grep -qi "application/json"; then
+            echo "ERROR: REST API never returned JSON"
+            curl -vL -u "admin:$APP_PASS" http://localhost:8880/wp-json/wp/v2/media/ || true
+            exit 1
+          fi
+          echo "Verifying authenticated write access (/users/me requires auth)..."
+          ME_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" \
+            -u "admin:$APP_PASS" \
+            http://localhost:8880/wp-json/wp/v2/users/me)
+          if [ "$ME_STATUS" != "200" ]; then
+            echo "ERROR: Auth check failed — /users/me returned $ME_STATUS (expected 200)"
+            curl -sL -u "admin:$APP_PASS" http://localhost:8880/wp-json/wp/v2/users/me | head -c 500
+            exit 1
+          fi
+          echo "Auth check: OK (HTTP $ME_STATUS)"
 
       - name: Debug REST API response
         run: |
