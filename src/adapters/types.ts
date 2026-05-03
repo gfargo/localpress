@@ -57,6 +57,9 @@ export interface MediaSize {
   sizeBytes?: number;
 }
 
+export type SortField = 'date' | 'name' | 'size' | 'id';
+export type SortOrder = 'asc' | 'desc';
+
 export interface ListFilters {
   /** Only items not yet processed by localpress. */
   unoptimized?: boolean;
@@ -68,6 +71,10 @@ export interface ListFilters {
   since?: string;
   /** Bytes — only items larger than this. */
   largerThan?: number;
+  /** Sort field. 'size' is applied client-side; others pass to the REST API. */
+  sortBy?: SortField;
+  /** Sort direction. */
+  sortOrder?: SortOrder;
   /** Pagination. */
   page?: number;
   perPage?: number;
