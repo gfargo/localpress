@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-05-03
+
+### Added
+- **`caption` command**: AI alt-text generation for images using a locally-running
+  [Ollama](https://ollama.com) vision model — no cloud API, no credits, no data
+  leaving your machine. Supports bulk mode (`--missing-alt`), dry-run, model
+  selection (`--model llava`), custom prompts, and `--list-models` to see what's
+  installed. Recommended model: `moondream` (~1.7 GB). See the new
+  [Ollama Setup guide](https://localpress.griffen.codes/docs/ollama-setup).
+- **`stats` command**: cumulative processing stats pulled entirely from local
+  SQLite — zero network calls. Shows files touched, operations succeeded/failed,
+  total bytes saved (with % reduction), last-run date, and a per-operation
+  breakdown table. `--all-sites` aggregates across every configured site.
+- **`list --sort` and `--order` flags**: sort the media library by `date`
+  (default), `name`, `size`, or `id`; order `asc` or `desc`. Sort info is shown
+  in the plain-text header and preserved in the "next page" hint.
+
+### Fixed
+- **Integration test CI**: fixed WordPress Application Password auth in Docker —
+  `wp core install` was using the container-internal port (`80`) as the site URL
+  instead of the host-mapped port (`8880`), causing every REST API request to be
+  redirected to a port not exposed on the host. Also added pretty-permalink setup
+  (`wp rewrite flush --hard`) and an Apache `SetEnvIf Authorization` directive so
+  `PHP_AUTH_USER` / `HTTP_AUTHORIZATION` reach PHP correctly.
+
 ## [1.3.1] - 2026-05-02
 
 ### Fixed
