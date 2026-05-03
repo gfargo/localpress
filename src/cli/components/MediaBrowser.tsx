@@ -71,8 +71,7 @@ function filterItems(items: MediaItem[], query: string): MediaItem[] {
   const q = query.toLowerCase().trim();
   if (!q) return items;
   return items.filter(
-    (item) =>
-      item.filename.toLowerCase().includes(q) || item.title.toLowerCase().includes(q),
+    (item) => item.filename.toLowerCase().includes(q) || item.title.toLowerCase().includes(q),
   );
 }
 
@@ -399,16 +398,15 @@ export function MediaBrowser({
           {searchMode && <Text color="yellow">█</Text>}
           {searchQuery && (
             <Text dimColor>
-              {' '}—{' '}
+              {' '}
+              —{' '}
               {filteredItems.length === 0
                 ? 'no matches'
                 : `${filteredItems.length} match${filteredItems.length === 1 ? '' : 'es'}`}
               {!searchMode && '  [/] edit  [Esc] clear'}
             </Text>
           )}
-          {searchMode && !searchQuery && (
-            <Text dimColor> type to filter · [Esc] cancel</Text>
-          )}
+          {searchMode && !searchQuery && <Text dimColor> type to filter · [Esc] cancel</Text>}
         </Box>
       )}
 
@@ -433,9 +431,7 @@ export function MediaBrowser({
             </Box>
           ) : visibleItems.length === 0 ? (
             <Box paddingX={2} paddingY={1}>
-              <Text dimColor>
-                {searchQuery ? `No matches for "${searchQuery}"` : 'No items.'}
-              </Text>
+              <Text dimColor>{searchQuery ? `No matches for "${searchQuery}"` : 'No items.'}</Text>
             </Box>
           ) : (
             visibleItems.map((item, i) => {
@@ -522,7 +518,9 @@ export function MediaBrowser({
                 )}
               </>
             ) : (
-              <Text dimColor>{searchQuery ? `No matches for "${searchQuery}"` : 'No selection'}</Text>
+              <Text dimColor>
+                {searchQuery ? `No matches for "${searchQuery}"` : 'No selection'}
+              </Text>
             )}
           </Box>
         )}
@@ -534,8 +532,8 @@ export function MediaBrowser({
       </Box>
       <Box paddingX={1}>
         <Text dimColor>
-          [↑↓/jk] navigate [←→/n/b] page [/] search{canImages ? ' [p] preview' : ''} [o]
-          optimize [e] edit [↵] details [q] quit
+          [↑↓/jk] navigate [←→/n/b] page [/] search{canImages ? ' [p] preview' : ''} [o] optimize
+          [e] edit [↵] details [q] quit
         </Text>
       </Box>
     </Box>

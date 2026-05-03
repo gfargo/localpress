@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+# Run Biome lint + typecheck on staged TS/TSX files before every commit.
+# Install once with: git config core.hooksPath .githooks
+
+set -e
+
+# Collect staged .ts/.tsx files
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ts|tsx)$' || true)
+
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+echo "pre-commit: running biome check..."
+bun run lint
+
+echo "pre-commit: running typecheck..."
+bun run typecheck

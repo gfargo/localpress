@@ -238,6 +238,7 @@ Always pass `--json` when running from an agent — the human-readable output is
 
 ```bash
 bun install              # install deps
+git config core.hooksPath .githooks  # enable pre-commit lint + typecheck
 bun run dev -- --help    # run the CLI from source
 bun run typecheck        # tsc --noEmit
 bun run lint             # biome check
