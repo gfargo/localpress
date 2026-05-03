@@ -104,21 +104,22 @@ jobs:
               --skip-email
 
             # Pretty permalinks are required for /wp-json/ REST API routing.
-            wp rewrite structure '/%postname%/' \
+            wp rewrite structure "/%postname%/" \
               --path=/var/www/html --allow-root
             wp rewrite flush --hard \
               --path=/var/www/html --allow-root
-
-            # Apache strips the Authorization header before PHP sees it in some
-            # configurations. This rewrite rule passes it through explicitly so
-            # WordPress Application Password auth works over HTTP.
-            sed -i '/RewriteEngine On/a RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]' \
-              /var/www/html/.htaccess
 
             APP_PASS=$(wp user application-password create admin "ci-test" \
               --porcelain --path=/var/www/html --allow-root)
             echo "APP_PASS=$APP_PASS" > /tmp/wp-test-env
           '
+          # Pass the Authorization header through Apache rewrite rules to PHP.
+          # Apache strips it in some configurations before PHP sees PHP_AUTH_USER/PW,
+          # which breaks WordPress Application Password auth. Run outside bash -c to
+          # avoid single-quote nesting issues.
+          docker exec wp-test sed -i \
+            's|RewriteEngine On|RewriteEngine On\nRewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]|' \
+            /var/www/html/.htaccess
           # Extract the app password
           docker cp wp-test:/tmp/wp-test-env /tmp/wp-test-env
           source /tmp/wp-test-env
