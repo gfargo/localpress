@@ -23,6 +23,7 @@ import { registerReferencesCommand } from './commands/references.ts';
 import { registerRemoveBgCommand } from './commands/remove-bg.ts';
 import { registerResizeCommand } from './commands/resize.ts';
 import { registerShowCommand } from './commands/show.ts';
+import { registerStatsCommand } from './commands/stats.ts';
 import { registerSitesCommand } from './commands/sites.ts';
 import { setOutputOptions } from './utils/output.ts';
 
@@ -62,6 +63,7 @@ registerDoctorCommand(program);
 registerConfigCommand(program);
 registerListCommand(program);
 registerShowCommand(program);
+registerStatsCommand(program);
 registerAuditCommand(program);
 registerOptimizeCommand(program);
 registerConvertCommand(program);
