@@ -209,6 +209,58 @@ export class SiteDb {
     return row ? mapProcessingRow(row) : null;
   }
 
+  // Stats ---------------------------------------------------------------------
+
+  getStats(siteName: string): SiteStats {
+    const ops = this.db.query(
+      `SELECT operation,
+              COUNT(*)                                          AS total,
+              SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS succeeded,
+              SUM(CASE WHEN status = 'failure' THEN 1 ELSE 0 END) AS failed,
+              SUM(CASE WHEN bytes_before > bytes_after THEN bytes_before - bytes_after ELSE 0 END) AS bytes_saved,
+              SUM(bytes_before)                                 AS bytes_in,
+              SUM(bytes_after)                                  AS bytes_out,
+              SUM(duration_ms)                                  AS total_ms,
+              MAX(ran_at)                                       AS last_ran_at
+       FROM processing_history
+       WHERE site_name = ?
+       GROUP BY operation
+       ORDER BY total DESC`,
+    ).all(siteName) as RawOpStat[];
+
+    const totals = this.db.query(
+      `SELECT COUNT(DISTINCT wp_id)                                       AS files_touched,
+              SUM(CASE WHEN bytes_before > bytes_after THEN bytes_before - bytes_after ELSE 0 END) AS bytes_saved,
+              SUM(bytes_before)                                           AS bytes_in,
+              COUNT(*)                                                    AS total_ops,
+              SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END)        AS succeeded,
+              MAX(ran_at)                                                 AS last_ran_at
+       FROM processing_history
+       WHERE site_name = ?`,
+    ).get(siteName) as RawTotalStat | null;
+
+    return {
+      siteName,
+      filesTouched: totals?.files_touched ?? 0,
+      totalOps: totals?.total_ops ?? 0,
+      succeeded: totals?.succeeded ?? 0,
+      bytesSaved: totals?.bytes_saved ?? 0,
+      bytesIn: totals?.bytes_in ?? 0,
+      lastRanAt: totals?.last_ran_at ?? null,
+      byOperation: ops.map((r) => ({
+        operation: r.operation,
+        total: r.total,
+        succeeded: r.succeeded,
+        failed: r.failed,
+        bytesSaved: r.bytes_saved ?? 0,
+        bytesIn: r.bytes_in ?? 0,
+        bytesOut: r.bytes_out ?? 0,
+        avgDurationMs: r.total_ms && r.succeeded ? Math.round(r.total_ms / r.succeeded) : null,
+        lastRanAt: r.last_ran_at,
+      })),
+    };
+  }
+
   // Lifecycle -----------------------------------------------------------------
 
   close(): void {
@@ -278,6 +330,52 @@ function mapProcessingRow(row: RawProcessingRow): ProcessingHistoryRecord {
     status: row.status,
     errorMessage: row.error_message,
   };
+}
+
+// -- Stats types --------------------------------------------------------------
+
+export interface OperationStat {
+  operation: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  bytesSaved: number;
+  bytesIn: number;
+  bytesOut: number;
+  avgDurationMs: number | null;
+  lastRanAt: number;
+}
+
+export interface SiteStats {
+  siteName: string;
+  filesTouched: number;
+  totalOps: number;
+  succeeded: number;
+  bytesSaved: number;
+  bytesIn: number;
+  lastRanAt: number | null;
+  byOperation: OperationStat[];
+}
+
+interface RawOpStat {
+  operation: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  bytes_saved: number | null;
+  bytes_in: number | null;
+  bytes_out: number | null;
+  total_ms: number | null;
+  last_ran_at: number;
+}
+
+interface RawTotalStat {
+  files_touched: number;
+  bytes_saved: number | null;
+  bytes_in: number | null;
+  total_ops: number;
+  succeeded: number;
+  last_ran_at: number | null;
 }
 
 /** Read the current schema version stored in the DB. Returns 0 if no version row exists. */
