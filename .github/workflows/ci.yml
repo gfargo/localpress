@@ -119,9 +119,9 @@ jobs:
           source /tmp/wp-test-env
           echo "Polling REST API until ready..."
           for i in $(seq 1 20); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            STATUS=$(curl -sL -o /dev/null -w "%{http_code}" \
               -u "admin:$APP_PASS" \
-              http://localhost:8880/wp-json/wp/v2/media)
+              http://localhost:8880/wp-json/wp/v2/media/)
             if [ "$STATUS" = "200" ]; then
               echo "REST API is ready (HTTP $STATUS)"
               exit 0
@@ -130,7 +130,7 @@ jobs:
             sleep 3
           done
           echo "ERROR: REST API never became ready"
-          curl -v -u "admin:$APP_PASS" http://localhost:8880/wp-json/wp/v2/media || true
+          curl -vL -u "admin:$APP_PASS" http://localhost:8880/wp-json/wp/v2/media/ || true
           exit 1
 
       - name: Upload test images
