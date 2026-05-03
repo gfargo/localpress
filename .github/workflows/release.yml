@@ -118,6 +118,11 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/localpress.rb
           git diff --staged --quiet || git commit -m "chore: update Homebrew formula to v${{ steps.version.outputs.version }}"
+          # Rebase onto current main before pushing — the release job checks out
+          # at the tag commit, which may lag behind main if new commits landed
+          # after the tag was pushed (e.g. a follow-up patch or feature commit).
+          git fetch origin main
+          git rebase origin/main
           git push origin HEAD:main
 
       - name: Push formula to homebrew tap
