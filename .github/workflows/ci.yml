@@ -109,6 +109,12 @@ jobs:
             wp rewrite flush --hard \
               --path=/var/www/html --allow-root
 
+            # WordPress 5.9+ disables Application Passwords on non-SSL sites.
+            # Add a must-use plugin to re-enable them for this HTTP test environment.
+            mkdir -p /var/www/html/wp-content/mu-plugins
+            echo '<?php add_filter("wp_is_application_passwords_available", "__return_true");' \
+              > /var/www/html/wp-content/mu-plugins/enable-app-passwords.php
+
             APP_PASS=$(wp user application-password create admin "ci-test" \
               --porcelain --path=/var/www/html --allow-root)
             echo "APP_PASS=$APP_PASS" > /tmp/wp-test-env

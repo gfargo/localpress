@@ -37,6 +37,12 @@ if ! wp core is-installed --path=/var/www/html --allow-root 2>/dev/null; then
     --skip-email
 fi
 
+# WordPress 5.9+ disables Application Passwords on non-SSL sites.
+# Add a must-use plugin to re-enable them for this HTTP test environment.
+mkdir -p /var/www/html/wp-content/mu-plugins
+echo '<?php add_filter("wp_is_application_passwords_available", "__return_true");' \
+  > /var/www/html/wp-content/mu-plugins/enable-app-passwords.php
+
 # Create an Application Password for the admin user.
 # WP-CLI outputs the password; we capture it.
 APP_PASS=$(wp user application-password create "$ADMIN_USER" "localpress-test" \
