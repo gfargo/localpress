@@ -109,6 +109,12 @@ jobs:
             wp rewrite flush --hard \
               --path=/var/www/html --allow-root
 
+            # Apache strips the Authorization header before PHP sees it in some
+            # configurations. This rewrite rule passes it through explicitly so
+            # WordPress Application Password auth works over HTTP.
+            sed -i '/RewriteEngine On/a RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]' \
+              /var/www/html/.htaccess
+
             APP_PASS=$(wp user application-password create admin "ci-test" \
               --porcelain --path=/var/www/html --allow-root)
             echo "APP_PASS=$APP_PASS" > /tmp/wp-test-env

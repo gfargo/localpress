@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 
 import { AdapterResolver } from '../../src/adapters/resolver.ts';
 import { RestAdapter } from '../../src/adapters/rest.ts';
+import { CapabilityUnavailableError } from '../../src/adapters/types.ts';
 import { SiteDb } from '../../src/engine/state/db.ts';
 import type { SiteConfig } from '../../src/types.ts';
 
@@ -119,7 +120,7 @@ describe.skipIf(!canRun)('WordPress REST API integration', () => {
     const item = items[0];
 
     await expect(adapter.replaceInPlace(item.id, Buffer.from(''))).rejects.toThrow(
-      'CapabilityUnavailableError',
+      CapabilityUnavailableError,
     );
   });
 
