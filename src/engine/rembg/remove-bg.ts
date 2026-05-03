@@ -20,8 +20,13 @@
 import type { ModelName } from './models.ts';
 import { ensureModel } from './models.ts';
 
-/** Input size expected by U2-Net models. */
-const MODEL_INPUT_SIZE = 320;
+/** Input size expected by each model family. */
+const MODEL_INPUT_SIZES: Record<string, number> = {
+  u2net: 320,
+  u2netp: 320,
+  silueta: 320,
+  'isnet-general-use': 1024,
+};
 
 /** Normalization constants (ImageNet-style). */
 const MEAN = [0.485, 0.456, 0.406];
@@ -67,6 +72,7 @@ export async function removeBackground(
   const totalStart = Date.now();
   const modelName = options.model ?? 'u2net';
   const alphaThreshold = options.alphaThreshold ?? 10;
+  const modelInputSize = MODEL_INPUT_SIZES[modelName] ?? 320;
 
   // 1. Ensure the model is downloaded.
   const modelPath = await ensureModel(modelName, options.onProgress);
@@ -85,14 +91,14 @@ export async function removeBackground(
 
   // Resize to model input size and extract raw RGB pixels.
   const resizedBuffer = await sharp(imageBytes)
-    .resize(MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, { fit: 'fill' })
+    .resize(modelInputSize, modelInputSize, { fit: 'fill' })
     .removeAlpha()
     .raw()
     .toBuffer();
 
   // 4. Normalize pixels into a Float32Array in NCHW format.
-  //    Shape: [1, 3, 320, 320]
-  const pixelCount = MODEL_INPUT_SIZE * MODEL_INPUT_SIZE;
+  //    Shape: [1, 3, inputSize, inputSize]
+  const pixelCount = modelInputSize * modelInputSize;
   const inputTensor = new Float32Array(3 * pixelCount);
 
   for (let i = 0; i < pixelCount; i++) {
@@ -115,8 +121,8 @@ export async function removeBackground(
     [session.inputNames[0]]: new ort.Tensor('float32', inputTensor, [
       1,
       3,
-      MODEL_INPUT_SIZE,
-      MODEL_INPUT_SIZE,
+      modelInputSize,
+      modelInputSize,
     ]),
   };
 
@@ -149,7 +155,7 @@ export async function removeBackground(
 
   // 7. Resize mask back to original dimensions.
   const fullMask = await sharp(maskBuffer, {
-    raw: { width: MODEL_INPUT_SIZE, height: MODEL_INPUT_SIZE, channels: 1 },
+    raw: { width: modelInputSize, height: modelInputSize, channels: 1 },
   })
     .resize(origWidth, origHeight, { fit: 'fill' })
     .raw()

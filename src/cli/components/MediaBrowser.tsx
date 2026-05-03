@@ -22,7 +22,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { MediaItem, PagedResult, SortField, SortOrder } from '../../adapters/types.ts';
 
 export type MediaBrowserAction =
-  | { type: 'quit' }
+  | { type: 'quit'; page: number; cursor: number }
   | {
       type: 'optimize';
       id: number;
@@ -474,7 +474,7 @@ export function MediaBrowser({
       if (searchQuery) {
         setSearchQuery('');
       } else {
-        doExit({ type: 'quit' });
+        doExit({ type: 'quit', page, cursor });
       }
     } else if (key.return) {
       const item = filteredItems[cursor];

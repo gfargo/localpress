@@ -270,6 +270,28 @@ export class SiteDb {
   close(): void {
     this.db.close();
   }
+
+  // Preferences (key-value) ---------------------------------------------------
+
+  /** Get a preference value. Returns null if not set. */
+  getPref(siteName: string, key: string): string | null {
+    const row = this.db
+      .query('SELECT value FROM preferences WHERE site_name = ? AND key = ?')
+      .get(siteName, key) as { value: string } | null;
+    return row?.value ?? null;
+  }
+
+  /** Set a preference value. Upserts. */
+  setPref(siteName: string, key: string, value: string): void {
+    this.db.run(
+      `INSERT INTO preferences (site_name, key, value, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (site_name, key) DO UPDATE SET
+         value = excluded.value,
+         updated_at = excluded.updated_at`,
+      [siteName, key, value, Date.now()],
+    );
+  }
 }
 
 // -- Internal row types and mappers -------------------------------------------

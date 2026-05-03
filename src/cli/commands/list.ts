@@ -99,6 +99,33 @@ export function registerListCommand(program: Command): void {
         let interactivePage = filters.page ?? 1;
         let interactiveCursor = 0;
 
+        // Restore last browser position from SQLite (if no explicit --page).
+        if (!options.page) {
+          try {
+            const db = SiteDb.init(getSiteDbPath(site.name));
+            const savedPage = db.getPref(site.name, 'browser.page');
+            const savedCursor = db.getPref(site.name, 'browser.cursor');
+            if (savedPage) interactivePage = Math.max(1, Number.parseInt(savedPage, 10) || 1);
+            if (savedCursor) interactiveCursor = Math.max(0, Number.parseInt(savedCursor, 10) || 0);
+            db.close();
+          } catch {
+            // DB may not exist yet — start from defaults.
+          }
+        }
+
+        /** Persist the current browser position to SQLite. */
+        const saveBrowserPosition = (page: number, cursor: number) => {
+          try {
+            const db = SiteDb.init(getSiteDbPath(site.name));
+            db.ensureSite(site.name, site.url);
+            db.setPref(site.name, 'browser.page', String(page));
+            db.setPref(site.name, 'browser.cursor', String(cursor));
+            db.close();
+          } catch {
+            // Best effort — don't fail the CLI over a preference save.
+          }
+        };
+
         // Loop: re-enter the TUI after each subcommand until the user quits.
         while (true) {
           let result: { items: MediaItem[]; total: number; totalPages: number };
@@ -149,7 +176,14 @@ export function registerListCommand(program: Command): void {
           await waitUntilExit();
 
           const pendingAction = pending.action;
-          if (!pendingAction || pendingAction.type === 'quit') break;
+          if (!pendingAction || pendingAction.type === 'quit') {
+            // Save position on quit so we resume here next time.
+            const quitPage = pendingAction?.type === 'quit' ? pendingAction.page : interactivePage;
+            const quitCursor =
+              pendingAction?.type === 'quit' ? pendingAction.cursor : interactiveCursor;
+            saveBrowserPosition(quitPage, quitCursor);
+            break;
+          }
 
           // Clear the TUI before running the subcommand.
           process.stdout.write('\x1b[2J\x1b[H');
@@ -222,6 +256,7 @@ export function registerListCommand(program: Command): void {
           // Restore position and refresh processedIds before re-entering the TUI.
           interactivePage = pendingAction.page;
           interactiveCursor = pendingAction.cursor;
+          saveBrowserPosition(interactivePage, interactiveCursor);
           const processingTypes = new Set([
             'optimize',
             'resize',

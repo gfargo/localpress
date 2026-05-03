@@ -43,8 +43,8 @@ describe('exit codes', () => {
 });
 
 describe('schema', () => {
-  test('initial schema version is 1', () => {
-    expect(SCHEMA_VERSION).toBe(1);
+  test('initial schema version is 2', () => {
+    expect(SCHEMA_VERSION).toBe(2);
   });
 });
 

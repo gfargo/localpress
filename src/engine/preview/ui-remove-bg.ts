@@ -37,7 +37,6 @@ export function buildRemoveBgHtml(): string {
     min-height: 100vh;
   }
 
-  /* ── Header ── */
   .header {
     display: flex;
     align-items: center;
@@ -52,7 +51,6 @@ export function buildRemoveBgHtml(): string {
   .header .filename { color: var(--text-dim); font-size: 14px; }
   .header .meta { color: var(--text-dim); font-size: 13px; }
 
-  /* ── Layout ── */
   .main {
     display: grid;
     grid-template-columns: 1fr 320px;
@@ -69,12 +67,11 @@ export function buildRemoveBgHtml(): string {
     background:
       repeating-conic-gradient(#1e2130 0% 25%, #252838 0% 50%) 50% / 20px 20px;
   }
-  .canvas-area img {
+  .canvas-area img.single-view {
     max-width: 90%;
     max-height: 90%;
     object-fit: contain;
     border-radius: 4px;
-    transition: opacity 0.2s;
   }
   .canvas-area .placeholder {
     color: var(--text-dim);
@@ -94,6 +91,7 @@ export function buildRemoveBgHtml(): string {
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 2px;
+    z-index: 5;
   }
   .view-toggle button {
     padding: 6px 16px;
@@ -114,29 +112,36 @@ export function buildRemoveBgHtml(): string {
     color: var(--text);
   }
 
-  /* ── Slider comparison ── */
-  .compare-container {
+  /* ── Compare slider ── */
+  .compare-wrapper {
     position: relative;
+    display: inline-block;
     max-width: 90%;
     max-height: 90%;
-    overflow: hidden;
-    cursor: ew-resize;
     user-select: none;
+    cursor: ew-resize;
+    line-height: 0;
   }
-  .compare-container img {
-    max-width: 100%;
-    max-height: calc(100vh - 160px);
+  .compare-wrapper img {
     display: block;
+    max-width: calc(100vw - 380px);
+    max-height: calc(100vh - 120px);
+    object-fit: contain;
   }
-  .compare-overlay {
+  .compare-wrapper .compare-result {
+    position: relative;
+    z-index: 0;
+  }
+  .compare-wrapper .compare-clip {
     position: absolute;
     top: 0;
     left: 0;
     height: 100%;
     overflow: hidden;
+    z-index: 1;
   }
-  .compare-overlay img {
-    max-height: calc(100vh - 160px);
+  .compare-wrapper .compare-clip img {
+    display: block;
   }
   .compare-divider {
     position: absolute;
@@ -144,8 +149,8 @@ export function buildRemoveBgHtml(): string {
     width: 3px;
     height: 100%;
     background: var(--accent);
-    cursor: ew-resize;
     z-index: 2;
+    pointer-events: none;
   }
   .compare-divider::after {
     content: '⟨⟩';
@@ -195,10 +200,7 @@ export function buildRemoveBgHtml(): string {
     margin-bottom: 12px;
   }
 
-  /* ── Controls ── */
-  .control-group {
-    margin-bottom: 14px;
-  }
+  .control-group { margin-bottom: 14px; }
   .control-group:last-child { margin-bottom: 0; }
   .control-group label {
     display: block;
@@ -223,50 +225,26 @@ export function buildRemoveBgHtml(): string {
     outline: none;
     transition: border-color 0.15s;
   }
-  select:focus, input:focus {
-    border-color: var(--accent);
-  }
-
-  input[type="range"] {
-    width: 100%;
-    accent-color: var(--accent);
-    cursor: pointer;
-  }
-
+  select:focus, input:focus { border-color: var(--accent); }
+  input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer; }
   input[type="color"] {
-    width: 40px;
-    height: 32px;
+    width: 40px; height: 32px;
     border: 1px solid var(--border);
     border-radius: 4px;
     background: var(--bg);
     cursor: pointer;
     padding: 2px;
   }
-
   .checkbox-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; cursor: pointer;
   }
   .checkbox-row input[type="checkbox"] {
-    accent-color: var(--accent);
-    width: 16px;
-    height: 16px;
-    cursor: pointer;
+    accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer;
   }
+  .color-row { display: flex; align-items: center; gap: 10px; }
+  .color-row input[type="text"] { flex: 1; }
 
-  .color-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .color-row input[type="text"] {
-    flex: 1;
-  }
-
-  /* ── Stats ── */
   .stats-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -278,20 +256,14 @@ export function buildRemoveBgHtml(): string {
     padding: 10px 12px;
   }
   .stat-card .stat-label {
-    font-size: 11px;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
+    font-size: 11px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.03em;
   }
   .stat-card .stat-value {
-    font-size: 18px;
-    font-weight: 600;
+    font-size: 18px; font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
-  .stat-card .stat-value.positive { color: var(--accent); }
-  .stat-card .stat-value.negative { color: var(--danger); }
 
-  /* ── Buttons ── */
   .actions {
     padding: 16px 20px;
     margin-top: auto;
@@ -301,54 +273,26 @@ export function buildRemoveBgHtml(): string {
     border-top: 1px solid var(--border);
   }
   .btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 10px 16px;
-    border: none;
-    border-radius: var(--radius);
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 10px 16px; border: none; border-radius: var(--radius);
+    font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s;
   }
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .btn-primary {
-    background: var(--accent);
-    color: #fff;
-  }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; }
   .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
-  .btn-secondary {
-    background: var(--surface-hover);
-    color: var(--text);
-    border: 1px solid var(--border);
-  }
+  .btn-secondary { background: var(--surface-hover); color: var(--text); border: 1px solid var(--border); }
   .btn-secondary:hover:not(:disabled) { background: var(--border); }
-  .btn-danger {
-    background: transparent;
-    color: var(--text-dim);
-  }
+  .btn-danger { background: transparent; color: var(--text-dim); }
   .btn-danger:hover { color: var(--danger); }
 
-  /* ── Processing overlay ── */
   .processing-overlay {
-    position: absolute;
-    inset: 0;
+    position: absolute; inset: 0;
     background: rgba(15, 17, 23, 0.85);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    z-index: 10;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px; z-index: 10;
   }
   .spinner {
-    width: 32px;
-    height: 32px;
+    width: 32px; height: 32px;
     border: 3px solid var(--border);
     border-top-color: var(--accent);
     border-radius: 50%;
@@ -357,16 +301,10 @@ export function buildRemoveBgHtml(): string {
   @keyframes spin { to { transform: rotate(360deg); } }
   .processing-text { color: var(--text-dim); font-size: 14px; }
 
-  /* ── Toast ── */
   .toast {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    padding: 12px 20px;
-    border-radius: var(--radius);
-    font-size: 14px;
-    z-index: 100;
-    animation: slideIn 0.3s ease;
+    position: fixed; bottom: 20px; right: 20px;
+    padding: 12px 20px; border-radius: var(--radius);
+    font-size: 14px; z-index: 100; animation: slideIn 0.3s ease;
   }
   .toast.success { background: var(--accent); color: #fff; }
   .toast.error { background: var(--danger); color: #fff; }
@@ -398,11 +336,12 @@ export function buildRemoveBgHtml(): string {
     <div class="sidebar-section">
       <h3>Model</h3>
       <div class="control-group">
-        <label>U2-Net variant</label>
+        <label>Segmentation model</label>
         <select id="model">
-          <option value="u2net">u2net — full (~176 MB, best quality)</option>
+          <option value="isnet-general-use">isnet-general-use — best quality (~176 MB)</option>
+          <option value="u2net">u2net — general purpose (~176 MB)</option>
+          <option value="silueta">silueta — balanced (~44 MB)</option>
           <option value="u2netp">u2netp — lightweight (~4.7 MB, fast)</option>
-          <option value="silueta">silueta — optimized (~44 MB, balanced)</option>
         </select>
       </div>
     </div>
@@ -472,16 +411,13 @@ export function buildRemoveBgHtml(): string {
 </div>
 
 <script>
-  // ── State ──
   let meta = null;
-  let sourceLoaded = false;
   let hasResult = false;
   let processing = false;
-  let viewMode = 'source'; // 'source' | 'result' | 'compare'
+  let viewMode = 'source';
   let comparePos = 0.5;
   let dragging = false;
 
-  // ── DOM refs ──
   const canvas = document.getElementById('canvas');
   const loadingOverlay = document.getElementById('loading-overlay');
   const filenameEl = document.getElementById('filename');
@@ -497,20 +433,32 @@ export function buildRemoveBgHtml(): string {
   const btnProcess = document.getElementById('btn-process');
   const btnApply = document.getElementById('btn-apply');
 
-  // ── Init ──
+  // ── WebSocket heartbeat ──
+  let ws = null;
+  function connectWs() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(proto + '//' + location.host + '/ws');
+    ws.onopen = () => { setInterval(() => { if (ws.readyState === 1) ws.send('ping'); }, 5000); };
+    ws.onclose = () => { /* server will detect the close */ };
+  }
+
   async function init() {
+    connectWs();
     const res = await fetch('/api/meta');
     meta = await res.json();
     filenameEl.textContent = meta.filename;
     metaEl.textContent = [
-      '#' + meta.wpId,
-      meta.mimeType,
+      '#' + meta.wpId, meta.mimeType,
       meta.width && meta.height ? meta.width + '×' + meta.height + 'px' : '',
       formatBytes(meta.sizeBytes),
     ].filter(Boolean).join('  ·  ');
-
-    // Show source image.
     showSourceImage();
+  }
+
+  function clearCanvas() {
+    for (const child of Array.from(canvas.children)) {
+      if (child.id !== 'loading-overlay') child.remove();
+    }
   }
 
   function showSourceImage() {
@@ -518,10 +466,8 @@ export function buildRemoveBgHtml(): string {
     const img = document.createElement('img');
     img.src = '/api/source';
     img.alt = 'Original image';
-    img.onload = () => {
-      loadingOverlay.style.display = 'none';
-      sourceLoaded = true;
-    };
+    img.className = 'single-view';
+    img.onload = () => { loadingOverlay.style.display = 'none'; };
     canvas.appendChild(img);
     addViewToggle();
   }
@@ -531,6 +477,7 @@ export function buildRemoveBgHtml(): string {
     const img = document.createElement('img');
     img.src = '/api/result?t=' + Date.now();
     img.alt = 'Processed result';
+    img.className = 'single-view';
     canvas.appendChild(img);
     addViewToggle();
   }
@@ -538,94 +485,93 @@ export function buildRemoveBgHtml(): string {
   function showCompareView() {
     clearCanvas();
 
-    const container = document.createElement('div');
-    container.className = 'compare-container';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'compare-wrapper';
 
-    // Bottom layer: result
+    // Bottom layer: result image (sets the layout size)
     const resultImg = document.createElement('img');
     resultImg.src = '/api/result?t=' + Date.now();
     resultImg.alt = 'Result';
-    container.appendChild(resultImg);
+    resultImg.className = 'compare-result';
+    wrapper.appendChild(resultImg);
 
-    // Overlay: source (clipped)
-    const overlay = document.createElement('div');
-    overlay.className = 'compare-overlay';
+    // Clip overlay: original image, clipped to left portion
+    const clipDiv = document.createElement('div');
+    clipDiv.className = 'compare-clip';
     const sourceImg = document.createElement('img');
     sourceImg.src = '/api/source';
     sourceImg.alt = 'Original';
-    overlay.appendChild(sourceImg);
-    container.appendChild(overlay);
+    clipDiv.appendChild(sourceImg);
+    wrapper.appendChild(clipDiv);
 
-    // Divider line
+    // Divider handle
     const divider = document.createElement('div');
     divider.className = 'compare-divider';
-    container.appendChild(divider);
+    wrapper.appendChild(divider);
 
     // Labels
-    const labelLeft = document.createElement('div');
-    labelLeft.className = 'compare-label left';
-    labelLeft.textContent = 'Original';
-    container.appendChild(labelLeft);
+    const labelL = document.createElement('div');
+    labelL.className = 'compare-label left';
+    labelL.textContent = 'Original';
+    wrapper.appendChild(labelL);
+    const labelR = document.createElement('div');
+    labelR.className = 'compare-label right';
+    labelR.textContent = 'Result';
+    wrapper.appendChild(labelR);
 
-    const labelRight = document.createElement('div');
-    labelRight.className = 'compare-label right';
-    labelRight.textContent = 'Result';
-    container.appendChild(labelRight);
+    canvas.appendChild(wrapper);
 
-    canvas.appendChild(container);
-
-    // Wait for images to load, then set up slider.
+    // Once the result image loads, force the source to the same rendered size
+    // and set up the slider.
     resultImg.onload = () => {
-      const w = resultImg.naturalWidth;
-      const displayW = resultImg.clientWidth;
-      sourceImg.style.width = displayW + 'px';
-      updateCompare(container, overlay, divider, comparePos);
+      const w = resultImg.clientWidth;
+      const h = resultImg.clientHeight;
+      sourceImg.style.width = w + 'px';
+      sourceImg.style.height = h + 'px';
+      sourceImg.style.objectFit = 'contain';
+      updateSlider(wrapper, clipDiv, divider, comparePos);
     };
 
-    // Mouse/touch drag.
+    // Drag handling
     const onMove = (e) => {
       if (!dragging) return;
-      const rect = container.getBoundingClientRect();
+      e.preventDefault();
+      const rect = wrapper.getBoundingClientRect();
       const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
       comparePos = Math.max(0, Math.min(1, x / rect.width));
-      updateCompare(container, overlay, divider, comparePos);
+      updateSlider(wrapper, clipDiv, divider, comparePos);
     };
     const onUp = () => { dragging = false; };
 
-    container.addEventListener('mousedown', (e) => { dragging = true; onMove(e); });
-    container.addEventListener('touchstart', (e) => { dragging = true; onMove(e); });
+    wrapper.addEventListener('mousedown', (e) => { dragging = true; onMove(e); });
+    wrapper.addEventListener('touchstart', (e) => { dragging = true; onMove(e); }, { passive: false });
     document.addEventListener('mousemove', onMove);
-    document.addEventListener('touchmove', onMove);
+    document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('mouseup', onUp);
     document.addEventListener('touchend', onUp);
 
     addViewToggle();
   }
 
-  function updateCompare(container, overlay, divider, pos) {
-    const w = container.clientWidth;
+  function updateSlider(wrapper, clipDiv, divider, pos) {
+    const w = wrapper.clientWidth;
     const px = Math.round(w * pos);
-    overlay.style.width = px + 'px';
+    clipDiv.style.width = px + 'px';
     divider.style.left = px + 'px';
   }
 
   function addViewToggle() {
-    // Remove existing toggle.
     const existing = canvas.querySelector('.view-toggle');
     if (existing) existing.remove();
-
     if (!hasResult) return;
 
     const toggle = document.createElement('div');
     toggle.className = 'view-toggle';
-
-    const views = [
+    for (const v of [
       { id: 'source', label: 'Original' },
       { id: 'result', label: 'Result' },
       { id: 'compare', label: 'Compare' },
-    ];
-
-    for (const v of views) {
+    ]) {
       const btn = document.createElement('button');
       btn.textContent = v.label;
       btn.className = v.id === viewMode ? 'active' : '';
@@ -637,26 +583,15 @@ export function buildRemoveBgHtml(): string {
       };
       toggle.appendChild(btn);
     }
-
     canvas.appendChild(toggle);
   }
 
-  function clearCanvas() {
-    // Keep the loading overlay, remove everything else.
-    const children = Array.from(canvas.children);
-    for (const child of children) {
-      if (child.id !== 'loading-overlay') child.remove();
-    }
-  }
-
-  // ── Processing ──
   async function runProcess() {
     if (processing) return;
     processing = true;
     btnProcess.disabled = true;
     btnProcess.textContent = 'Processing...';
 
-    // Show overlay.
     const overlay = document.createElement('div');
     overlay.className = 'processing-overlay';
     overlay.id = 'process-overlay';
@@ -677,24 +612,18 @@ export function buildRemoveBgHtml(): string {
         body: JSON.stringify(params),
       });
       const data = await res.json();
-
-      if (data.error) {
-        showToast(data.error, 'error');
-        return;
-      }
+      if (data.error) { showToast(data.error, 'error'); return; }
 
       hasResult = true;
       btnApply.disabled = false;
       btnProcess.textContent = 'Re-generate Preview';
 
-      // Update stats.
       statsSection.style.display = '';
       document.getElementById('stat-inference').textContent = data.stats.inferenceMs + 'ms';
       document.getElementById('stat-total').textContent = data.stats.totalMs + 'ms';
       document.getElementById('stat-original').textContent = formatBytes(meta.sizeBytes);
       document.getElementById('stat-result').textContent = formatBytes(data.sizeBytes);
 
-      // Show result.
       viewMode = 'compare';
       showCompareView();
     } catch (err) {
@@ -707,12 +636,10 @@ export function buildRemoveBgHtml(): string {
     }
   }
 
-  // ── Apply ──
   async function applyResult() {
     if (!hasResult) return;
     btnApply.disabled = true;
     btnApply.textContent = 'Uploading...';
-
     try {
       const res = await fetch('/api/apply', { method: 'POST' });
       const data = await res.json();
@@ -724,7 +651,6 @@ export function buildRemoveBgHtml(): string {
       }
       showToast('Uploaded to WordPress as #' + data.wpId, 'success');
       btnApply.textContent = 'Applied ✓';
-      // Server will shut down — show a message after a moment.
       setTimeout(() => {
         document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#e4e6ef;font-family:sans-serif"><h2 style="color:#22c55e">✓ Applied successfully</h2><p style="color:#8b8fa3">Uploaded to WordPress as #' + data.wpId + '. You can close this tab.</p></div>';
       }, 1500);
@@ -735,31 +661,18 @@ export function buildRemoveBgHtml(): string {
     }
   }
 
-  // ── Cancel ──
   async function cancelPreview() {
     try { await fetch('/api/cancel', { method: 'POST' }); } catch {}
     document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#e4e6ef;font-family:sans-serif"><h2>Preview cancelled</h2><p style="color:#8b8fa3">You can close this tab.</p></div>';
   }
 
-  // ── UI wiring ──
-  thresholdInput.addEventListener('input', () => {
-    thresholdValue.textContent = thresholdInput.value;
-  });
-
-  useBgColor.addEventListener('change', () => {
-    bgColorRow.style.display = useBgColor.checked ? 'flex' : 'none';
-  });
-
-  bgColorInput.addEventListener('input', () => {
-    bgColorText.value = bgColorInput.value;
-  });
+  thresholdInput.addEventListener('input', () => { thresholdValue.textContent = thresholdInput.value; });
+  useBgColor.addEventListener('change', () => { bgColorRow.style.display = useBgColor.checked ? 'flex' : 'none'; });
+  bgColorInput.addEventListener('input', () => { bgColorText.value = bgColorInput.value; });
   bgColorText.addEventListener('input', () => {
-    if (/^#[0-9a-fA-F]{6}$/.test(bgColorText.value)) {
-      bgColorInput.value = bgColorText.value;
-    }
+    if (/^#[0-9a-fA-F]{6}$/.test(bgColorText.value)) bgColorInput.value = bgColorText.value;
   });
 
-  // ── Helpers ──
   function formatBytes(bytes) {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -774,7 +687,6 @@ export function buildRemoveBgHtml(): string {
     setTimeout(() => toast.remove(), 4000);
   }
 
-  // ── Boot ──
   init();
 </script>
 </body>

@@ -8,13 +8,14 @@
  *   - u2net: General-purpose salient object detection (~176MB, Apache-2.0)
  *   - u2netp: Lightweight variant (~4.7MB, Apache-2.0)
  *   - silueta: Optimized u2net variant (~44MB, Apache-2.0)
+ *   - isnet-general-use: ISNet general-purpose model (~176MB, Apache-2.0) — better edge quality
  */
 
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir } from '../../cli/utils/config.ts';
 
-export type ModelName = 'u2net' | 'u2netp' | 'silueta';
+export type ModelName = 'u2net' | 'u2netp' | 'silueta' | 'isnet-general-use';
 
 interface ModelInfo {
   name: ModelName;
@@ -48,6 +49,13 @@ const MODEL_REGISTRY: Record<ModelName, ModelInfo> = {
     url: 'https://github.com/danielgatis/rembg/releases/download/v0.0.0/silueta.onnx',
     filename: 'silueta.onnx',
     sizeApprox: '~44 MB',
+    license: 'Apache-2.0',
+  },
+  'isnet-general-use': {
+    name: 'isnet-general-use',
+    url: 'https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-general-use.onnx',
+    filename: 'isnet-general-use.onnx',
+    sizeApprox: '~176 MB',
     license: 'Apache-2.0',
   },
 };

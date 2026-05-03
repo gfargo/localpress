@@ -72,7 +72,15 @@ export async function startPreviewServer(
     lastResultBytes: Buffer | null;
     timeoutId: ReturnType<typeof setTimeout> | null;
     server: ReturnType<typeof Bun.serve> | null;
-  } = { lastResultBytes: null, timeoutId: null, server: null };
+    wsConnected: boolean;
+    wsHeartbeatId: ReturnType<typeof setInterval> | null;
+  } = {
+    lastResultBytes: null,
+    timeoutId: null,
+    server: null,
+    wsConnected: false,
+    wsHeartbeatId: null,
+  };
 
   let resolvePromise: (value: { applied: boolean; result: ApplyResult | null }) => void;
   const done = new Promise<{ applied: boolean; result: ApplyResult | null }>((resolve) => {
@@ -81,14 +89,21 @@ export async function startPreviewServer(
 
   const shutdown = () => {
     if (state.timeoutId) clearTimeout(state.timeoutId);
+    if (state.wsHeartbeatId) clearInterval(state.wsHeartbeatId);
     state.server?.stop(true);
   };
 
   state.server = Bun.serve({
     port,
     hostname: '127.0.0.1',
-    fetch: async (req) => {
+    fetch: async (req, server) => {
       const url = new URL(req.url);
+
+      // WebSocket upgrade for heartbeat.
+      if (url.pathname === '/ws' && req.headers.get('upgrade') === 'websocket') {
+        const upgraded = server.upgrade(req, { data: {} });
+        return upgraded ? undefined : new Response('WebSocket upgrade failed', { status: 500 });
+      }
 
       // Serve the UI.
       if (url.pathname === '/' && req.method === 'GET') {
@@ -196,6 +211,20 @@ export async function startPreviewServer(
       }
 
       return new Response('Not Found', { status: 404 });
+    },
+    websocket: {
+      open() {
+        state.wsConnected = true;
+      },
+      message() {
+        // Heartbeat pong — client is alive.
+      },
+      close() {
+        state.wsConnected = false;
+        info('  Browser tab closed. Shutting down preview server.');
+        shutdown();
+        resolvePromise({ applied: false, result: null });
+      },
     },
   });
 

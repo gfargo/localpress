@@ -15,7 +15,7 @@
  * On startup, the DB layer compares this against the stored value and applies
  * pending migrations.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * Initial schema (v1). Idempotent — safe to run on every CLI invocation.
@@ -89,4 +89,18 @@ export interface Migration {
 
 export const MIGRATIONS: Migration[] = [
   // Migration 1 IS the initial schema. Subsequent migrations start at 2.
+  {
+    version: 2,
+    description: 'Add preferences key-value table for UI state persistence',
+    up: `
+      CREATE TABLE IF NOT EXISTS preferences (
+        site_name  TEXT NOT NULL,
+        key        TEXT NOT NULL,
+        value      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (site_name, key),
+        FOREIGN KEY (site_name) REFERENCES sites(name) ON DELETE CASCADE
+      );
+    `,
+  },
 ];
