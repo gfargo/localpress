@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-05-03
+
+### Added
+- **`list --interactive` live search**: press `/` to open a search bar and filter the current
+  page's media list by filename or title in real time — no extra API calls. Typing narrows the
+  list immediately; the bar shows a match count (`12 matches`). Navigation keys (`↑↓`/`jk`)
+  work while the search bar is open. `Enter` exits typing mode but keeps the filter active so
+  you can navigate the results. `Esc` clears the filter and restores the full list (or, if no
+  filter is active, quits). Pressing `q` when a filter is active also just clears the filter.
+  Loading a new page always clears the search. Keybinding hint `[/] search` added to the footer.
+  Resolves [#14](https://github.com/gfargo/localpress/issues/14).
+
 ## [1.4.1] - 2026-05-03
 
 ### Fixed

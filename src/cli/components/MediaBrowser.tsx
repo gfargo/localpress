@@ -4,12 +4,17 @@
  * Layout (wide terminal ≥ 110 cols):
  *   ┌ header: title + page/total ──────────────────────────────┐
  *   │ [← prev page]   Page N/M   [next page →]                 │
+ *   │ / search bar (shown when active)                          │
  *   │ list (scrollable)             │ sidebar: metadata only    │
  *   └ footer: keybindings ─────────────────────────────────────┘
  *
+ * Press [/] to open the search bar. Typing filters the list
+ * client-side (no extra network call). [Esc] clears and closes.
+ * [Enter] or arrow keys keep the filter but exit typing mode.
+ *
  * Press [p] on any image to open a full-screen preview overlay.
- * The inline image is rendered only in preview mode to avoid
- * the iTerm2 escape sequence displacing the list layout.
+ * The inline image is rendered only in preview mode to avoid the
+ * iTerm2 escape sequence displacing the list layout.
  */
 
 import { Box, Text, useApp, useInput } from 'ink';
@@ -62,6 +67,15 @@ function buildItermSequence(
   );
 }
 
+function filterItems(items: MediaItem[], query: string): MediaItem[] {
+  const q = query.toLowerCase().trim();
+  if (!q) return items;
+  return items.filter(
+    (item) =>
+      item.filename.toLowerCase().includes(q) || item.title.toLowerCase().includes(q),
+  );
+}
+
 export function MediaBrowser({
   initialItems,
   total,
@@ -83,6 +97,10 @@ export function MediaBrowser({
   const [loadError, setLoadError] = useState('');
   const [spinFrame, setSpinFrame] = useState(0);
 
+  // Search state.
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
   // On-demand preview state (only populated when user presses [p]).
   const [previewMode, setPreviewMode] = useState(false);
   const [previewB64, setPreviewB64] = useState<string | null>(null);
@@ -94,9 +112,21 @@ export function MediaBrowser({
   const termHeight = process.stdout.rows ?? 24;
   const showSidebar = termWidth >= MIN_SIDEBAR_TERMINAL_WIDTH;
   const listWidth = showSidebar ? termWidth - SIDEBAR_WIDTH - 1 : termWidth;
-  // 5 reserved rows: header + page bar + divider + divider + footer.
-  const listHeight = Math.max(4, termHeight - 5);
   const canImages = supportsInlineImages();
+
+  // Derive filtered list from current page items + search query.
+  const filteredItems = filterItems(items, searchQuery);
+
+  // 5 reserved rows: header + page bar + divider + divider + footer.
+  // +1 extra when the search bar is visible.
+  const reservedRows = 5 + (searchMode || searchQuery ? 1 : 0);
+  const listHeight = Math.max(4, termHeight - reservedRows);
+
+  // Reset cursor to top when the query changes.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on query change
+  useEffect(() => {
+    setCursor(0);
+  }, [searchQuery]);
 
   // Spinner animation while a page is loading.
   useEffect(() => {
@@ -112,13 +142,14 @@ export function MediaBrowser({
     return () => clearInterval(id);
   }, [previewLoading]);
 
-  // When selection changes, clear cached preview so [p] fetches fresh for new item.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on item id intentionally
+  // Clear cached preview whenever the selected item changes (cursor move or query change).
+  const selectedItemId = filteredItems[cursor]?.id ?? null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on selected item id intentionally
   useEffect(() => {
     setPreviewMode(false);
     setPreviewB64(null);
     setPreviewBytes(0);
-  }, [items[cursor]?.id]);
+  }, [selectedItemId]);
 
   const doExit = useCallback(
     (action: MediaBrowserAction) => {
@@ -133,6 +164,8 @@ export function MediaBrowser({
       if (p < 1 || p > totalPages || loading) return;
       setLoading(true);
       setLoadError('');
+      setSearchQuery('');
+      setSearchMode(false);
       setPreviewMode(false);
       setPreviewB64(null);
       try {
@@ -151,7 +184,7 @@ export function MediaBrowser({
   );
 
   const openPreview = useCallback(() => {
-    const item = items[cursor];
+    const item = filteredItems[cursor];
     if (!item || !canImages || !item.mimeType.startsWith('image/')) return;
 
     // Already cached — just show it.
@@ -170,55 +203,95 @@ export function MediaBrowser({
         setPreviewMode(true);
       })
       .catch(() => setPreviewLoading(false));
-  }, [items, cursor, canImages, previewB64]);
+  }, [filteredItems, cursor, canImages, previewB64]);
 
   useInput((input, key) => {
-    // In preview mode only Esc/p/q dismiss the overlay; everything else is blocked.
+    // Preview overlay: any key closes it.
     if (previewMode) {
       if (key.escape || input === 'p' || input === 'q') setPreviewMode(false);
       return;
     }
 
+    // Search input mode.
+    if (searchMode) {
+      if (key.escape) {
+        setSearchQuery('');
+        setSearchMode(false);
+        return;
+      }
+      if (key.return) {
+        setSearchMode(false);
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setSearchQuery((q) => q.slice(0, -1));
+        return;
+      }
+      // Navigation works while typing (don't block arrows/jk).
+      if (key.upArrow || input === 'k') {
+        setCursor((c) => Math.max(0, c - 1));
+        return;
+      }
+      if (key.downArrow || input === 'j') {
+        setCursor((c) => Math.min(filteredItems.length - 1, c + 1));
+        return;
+      }
+      // Append printable character to query.
+      if (input && !key.ctrl && !key.meta) {
+        setSearchQuery((q) => q + input);
+      }
+      return;
+    }
+
     if (loading) return;
 
-    if (key.upArrow || input === 'k') setCursor((c) => Math.max(0, c - 1));
-    else if (key.downArrow || input === 'j') setCursor((c) => Math.min(items.length - 1, c + 1));
-    else if (input === 'n' || key.rightArrow) loadPage(page + 1);
-    else if (input === 'b' || key.leftArrow) loadPage(page - 1);
-    else if (input === 'q' || key.escape) doExit({ type: 'quit' });
-    else if (key.return) {
-      const item = items[cursor];
+    if (input === '/') {
+      setSearchMode(true);
+    } else if (key.upArrow || input === 'k') {
+      setCursor((c) => Math.max(0, c - 1));
+    } else if (key.downArrow || input === 'j') {
+      setCursor((c) => Math.min(filteredItems.length - 1, c + 1));
+    } else if (input === 'n' || key.rightArrow) {
+      loadPage(page + 1);
+    } else if (input === 'b' || key.leftArrow) {
+      loadPage(page - 1);
+    } else if (key.escape || input === 'q') {
+      // Esc clears active filter first; second Esc quits.
+      if (searchQuery) {
+        setSearchQuery('');
+      } else {
+        doExit({ type: 'quit' });
+      }
+    } else if (key.return) {
+      const item = filteredItems[cursor];
       if (item) doExit({ type: 'show', id: item.id });
     } else if (input === 'o') {
-      const item = items[cursor];
+      const item = filteredItems[cursor];
       if (item) doExit({ type: 'optimize', id: item.id });
     } else if (input === 'e') {
-      const item = items[cursor];
+      const item = filteredItems[cursor];
       if (item) doExit({ type: 'edit', id: item.id });
     } else if (input === 'p') {
       openPreview();
     }
   });
 
-  const selectedItem = items[cursor];
+  const selectedItem = filteredItems[cursor];
   const scrollStart = Math.max(
     0,
-    Math.min(cursor - Math.floor(listHeight / 2), items.length - listHeight),
+    Math.min(cursor - Math.floor(listHeight / 2), filteredItems.length - listHeight),
   );
-  const visibleItems = items.slice(scrollStart, scrollStart + listHeight);
+  const visibleItems = filteredItems.slice(scrollStart, scrollStart + listHeight);
   const hasPrev = page > 1;
   const hasNext = page < totalPages;
 
   // ── Preview overlay ────────────────────────────────────────────────────────
-  // Rendered as a standalone full-width layout so the iTerm2 escape sequence
-  // doesn't push list items around (no flex siblings to displace).
   if (previewMode && selectedItem) {
     const previewRows = Math.max(8, termHeight - 8);
     const previewCols = Math.max(20, termWidth - 6);
 
     return (
       <Box flexDirection="column" width={termWidth}>
-        {/* Header */}
         <Box paddingX={1} justifyContent="space-between">
           <Box gap={1}>
             <Text bold color="green">
@@ -232,7 +305,6 @@ export function MediaBrowser({
           <Text dimColor>{'─'.repeat(termWidth)}</Text>
         </Box>
 
-        {/* Image area */}
         <Box height={previewRows} paddingX={2} flexDirection="column">
           {previewLoading ? (
             <Box height={previewRows} alignItems="center" justifyContent="center">
@@ -243,7 +315,13 @@ export function MediaBrowser({
             </Box>
           ) : previewB64 ? (
             <Text>
-              {buildItermSequence(previewB64, previewBytes, selectedItem.filename, previewCols, previewRows)}
+              {buildItermSequence(
+                previewB64,
+                previewBytes,
+                selectedItem.filename,
+                previewCols,
+                previewRows,
+              )}
             </Text>
           ) : (
             <Box height={previewRows} alignItems="center" justifyContent="center">
@@ -255,8 +333,6 @@ export function MediaBrowser({
         <Box>
           <Text dimColor>{'─'.repeat(termWidth)}</Text>
         </Box>
-
-        {/* Metadata strip */}
         <Box paddingX={2} gap={3}>
           <Text dimColor>#{selectedItem.id}</Text>
           <Text dimColor>{selectedItem.mimeType}</Text>
@@ -270,8 +346,6 @@ export function MediaBrowser({
           )}
           {processedIds.has(selectedItem.id) && <Text color="green">✓ optimized</Text>}
         </Box>
-
-        {/* Footer */}
         <Box paddingX={1}>
           <Text dimColor>Press [p] or [Esc] to return to list</Text>
         </Box>
@@ -315,6 +389,29 @@ export function MediaBrowser({
         </Text>
       </Box>
 
+      {/* ── Search bar (shown when active or a query is set) ── */}
+      {(searchMode || searchQuery) && (
+        <Box paddingX={1} gap={1}>
+          <Text color="yellow" bold>
+            /
+          </Text>
+          <Text>{searchQuery}</Text>
+          {searchMode && <Text color="yellow">█</Text>}
+          {searchQuery && (
+            <Text dimColor>
+              {' '}—{' '}
+              {filteredItems.length === 0
+                ? 'no matches'
+                : `${filteredItems.length} match${filteredItems.length === 1 ? '' : 'es'}`}
+              {!searchMode && '  [/] edit  [Esc] clear'}
+            </Text>
+          )}
+          {searchMode && !searchQuery && (
+            <Text dimColor> type to filter · [Esc] cancel</Text>
+          )}
+        </Box>
+      )}
+
       <Box>
         <Text dimColor>{'─'.repeat(termWidth)}</Text>
       </Box>
@@ -336,7 +433,9 @@ export function MediaBrowser({
             </Box>
           ) : visibleItems.length === 0 ? (
             <Box paddingX={2} paddingY={1}>
-              <Text dimColor>No items.</Text>
+              <Text dimColor>
+                {searchQuery ? `No matches for "${searchQuery}"` : 'No items.'}
+              </Text>
             </Box>
           ) : (
             visibleItems.map((item, i) => {
@@ -423,7 +522,7 @@ export function MediaBrowser({
                 )}
               </>
             ) : (
-              <Text dimColor>No selection</Text>
+              <Text dimColor>{searchQuery ? `No matches for "${searchQuery}"` : 'No selection'}</Text>
             )}
           </Box>
         )}
@@ -435,8 +534,8 @@ export function MediaBrowser({
       </Box>
       <Box paddingX={1}>
         <Text dimColor>
-          [↑↓/jk] navigate [←→/n/b] page{canImages ? ' [p] preview' : ''} [o] optimize [e] edit
-          [↵] details [q] quit
+          [↑↓/jk] navigate [←→/n/b] page [/] search{canImages ? ' [p] preview' : ''} [o]
+          optimize [e] edit [↵] details [q] quit
         </Text>
       </Box>
     </Box>
