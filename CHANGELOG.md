@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-05-08
+
+### Added
+- **`localpress regenerate` command**: regenerate WordPress thumbnails for one
+  or more attachments via WP-CLI. Supports `--all --apply` for bulk, parallel
+  execution via `--concurrency`, and full `--json` output.
+- **`@img/sharp-wasm32` fallback**: compiled binaries now bundle a WASM build of
+  sharp that activates automatically when native sharp isn't available. Image
+  processing works out of the box without any additional user setup.
+- **`--regenerate-thumbnails` flag** on `optimize`: opt-in thumbnail regeneration
+  after replace-in-place (previously always ran, now skipped by default).
+
+### Changed
+- **Replace-in-place is 2-3x faster**: thumbnail regeneration is now opt-in
+  instead of automatic. The file is still replaced in place (same URL, same ID),
+  but `wp media regenerate` only runs when `--regenerate-thumbnails` is passed.
+- **Cached uploads directory**: the WP-CLI adapter caches the WordPress uploads
+  base path after first retrieval, saving one SSH round-trip per operation.
+- **`O` in `list -i` skips terminal form**: pressing `O` (optimize with preview)
+  now goes straight to the browser preview instead of showing the terminal
+  quality/format settings form first.
+
+### Fixed
+- **Preview server apply timeout**: increased `Bun.serve()` `idleTimeout` from
+  10s to 120s. The apply endpoint does WP-CLI replace-in-place over SSH which
+  can take 10-30+ seconds — Bun was killing the connection before it completed.
+- **Preview server shutdown race**: delayed server shutdown by 500ms after
+  sending the apply response so the browser receives the full response before
+  the TCP connection is torn down.
+
 ## [1.8.2] - 2026-05-08
 
 ### Added
@@ -450,7 +480,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.8.2...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/gfargo/localpress/compare/v1.8.2...v1.9.0
 [1.8.2]: https://github.com/gfargo/localpress/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/gfargo/localpress/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/gfargo/localpress/compare/v1.7.0...v1.8.0
