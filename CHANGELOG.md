@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-05-08
+
+### Fixed
+- **`list -i` hangs when SSH is configured**: the adapter resolver now uses
+  per-capability priority — REST is preferred for read operations (`list`, `get`,
+  `upload`, `update-meta`, `delete`, `fast-references`) since it's a single HTTP
+  request. WP-CLI is only preferred for server-side operations that REST can't do
+  (`replace-in-place`, `regenerate-thumbnails`, `prune-orphans`, `full-references`).
+  Previously, WP-CLI was used for everything when SSH was configured, causing 100+
+  sequential SSH round-trips per page load.
+- **Zsh completions install instructions**: fixed inline comments in the generated
+  zsh completion script that broke sourcing.
+
 ## [1.8.0] - 2026-05-08
 
 ### Added
@@ -422,7 +435,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.8.1...HEAD
+[1.8.1]: https://github.com/gfargo/localpress/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/gfargo/localpress/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/gfargo/localpress/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/gfargo/localpress/compare/v1.5.0...v1.6.0
