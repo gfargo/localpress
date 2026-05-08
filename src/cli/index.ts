@@ -22,6 +22,7 @@ import { registerOptimizeCommand } from './commands/optimize.ts';
 import { registerPullCommand } from './commands/pull.ts';
 import { registerPushCommand } from './commands/push.ts';
 import { registerReferencesCommand } from './commands/references.ts';
+import { registerRegenerateCommand } from './commands/regenerate.ts';
 import { registerRemoveBgCommand } from './commands/remove-bg.ts';
 import { registerResizeCommand } from './commands/resize.ts';
 import { registerShowCommand } from './commands/show.ts';
@@ -77,6 +78,7 @@ registerEditCommand(program);
 registerPullCommand(program);
 registerPushCommand(program);
 registerReferencesCommand(program);
+registerRegenerateCommand(program);
 registerUpdateCommand(program);
 registerCompletionsCommand(program);
 
