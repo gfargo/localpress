@@ -1,55 +1,47 @@
 /**
- * Sharp loader with WASM fallback.
+ * Sharp loader with graceful error handling.
  *
- * Tries to load native sharp first (fastest, requires platform binary).
- * Falls back to @img/sharp-wasm32 (bundleable, works in compiled binaries).
- * Throws a helpful error if neither is available.
+ * Sharp is a native module (libvips bindings) that can't be bundled into
+ * Bun's compiled single-file binaries. It must be installed separately
+ * on the user's machine.
  *
- * This solves the "Cannot find package 'sharp' from /$bunfs/..." error
- * that occurs in Bun-compiled binaries where native modules can't be bundled.
+ * This loader:
+ *   1. Tries to import sharp (works in dev mode and when globally installed)
+ *   2. Throws a clear, actionable error if sharp isn't found
+ *
+ * The result is cached — module resolution only happens once per process.
  */
 
-// biome-ignore lint/suspicious/noExplicitAny: sharp's type export varies between native and wasm
+// biome-ignore lint/suspicious/noExplicitAny: sharp's type export varies by version
 type SharpModule = any;
 
 let cachedSharp: SharpModule | null = null;
 
 /**
- * Load sharp with automatic fallback to WASM.
+ * Load sharp with a helpful error message if it's not installed.
  *
- * Results are cached — the module resolution only happens once.
- * Subsequent calls return the cached instance immediately.
+ * Results are cached — subsequent calls return immediately.
  */
 export async function loadSharp(): Promise<SharpModule> {
   if (cachedSharp) return cachedSharp;
 
-  // Try 1: Native sharp (fast, requires platform-specific binary).
   try {
     const mod = await import('sharp');
     cachedSharp = mod.default;
     return cachedSharp;
   } catch {
-    // Native sharp not available — try WASM fallback.
+    // sharp not available.
   }
 
-  // Try 2: WASM build (slower but works everywhere, bundleable).
-  try {
-    const mod = await import('@img/sharp-wasm32');
-    cachedSharp = mod.default ?? mod;
-    return cachedSharp;
-  } catch {
-    // WASM also not available.
-  }
-
-  // Neither available — throw helpful error.
   throw new Error(
-    'sharp is not installed. Image processing requires sharp.\n\n' +
-      'Install it with:\n' +
-      '  npm install -g sharp\n' +
-      '  # or, if using Bun:\n' +
+    'sharp is not installed. Image processing requires sharp (libvips).\n\n' +
+      'Quick fix:\n' +
       '  bun install -g sharp\n\n' +
-      'If you installed localpress via Homebrew, run:\n' +
-      '  brew install vips && npm install -g sharp\n\n' +
+      'Or with npm:\n' +
+      '  npm install -g sharp\n\n' +
+      'On macOS with Homebrew:\n' +
+      '  brew install vips && bun install -g sharp\n\n' +
+      'After installing, run `localpress doctor` to verify.\n' +
       'See: https://sharp.pixelplumbing.com/install',
   );
 }

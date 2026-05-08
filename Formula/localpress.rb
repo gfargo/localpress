@@ -39,8 +39,27 @@ class Localpress < Formula
     end
   end
 
+  depends_on "vips"
+
   def install
     bin.install Dir["localpress*"].first => "localpress"
+
+    # Install sharp globally so the compiled binary can find it at runtime.
+    # sharp is a native module that can't be bundled into single-file binaries.
+    system "npm", "install", "-g", "sharp"
+  end
+
+  def caveats
+    <<~EOS
+      localpress requires sharp for image processing.
+      It was installed globally via npm during formula installation.
+
+      If you encounter issues, reinstall with:
+        npm install -g sharp
+
+      Verify with:
+        localpress doctor
+    EOS
   end
 
   test do

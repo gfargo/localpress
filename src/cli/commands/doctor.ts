@@ -152,6 +152,21 @@ export function registerDoctorCommand(program: Command): void {
           });
         }
 
+        // -- Sharp availability check -----------------------------------------
+        let sharpAvailable = false;
+        try {
+          const { loadSharp } = await import('../../engine/image/sharp-loader.ts');
+          await loadSharp();
+          sharpAvailable = true;
+        } catch {
+          issues.push({
+            severity: 'error',
+            message:
+              'sharp is not installed — optimize, convert, resize, and remove-bg will not work',
+            fix: 'Run `bun install -g sharp` or `npm install -g sharp` (macOS: `brew install vips` first)',
+          });
+        }
+
         // -- Plugin detection --------------------------------------------------
         let plugins: PluginStatus[] = [];
         if (options.plugins || options.fix) {
@@ -208,6 +223,7 @@ export function registerDoctorCommand(program: Command): void {
             site: name,
             url: site.url,
             connectionOk,
+            sharpAvailable,
             adapters: availability,
             capabilities: report,
             issues,
@@ -218,6 +234,7 @@ export function registerDoctorCommand(program: Command): void {
           info(`  ${connectionOk ? '✓' : '✗'} REST API connection`);
           info(`  ${availability.wpCli ? '✓' : '✗'} WP-CLI (SSH)`);
           info(`  ${availability.mcp ? '✓' : '✗'} MCP`);
+          info(`  ${sharpAvailable ? '✓' : '✗'} sharp (image processing)`);
           info('');
           info('  Capabilities:');
           for (const cap of report) {
