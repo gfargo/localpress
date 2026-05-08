@@ -14,28 +14,28 @@
 class Localpress < Formula
   desc "Local-compute WordPress media optimization. Your laptop, your library."
   homepage "https://github.com/gfargo/localpress"
-  version "1.6.0"
+  version "1.7.0"
   license "MIT"
 
   on_macos do
     on_arm do
       url "https://github.com/gfargo/localpress/releases/download/v#{version}/localpress-darwin-arm64"
-      sha256 "ab35769ba2debc5eb2568b56ac76c2f72087606ca197f5f70103e67070c12c0d"
+      sha256 "0fd124333417cc3f6f3fb7f44a901dccfda8dd0cd0e90e13403f0fb84ab6979d"
     end
     on_intel do
       url "https://github.com/gfargo/localpress/releases/download/v#{version}/localpress-darwin-x64"
-      sha256 "6feb86e6fe75cdf551bb4a6491998d5f75d268856096d707e0ce91fa80b1b6a5"
+      sha256 "32324715f0a173f8d4681f3f17794ac987ec2cef60de737a109af557bd1aa3dc"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/gfargo/localpress/releases/download/v#{version}/localpress-linux-arm64"
-      sha256 "c23d576fa06856a43942f72e1bec9e924d09143e9579ab139b5450a90bf4b71b"
+      sha256 "7d5420d99b4671f2b8d3e9323d90ae770cfe01d755d7060cb43688d7b7725c54"
     end
     on_intel do
       url "https://github.com/gfargo/localpress/releases/download/v#{version}/localpress-linux-x64"
-      sha256 "60094a6cde87a250cb4e978633586726a5022bd30464f46fef467a7bf5e0d8b1"
+      sha256 "40bb72b1d225c2e71c57f2278388d2604183150250f77902020518fb3c163404"
     end
   end
 
