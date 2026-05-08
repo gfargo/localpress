@@ -77,13 +77,20 @@ describe('AdapterResolver', () => {
     expect(adapter?.name).toBe('wp-cli');
   });
 
-  test('REST adapter is preferred for cheap operations even when WP-CLI is available', () => {
-    // List is supported by both; preference order says wp-cli wins, but
-    // the resolver currently picks WP-CLI first per priority.
-    // If we ever want REST-first for cheap ops, this test will catch the change.
+  test('REST adapter is preferred for read operations even when WP-CLI is available', () => {
+    // REST is faster for reads (single HTTP request vs per-item SSH round-trips).
+    // WP-CLI is only preferred for operations REST can't do.
     const resolver = new AdapterResolver(fakeWpCliSite);
-    const adapter = resolver.tryResolve('list');
-    expect(adapter?.name).toBe('wp-cli');
+    expect(resolver.tryResolve('list')?.name).toBe('rest');
+    expect(resolver.tryResolve('get')?.name).toBe('rest');
+    expect(resolver.tryResolve('fast-references')?.name).toBe('rest');
+  });
+
+  test('WP-CLI is preferred for server-side operations', () => {
+    const resolver = new AdapterResolver(fakeWpCliSite);
+    expect(resolver.tryResolve('replace-in-place')?.name).toBe('wp-cli');
+    expect(resolver.tryResolve('regenerate-thumbnails')?.name).toBe('wp-cli');
+    expect(resolver.tryResolve('full-references')?.name).toBe('wp-cli');
   });
 
   test('capabilityReport covers all Capability values', () => {
