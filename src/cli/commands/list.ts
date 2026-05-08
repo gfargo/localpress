@@ -62,7 +62,12 @@ export function registerListCommand(program: Command): void {
         const { spawnSync } = await import('node:child_process');
 
         // argv[1] is a .ts script in dev mode; the compiled binary repeats argv[0].
-        const isDevMode = /\.(ts|mts|js|mjs)$/.test(process.argv[1] ?? '');
+        // In compiled mode, process.argv[0] IS the binary — just re-invoke it directly.
+        // In dev mode (bun run src/cli/index.ts), we need to pass the script path.
+        const isDevMode =
+          /\.(ts|mts|js|mjs)$/.test(process.argv[1] ?? '') &&
+          !process.execPath.includes('localpress');
+        const selfBin = isDevMode ? process.argv[0] : process.execPath;
         const selfArgs = (cmd: string, id: string, extra: string[] = []) =>
           isDevMode ? [process.argv[1], cmd, id, ...extra] : [cmd, id, ...extra];
 
@@ -263,7 +268,7 @@ export function registerListCommand(program: Command): void {
               subCmd = 'edit';
           }
 
-          spawnSync(process.argv[0], selfArgs(subCmd, String(pendingAction.id), extraArgs), {
+          spawnSync(selfBin, selfArgs(subCmd, String(pendingAction.id), extraArgs), {
             stdio: 'inherit',
           });
 
