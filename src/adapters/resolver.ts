@@ -32,6 +32,20 @@ export interface CapabilityReport {
 /** Preference order for adapters when multiple support a capability. */
 const ADAPTER_PRIORITY: WpBackend['name'][] = ['wp-cli', 'rest'];
 
+/**
+ * Capabilities where REST is preferred over WP-CLI even when both are available.
+ * REST is a single HTTP request; WP-CLI over SSH has per-item round-trip overhead
+ * that makes read-heavy operations painfully slow.
+ */
+const REST_PREFERRED: ReadonlySet<Capability> = new Set<Capability>([
+  'list',
+  'get',
+  'upload',
+  'update-meta',
+  'delete',
+  'fast-references',
+]);
+
 const ALL_CAPABILITIES: Capability[] = [
   'list',
   'get',
@@ -64,7 +78,11 @@ export class AdapterResolver {
    * Throws if no adapter supports it.
    */
   resolve(capability: Capability): WpBackend {
-    for (const name of ADAPTER_PRIORITY) {
+    const priority = REST_PREFERRED.has(capability)
+      ? (['rest', 'wp-cli'] as const)
+      : ADAPTER_PRIORITY;
+
+    for (const name of priority) {
       const adapter = this.adapters.find((a) => a.name === name);
       if (adapter?.capabilities.has(capability)) {
         return adapter;
@@ -75,7 +93,11 @@ export class AdapterResolver {
 
   /** Same as resolve(), but returns null instead of throwing. */
   tryResolve(capability: Capability): WpBackend | null {
-    for (const name of ADAPTER_PRIORITY) {
+    const priority = REST_PREFERRED.has(capability)
+      ? (['rest', 'wp-cli'] as const)
+      : ADAPTER_PRIORITY;
+
+    for (const name of priority) {
       const adapter = this.adapters.find((a) => a.name === name);
       if (adapter?.capabilities.has(capability)) {
         return adapter;
