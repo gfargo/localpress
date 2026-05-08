@@ -96,6 +96,9 @@ export async function startPreviewServer(
   state.server = Bun.serve({
     port,
     hostname: '127.0.0.1',
+    // The apply endpoint can take 30+ seconds (SCP upload + wp media regenerate over SSH).
+    // Bun's default idleTimeout is 10s which kills the connection mid-operation.
+    idleTimeout: 120,
     fetch: async (req, server) => {
       const url = new URL(req.url);
 
@@ -170,7 +173,9 @@ export async function startPreviewServer(
           });
         }
         try {
+          info('  Applying optimized image to WordPress...');
           const result = await options.onApply(state.lastResultBytes);
+          info(`  ✓ Applied successfully (${result.message})`);
           // Delay shutdown to ensure the response is fully sent to the browser
           // before the server closes the TCP connection.
           setTimeout(() => {
@@ -182,6 +187,7 @@ export async function startPreviewServer(
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
+          warn(`  Apply failed: ${message}`);
           return new Response(JSON.stringify({ error: message }), {
             status: 500,
             headers: { 'Content-Type': 'application/json' },
