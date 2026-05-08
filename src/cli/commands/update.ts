@@ -2,27 +2,29 @@
  * `localpress update` — self-update command.
  *
  * Checks GitHub Releases for a newer version and offers to download and
- * replace the current binary.
+ * extract the tarball to replace the current installation.
  *
  * Behavior:
  *   - `localpress update`         — check for updates, prompt to install
- *   - `localpress update --check` — just check, don't install (exit 0 if up-to-date, exit 1 if update available)
+ *   - `localpress update --check` — just check (exit 1 if update available)
  *   - `localpress update --yes`   — auto-install without prompting
  *
  * For Homebrew users, suggests `brew upgrade localpress` instead of
  * downloading directly.
  */
 
+import { spawnSync } from 'node:child_process';
 import { createWriteStream, existsSync } from 'node:fs';
-import { chmod, rename, unlink } from 'node:fs/promises';
+import { chmod, cp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { Command } from 'commander';
 
 import packageJson from '../../../package.json' with { type: 'json' };
 import { error, info, printJson } from '../utils/output.ts';
+import { promptYesNo } from '../utils/prompt.ts';
 
 const GITHUB_REPO = 'gfargo/localpress';
 const RELEASES_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
@@ -50,7 +52,7 @@ interface UpdateCheckResult {
 export function registerUpdateCommand(program: Command): void {
   program
     .command('update')
-    .description('Check for updates and optionally self-update the localpress binary')
+    .description('Check for updates and optionally self-update localpress')
     .option('--check', 'just check for updates without installing (exit 1 if update available)')
     .action(async (options) => {
       const parentOpts = program.opts();
@@ -62,12 +64,8 @@ export function registerUpdateCommand(program: Command): void {
 
       if (isJson) {
         printJson(result);
-        if (checkOnly && result.updateAvailable) {
-          process.exit(1);
-        }
-        if (checkOnly || !result.updateAvailable) {
-          return;
-        }
+        if (checkOnly && result.updateAvailable) process.exit(1);
+        if (checkOnly || !result.updateAvailable) return;
       } else {
         info(`Current version: ${result.currentVersion}`);
         info(`Latest version:  ${result.latestVersion}`);
@@ -82,22 +80,16 @@ export function registerUpdateCommand(program: Command): void {
         info(`  Release: ${result.releaseUrl}`);
         info('');
 
-        if (checkOnly) {
-          process.exit(1);
-        }
+        if (checkOnly) process.exit(1);
       }
 
       // Detect if running via Homebrew.
-      const binaryPath = process.execPath;
-      const isHomebrew = binaryPath.includes('/Cellar/') || binaryPath.includes('/homebrew/');
+      const installDir = detectInstallDir();
+      const isHomebrew = installDir.includes('/Cellar/') || installDir.includes('/homebrew/');
 
       if (isHomebrew) {
         if (isJson) {
-          printJson({
-            ...result,
-            method: 'homebrew',
-            command: 'brew upgrade localpress',
-          });
+          printJson({ ...result, method: 'homebrew', command: 'brew upgrade localpress' });
         } else {
           info('Detected Homebrew installation. Update with:');
           info('');
@@ -109,7 +101,7 @@ export function registerUpdateCommand(program: Command): void {
 
       if (!result.downloadUrl || !result.assetName) {
         error(
-          `No binary available for your platform (${process.platform}-${process.arch}). ` +
+          `No release available for your platform (${process.platform}-${process.arch}). ` +
             `Download manually from: ${result.releaseUrl}`,
         );
         process.exit(1);
@@ -118,23 +110,33 @@ export function registerUpdateCommand(program: Command): void {
       // Prompt for confirmation unless --yes.
       if (!autoYes) {
         const sizeStr = result.assetSize ? ` (${formatBytes(result.assetSize)})` : '';
-        info(`Binary: ${result.assetName}${sizeStr}`);
-        info(`Target: ${binaryPath}`);
+        info(`Archive: ${result.assetName}${sizeStr}`);
+        info(`Install: ${installDir}`);
         info('');
 
-        const confirmed = await promptConfirm('Install update?');
+        const confirmed = await promptYesNo('Install update? [y/N]');
         if (!confirmed) {
           info('Update cancelled.');
           return;
         }
       }
 
-      // Download and replace.
-      await downloadAndReplace(result.downloadUrl, binaryPath, isJson);
+      await downloadAndReplace(result.downloadUrl, installDir, isJson);
     });
 }
 
 // -- Core logic ---------------------------------------------------------------
+
+/**
+ * Detect the install directory (where bundle.js lives).
+ * In tarball distribution, this is the directory containing bundle.js.
+ */
+function detectInstallDir(): string {
+  // process.argv[1] is the bundle.js path when run via wrapper script.
+  // For compiled-binary fallback, use process.execPath.
+  const scriptPath = process.argv[1] ?? process.execPath;
+  return dirname(resolve(scriptPath));
+}
 
 async function checkForUpdate(): Promise<UpdateCheckResult> {
   const currentVersion = packageJson.version;
@@ -161,8 +163,7 @@ async function checkForUpdate(): Promise<UpdateCheckResult> {
   const latestVersion = release.tag_name.replace(/^v/, '');
   const updateAvailable = isNewerVersion(latestVersion, currentVersion);
 
-  // Find the correct binary for this platform.
-  const assetName = getBinaryAssetName();
+  const assetName = getAssetName();
   const asset = release.assets.find((a) => a.name === assetName);
 
   return {
@@ -178,16 +179,15 @@ async function checkForUpdate(): Promise<UpdateCheckResult> {
 
 async function downloadAndReplace(
   downloadUrl: string,
-  binaryPath: string,
+  installDir: string,
   isJson: boolean,
 ): Promise<void> {
-  const tmpPath = join(tmpdir(), `localpress-update-${Date.now()}`);
+  const tmpArchive = join(tmpdir(), `localpress-update-${Date.now()}.tar.gz`);
+  const tmpExtract = join(tmpdir(), `localpress-update-${Date.now()}-extracted`);
 
   try {
-    // Download to temp file.
-    if (!isJson) {
-      info('Downloading...');
-    }
+    // Download the tarball.
+    if (!isJson) info('Downloading...');
 
     const response = await fetch(downloadUrl, {
       headers: { 'User-Agent': `localpress/${packageJson.version}` },
@@ -201,53 +201,93 @@ async function downloadAndReplace(
       throw new Error('Download failed: empty response body');
     }
 
-    // Stream the response body to a temp file.
     const nodeStream = Readable.fromWeb(response.body as import('node:stream/web').ReadableStream);
-    const fileStream = createWriteStream(tmpPath);
+    const fileStream = createWriteStream(tmpArchive);
     await pipeline(nodeStream, fileStream);
 
-    // Make executable.
-    await chmod(tmpPath, 0o755);
+    // Extract.
+    if (!isJson) info('Extracting...');
+    await mkdir(tmpExtract, { recursive: true });
+    const isZip = downloadUrl.endsWith('.zip');
+    const extractResult = isZip
+      ? spawnSync('unzip', ['-q', tmpArchive, '-d', tmpExtract])
+      : spawnSync('tar', ['xzf', tmpArchive, '-C', tmpExtract]);
+    if (extractResult.status !== 0) {
+      throw new Error('Extraction failed');
+    }
 
-    // Replace the current binary.
-    // Try atomic rename first; fall back to copy if cross-device.
-    const backupPath = `${binaryPath}.bak`;
+    // Find the extracted dir (localpress-<platform>/)
+    const { readdirSync } = await import('node:fs');
+    const extractedSubdirs = readdirSync(tmpExtract).filter((n) => n.startsWith('localpress-'));
+    if (extractedSubdirs.length === 0) {
+      throw new Error('Extracted archive has unexpected structure');
+    }
+    const extractedDir = join(tmpExtract, extractedSubdirs[0]);
+
+    // Back up current install, move new in place.
+    if (!isJson) info('Installing...');
+    const backupDir = `${installDir}.bak-${Date.now()}`;
+
+    // installDir might be `.../libexec/bin` — we want to replace the parent libexec
+    // Find the directory that contains bundle.js
+    let targetDir = installDir;
+    if (!existsSync(join(targetDir, 'bundle.js'))) {
+      // Maybe we're in bin/, try parent
+      targetDir = dirname(installDir);
+      if (!existsSync(join(targetDir, 'bundle.js'))) {
+        throw new Error(
+          `Could not find bundle.js — install location unexpected. Current dir: ${installDir}`,
+        );
+      }
+    }
+
+    // Rename existing → backup, copy new → target
+    if (existsSync(targetDir)) {
+      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+      await cp(targetDir, backupDir, { recursive: true });
+    }
+
     try {
-      // Back up current binary.
-      if (existsSync(binaryPath)) {
-        await rename(binaryPath, backupPath);
+      // Remove old contents, copy new
+      const entries = readdirSync(targetDir);
+      for (const entry of entries) {
+        await rm(join(targetDir, entry), { recursive: true, force: true });
       }
-      await rename(tmpPath, binaryPath);
-      // Clean up backup.
-      if (existsSync(backupPath)) {
-        await unlink(backupPath).catch(() => {});
+      await cp(extractedDir, targetDir, { recursive: true });
+
+      // Ensure wrapper script is executable
+      const wrapperPath = join(targetDir, 'bin', 'localpress');
+      if (existsSync(wrapperPath)) {
+        await chmod(wrapperPath, 0o755);
       }
-    } catch (renameErr) {
-      // Cross-device link — fall back to copy.
-      const content = await Bun.file(tmpPath).arrayBuffer();
-      await Bun.write(binaryPath, content);
-      await chmod(binaryPath, 0o755);
-      // Restore backup if rename of new file failed.
-      if (existsSync(backupPath) && !existsSync(binaryPath)) {
-        await rename(backupPath, binaryPath);
+
+      // Clean up backup
+      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    } catch (err) {
+      // Restore backup on failure
+      if (existsSync(backupDir)) {
+        await rm(targetDir, { recursive: true, force: true }).catch(() => {});
+        await cp(backupDir, targetDir, { recursive: true });
+        await rm(backupDir, { recursive: true, force: true }).catch(() => {});
       }
+      throw err;
     }
 
     if (isJson) {
-      printJson({ success: true, installedVersion: 'latest', path: binaryPath });
+      printJson({ success: true, path: targetDir });
     } else {
       info('');
       info('✓ Update installed successfully!');
-      info(`  Binary: ${binaryPath}`);
+      info(`  Install dir: ${targetDir}`);
       info('  Run `localpress --version` to confirm.');
     }
   } catch (err) {
-    // Clean up temp file on failure.
-    if (existsSync(tmpPath)) {
-      await unlink(tmpPath).catch(() => {});
-    }
     error(`Update failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
+  } finally {
+    // Clean up temp files.
+    await rm(tmpArchive, { force: true }).catch(() => {});
+    await rm(tmpExtract, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -270,20 +310,18 @@ function isNewerVersion(latest: string, current: string): boolean {
 }
 
 /**
- * Get the expected binary asset name for the current platform.
+ * Get the expected tarball asset name for the current platform.
  */
-function getBinaryAssetName(): string {
+function getAssetName(): string {
   const platform = process.platform;
   const arch = process.arch;
 
-  if (platform === 'win32') {
-    return 'localpress-windows-x64.exe';
-  }
+  if (platform === 'win32') return 'localpress-windows-x64.zip';
 
   const platformName = platform === 'darwin' ? 'darwin' : 'linux';
   const archName = arch === 'arm64' ? 'arm64' : 'x64';
 
-  return `localpress-${platformName}-${archName}`;
+  return `localpress-${platformName}-${archName}.tar.gz`;
 }
 
 /**
@@ -293,29 +331,4 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/**
- * Simple y/N confirmation prompt using stdin.
- */
-async function promptConfirm(message: string): Promise<boolean> {
-  process.stdout.write(`${message} [y/N] `);
-
-  return new Promise((resolve) => {
-    const onData = (data: Buffer) => {
-      const input = data.toString().trim().toLowerCase();
-      process.stdin.removeListener('data', onData);
-      process.stdin.pause();
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
-      }
-      resolve(input === 'y' || input === 'yes');
-    };
-
-    process.stdin.resume();
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-    }
-    process.stdin.once('data', onData);
-  });
 }

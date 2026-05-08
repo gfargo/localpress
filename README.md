@@ -250,8 +250,8 @@ bun run typecheck        # tsc --noEmit
 bun run lint             # biome check
 bun test                 # run all tests (36 unit + 9 integration)
 bun test test/unit/      # unit tests only
-bun run build            # compile to single binary at ./dist/localpress
-bun run build:all        # cross-compile for all 5 platforms
+bun run build            # build tarball at ./dist/localpress-<platform>.tar.gz
+bun run build:all        # build tarballs for all 5 platforms
 ```
 
 Integration tests require Docker. They spin up WordPress 6.7 + MySQL 8.0 via `test/integration/docker-compose.yml` and are skipped automatically when the environment variables aren't set.

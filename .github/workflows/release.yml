@@ -47,20 +47,20 @@ jobs:
       - name: Compute SHA256 checksums
         id: checksums
         run: |
-          echo "darwin_arm64=$(sha256sum dist/localpress-darwin-arm64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          echo "darwin_x64=$(sha256sum dist/localpress-darwin-x64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          echo "linux_arm64=$(sha256sum dist/localpress-linux-arm64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          echo "linux_x64=$(sha256sum dist/localpress-linux-x64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "darwin_arm64=$(sha256sum dist/localpress-darwin-arm64.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "darwin_x64=$(sha256sum dist/localpress-darwin-x64.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux_arm64=$(sha256sum dist/localpress-linux-arm64.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux_x64=$(sha256sum dist/localpress-linux-x64.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/localpress-darwin-arm64
-            dist/localpress-darwin-x64
-            dist/localpress-linux-arm64
-            dist/localpress-linux-x64
-            dist/localpress-windows-x64.exe
+            dist/localpress-darwin-arm64.tar.gz
+            dist/localpress-darwin-x64.tar.gz
+            dist/localpress-linux-arm64.tar.gz
+            dist/localpress-linux-x64.tar.gz
+            dist/localpress-windows-x64.zip
           generate_release_notes: true
           make_latest: true
 
