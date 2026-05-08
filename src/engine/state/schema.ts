@@ -15,7 +15,7 @@
  * On startup, the DB layer compares this against the stored value and applies
  * pending migrations.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * Initial schema (v1). Idempotent — safe to run on every CLI invocation.
@@ -101,6 +101,25 @@ export const MIGRATIONS: Migration[] = [
         PRIMARY KEY (site_name, key),
         FOREIGN KEY (site_name) REFERENCES sites(name) ON DELETE CASCADE
       );
+    `,
+  },
+  {
+    version: 3,
+    description: 'Add watch_mappings table for directory watch file→attachment tracking',
+    up: `
+      CREATE TABLE IF NOT EXISTS watch_mappings (
+        site_name   TEXT NOT NULL,
+        watch_dir   TEXT NOT NULL,
+        rel_path    TEXT NOT NULL,
+        file_hash   TEXT NOT NULL,
+        wp_id       INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL,
+        PRIMARY KEY (site_name, watch_dir, rel_path),
+        FOREIGN KEY (site_name) REFERENCES sites(name) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_watch_mappings_wp_id
+        ON watch_mappings(site_name, wp_id);
     `,
   },
 ];

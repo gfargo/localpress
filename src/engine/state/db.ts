@@ -371,6 +371,63 @@ export class SiteDb {
       [siteName, key, value, Date.now()],
     );
   }
+
+  // Watch mappings (file→attachment tracking) ---------------------------------
+
+  /** Get the watch mapping for a file path in a watched directory. */
+  getWatchMapping(siteName: string, watchDir: string, relPath: string): WatchMapping | null {
+    const row = this.db
+      .query(
+        `SELECT site_name, watch_dir, rel_path, file_hash, wp_id, updated_at
+         FROM watch_mappings
+         WHERE site_name = ? AND watch_dir = ? AND rel_path = ?`,
+      )
+      .get(siteName, watchDir, relPath) as RawWatchMappingRow | null;
+
+    return row ? mapWatchMappingRow(row) : null;
+  }
+
+  /** Upsert a watch mapping (file→attachment). */
+  upsertWatchMapping(
+    siteName: string,
+    watchDir: string,
+    relPath: string,
+    fileHash: string,
+    wpId: number,
+  ): void {
+    this.db.run(
+      `INSERT INTO watch_mappings (site_name, watch_dir, rel_path, file_hash, wp_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (site_name, watch_dir, rel_path) DO UPDATE SET
+         file_hash  = excluded.file_hash,
+         wp_id      = excluded.wp_id,
+         updated_at = excluded.updated_at`,
+      [siteName, watchDir, relPath, fileHash, wpId, Date.now()],
+    );
+  }
+
+  /** Remove a watch mapping (e.g. when a file is deleted). */
+  removeWatchMapping(siteName: string, watchDir: string, relPath: string): void {
+    this.db.run(
+      `DELETE FROM watch_mappings
+       WHERE site_name = ? AND watch_dir = ? AND rel_path = ?`,
+      [siteName, watchDir, relPath],
+    );
+  }
+
+  /** List all watch mappings for a directory. */
+  listWatchMappings(siteName: string, watchDir: string): WatchMapping[] {
+    const rows = this.db
+      .query(
+        `SELECT site_name, watch_dir, rel_path, file_hash, wp_id, updated_at
+         FROM watch_mappings
+         WHERE site_name = ? AND watch_dir = ?
+         ORDER BY rel_path ASC`,
+      )
+      .all(siteName, watchDir) as RawWatchMappingRow[];
+
+    return rows.map(mapWatchMappingRow);
+  }
 }
 
 // -- Internal row types and mappers -------------------------------------------
@@ -519,3 +576,34 @@ export function getStoredSchemaVersion(db: Database): number {
 
 // Re-export for convenience.
 export { SCHEMA_VERSION, INITIAL_SCHEMA, MIGRATIONS };
+
+// -- Watch mapping types ------------------------------------------------------
+
+export interface WatchMapping {
+  siteName: string;
+  watchDir: string;
+  relPath: string;
+  fileHash: string;
+  wpId: number;
+  updatedAt: number;
+}
+
+interface RawWatchMappingRow {
+  site_name: string;
+  watch_dir: string;
+  rel_path: string;
+  file_hash: string;
+  wp_id: number;
+  updated_at: number;
+}
+
+function mapWatchMappingRow(row: RawWatchMappingRow): WatchMapping {
+  return {
+    siteName: row.site_name,
+    watchDir: row.watch_dir,
+    relPath: row.rel_path,
+    fileHash: row.file_hash,
+    wpId: row.wp_id,
+    updatedAt: row.updated_at,
+  };
+}

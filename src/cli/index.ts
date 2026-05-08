@@ -29,6 +29,7 @@ import { registerShowCommand } from './commands/show.ts';
 import { registerSitesCommand } from './commands/sites.ts';
 import { registerStatsCommand } from './commands/stats.ts';
 import { registerUpdateCommand } from './commands/update.ts';
+import { registerWatchCommand } from './commands/watch.ts';
 import { setOutputOptions } from './utils/output.ts';
 
 const program = new Command();
@@ -80,6 +81,7 @@ registerPushCommand(program);
 registerReferencesCommand(program);
 registerRegenerateCommand(program);
 registerUpdateCommand(program);
+registerWatchCommand(program);
 registerCompletionsCommand(program);
 
 // Top-level help footer.
