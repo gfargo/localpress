@@ -93,6 +93,8 @@ describe('buildSshArgs', () => {
     expect(args).not.toContain('-p');
     // No -i flag without identityFile
     expect(args).not.toContain('-i');
+    // No IdentitiesOnly without identityFile (allows agent to work normally)
+    expect(args).not.toContain('IdentitiesOnly=yes');
   });
 
   test('custom port adds -p flag', () => {
@@ -108,11 +110,13 @@ describe('buildSshArgs', () => {
     expect(args).not.toContain('-p');
   });
 
-  test('identityFile adds -i flag', () => {
+  test('identityFile adds -i flag and IdentitiesOnly=yes', () => {
     const args = buildSshArgs(fullSsh);
     const iIdx = args.indexOf('-i');
     expect(iIdx).toBeGreaterThanOrEqual(0);
     expect(args[iIdx + 1]).toBe('~/.ssh/id_ed25519');
+    // IdentitiesOnly prevents agent from offering all keys
+    expect(args).toContain('IdentitiesOnly=yes');
   });
 
   test('destination is always the last argument', () => {
