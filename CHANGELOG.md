@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-05-08
+
+### Added
+- **Smart sharp path discovery**: the sharp loader now checks well-known global
+  paths (`~/.bun/install/global`, `/opt/homebrew/lib`, `/usr/local/lib`, etc.)
+  when standard module resolution fails. If sharp is installed globally anywhere,
+  it's found automatically.
+- **Auto-install prompt for sharp**: when sharp isn't found, `optimize`,
+  `convert`, `resize`, and `remove-bg` now offer to install it interactively.
+  Respects `--yes` for unattended installs and skips the prompt in `--json`
+  or `--quiet` modes.
+- **`localpress doctor --fix` auto-installs sharp**: if doctor detects sharp
+  is missing, `--fix` installs it automatically alongside other remediation.
+- **Sharp status in `localpress doctor`**: new line shows `✓/✗ sharp
+  (image processing)` so users can see whether sharp is available.
+- **Homebrew formula installs sharp**: the formula now runs
+  `npm install -g sharp` during installation and `depends_on "vips"`.
+- **`SharpNotInstalledError` class**: typed error so callers can detect and
+  handle the missing-sharp case specifically.
+
+### Changed
+- **Sharp loader simplified**: dropped the broken `@img/sharp-wasm32` fallback
+  (it never actually installed due to platform-mismatched optional deps). The
+  new loader is cleaner and actually works.
+
+### Removed
+- **`@img/sharp-wasm32` dependency**: was dead code — never installed, never
+  bundled, never used.
+- **`src/shims/sharp-wasm32.d.ts`**: type declaration for the removed package.
+
 ## [1.9.0] - 2026-05-08
 
 ### Added
@@ -480,7 +510,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/gfargo/localpress/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/gfargo/localpress/compare/v1.8.2...v1.9.0
 [1.8.2]: https://github.com/gfargo/localpress/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/gfargo/localpress/compare/v1.8.0...v1.8.1
