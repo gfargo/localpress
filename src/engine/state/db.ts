@@ -265,6 +265,85 @@ export class SiteDb {
     };
   }
 
+  // Library overview -----------------------------------------------------------
+
+  /** Get total attachment count and total size for a site. */
+  getLibraryOverview(siteName: string): LibraryOverview {
+    const row = this.db
+      .query(
+        `SELECT COUNT(*)          AS total_attachments,
+                COALESCE(SUM(size_bytes), 0) AS total_size_bytes
+         FROM attachments
+         WHERE site_name = ?`,
+      )
+      .get(siteName) as { total_attachments: number; total_size_bytes: number } | null;
+
+    const processedCount = this.db
+      .query(
+        `SELECT COUNT(DISTINCT wp_id) AS optimized
+         FROM processing_history
+         WHERE site_name = ? AND status = 'success'`,
+      )
+      .get(siteName) as { optimized: number } | null;
+
+    const totalAttachments = row?.total_attachments ?? 0;
+    const optimized = processedCount?.optimized ?? 0;
+
+    return {
+      totalAttachments,
+      totalSizeBytes: row?.total_size_bytes ?? 0,
+      optimized,
+      unoptimized: totalAttachments - optimized,
+    };
+  }
+
+  /** Get format breakdown (MIME type counts) for a site. */
+  getFormatBreakdown(siteName: string): FormatCount[] {
+    const rows = this.db
+      .query(
+        `SELECT mime_type, COUNT(*) AS count
+         FROM attachments
+         WHERE site_name = ? AND mime_type IS NOT NULL
+         GROUP BY mime_type
+         ORDER BY count DESC`,
+      )
+      .all(siteName) as Array<{ mime_type: string; count: number }>;
+
+    return rows.map((r) => ({
+      mimeType: r.mime_type,
+      count: r.count,
+    }));
+  }
+
+  /** Get recent operations grouped by date and operation type. */
+  getRecentOperations(siteName: string, limit = 10): RecentOperation[] {
+    const rows = this.db
+      .query(
+        `SELECT DATE(ran_at / 1000, 'unixepoch') AS date,
+                operation,
+                COUNT(*)                          AS item_count,
+                SUM(CASE WHEN bytes_before > bytes_after THEN bytes_before - bytes_after ELSE 0 END) AS bytes_saved
+         FROM processing_history
+         WHERE site_name = ? AND status = 'success'
+         GROUP BY date, operation
+         ORDER BY date DESC, item_count DESC
+         LIMIT ?`,
+      )
+      .all(siteName, limit) as Array<{
+      date: string;
+      operation: string;
+      item_count: number;
+      bytes_saved: number | null;
+    }>;
+
+    return rows.map((r) => ({
+      date: r.date,
+      operation: r.operation,
+      itemCount: r.item_count,
+      bytesSaved: r.bytes_saved ?? 0,
+    }));
+  }
+
   // Lifecycle -----------------------------------------------------------------
 
   close(): void {
@@ -402,6 +481,27 @@ interface RawTotalStat {
   total_ops: number;
   succeeded: number;
   last_ran_at: number | null;
+}
+
+// -- Library overview types ---------------------------------------------------
+
+export interface LibraryOverview {
+  totalAttachments: number;
+  totalSizeBytes: number;
+  optimized: number;
+  unoptimized: number;
+}
+
+export interface FormatCount {
+  mimeType: string;
+  count: number;
+}
+
+export interface RecentOperation {
+  date: string;
+  operation: string;
+  itemCount: number;
+  bytesSaved: number;
 }
 
 /** Read the current schema version stored in the DB. Returns 0 if no version row exists. */
