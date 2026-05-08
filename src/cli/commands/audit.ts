@@ -341,7 +341,8 @@ async function detectDuplicates(items: MediaItem[]): Promise<AuditFinding[]> {
   // biome-ignore lint/suspicious/noExplicitAny: sharp is lazy-loaded and may not be installed
   let sharp: any;
   try {
-    sharp = (await import('sharp')).default;
+    const { loadSharp } = await import('../../engine/image/sharp-loader.ts');
+    sharp = await loadSharp();
   } catch {
     warn('--duplicates requires sharp to be installed. Skipping duplicate detection.');
     return [];
