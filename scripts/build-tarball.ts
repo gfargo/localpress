@@ -196,8 +196,9 @@ Issues:   https://github.com/gfargo/localpress/issues
       throw new Error('tar failed');
     }
   } else {
-    // zip for Windows
-    const zipResult = spawnSync('zip', ['-rq', archivePath, `localpress-${platform}`], {
+    // zip for Windows — run from DIST so paths are relative
+    const archiveFilename = `localpress-${platform}.${archiveFormat}`;
+    const zipResult = spawnSync('zip', ['-rq', archiveFilename, `localpress-${platform}`], {
       cwd: DIST,
       stdio: 'inherit',
     });
