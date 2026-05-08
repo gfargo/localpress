@@ -47,7 +47,7 @@ export async function scpUpload(
   args.push('-o', 'BatchMode=yes');
 
   args.push(localPath);
-  args.push(`${ssh.host}:${remotePath}`);
+  args.push(`${sshDestination(ssh)}:${remotePath}`);
 
   return execProcess('scp', args);
 }
@@ -72,15 +72,26 @@ export async function scpDownload(
   args.push('-o', 'StrictHostKeyChecking=accept-new');
   args.push('-o', 'BatchMode=yes');
 
-  args.push(`${ssh.host}:${remotePath}`);
+  args.push(`${sshDestination(ssh)}:${remotePath}`);
   args.push(localPath);
 
   return execProcess('scp', args);
 }
 
-// -- Internal helpers ---------------------------------------------------------
+// -- Internal helpers (exported for testing) ----------------------------------
 
-function buildSshArgs(ssh: SshConfig): string[] {
+/**
+ * Build the user@host destination string from config fields.
+ * Supports legacy configs where user@ is already embedded in host.
+ */
+export function sshDestination(ssh: SshConfig): string {
+  if (ssh.user && !ssh.host.includes('@')) {
+    return `${ssh.user}@${ssh.host}`;
+  }
+  return ssh.host;
+}
+
+export function buildSshArgs(ssh: SshConfig): string[] {
   const args: string[] = [];
 
   if (ssh.port && ssh.port !== 22) {
@@ -94,7 +105,7 @@ function buildSshArgs(ssh: SshConfig): string[] {
   args.push('-o', 'StrictHostKeyChecking=accept-new');
   args.push('-o', 'BatchMode=yes');
 
-  args.push(ssh.host);
+  args.push(sshDestination(ssh));
 
   return args;
 }

@@ -486,7 +486,7 @@ interface WpCliAttachmentMeta {
 
 // Helper for callers that want to check availability.
 export function isWpCliAvailableForSite(site: SiteConfig): boolean {
-  return Boolean(site.ssh?.host && site.ssh?.wpPath);
+  return Boolean(site.ssh?.host && site.ssh?.user && site.ssh?.wpPath);
 }
 
 export { CapabilityUnavailableError } from './types.ts';

@@ -26,7 +26,8 @@ const fakeWpCliSite: SiteConfig = {
   ...fakeRestOnlySite,
   name: 'test-wp-cli',
   ssh: {
-    host: 'admin@example.test',
+    host: 'example.test',
+    user: 'admin',
     wpPath: '/var/www/wordpress',
   },
 };
