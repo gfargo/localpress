@@ -26,13 +26,15 @@ export interface SiteConfig {
 }
 
 export interface SshConfig {
-  /** SSH host (may include user@). */
+  /** SSH hostname or IP address. */
   host: string;
+  /** SSH username on the remote server. */
+  user: string;
   /** Optional SSH port (default 22). */
   port?: number;
-  /** Path to the WordPress install on the remote host. */
+  /** Absolute path to the WordPress installation directory on the remote host. */
   wpPath: string;
-  /** Optional path to the SSH key (default: use ssh-agent / ~/.ssh/id_rsa). */
+  /** Optional path to the SSH private key (default: use ssh-agent / ~/.ssh/id_rsa). */
   identityFile?: string;
 }
 
