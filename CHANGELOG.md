@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-05-08
+
+### Fixed
+- **Homebrew install no longer fails on outdated Xcode CLT**: removed
+  `npm install -g sharp` from the formula. Installing sharp at brew install
+  time required a working C++ toolchain and compiled sharp from source,
+  which failed loudly on machines with slightly outdated Xcode Command Line
+  Tools ("Error: A newer Command Line Tools release is available"). The
+  smart sharp path discovery + auto-install prompt added in v1.10.0 already
+  handles this cleanly at first use — Homebrew users now get a fast binary
+  install and a friendly prompt to install sharp on first `optimize`.
+
+### Removed
+- **`src/shims/sharp-wasm32.d.ts`**: dead type declaration left over when
+  `@img/sharp-wasm32` was removed in v1.10.0.
+
 ## [1.10.0] - 2026-05-08
 
 ### Added
@@ -510,7 +526,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.10.1...HEAD
+[1.10.1]: https://github.com/gfargo/localpress/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/gfargo/localpress/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/gfargo/localpress/compare/v1.8.2...v1.9.0
 [1.8.2]: https://github.com/gfargo/localpress/compare/v1.8.1...v1.8.2
