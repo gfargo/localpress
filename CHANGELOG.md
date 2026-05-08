@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-05-08
+
+### Added
+- **SSH configuration in init wizard**: after REST authentication succeeds and
+  missing capabilities are detected, the wizard now offers to configure SSH
+  interactively. Prompts for host, user, port, WordPress path, and identity file.
+  Tests the SSH connection (verifies `wp --info` and `wp-config.php` existence)
+  and shows an updated capability report with all capabilities unlocked.
+- **Explicit `user` field on `SshConfig`**: SSH username is now a dedicated
+  required field instead of being embedded in the `host` string as `user@host`.
+  The adapter is backward-compatible with legacy configs that use the old format.
+- **25 new unit tests** for SSH helpers (`sshDestination`, `buildSshArgs`),
+  `isWpCliAvailableForSite` edge cases, and `AdapterResolver` behavior with
+  various SSH config shapes. Total unit test count: 61.
+
+### Changed
+- **`isWpCliAvailableForSite`** now requires `host`, `user`, AND `wpPath` to all
+  be non-empty (previously only checked `host` and `wpPath`).
+- **SSH adapter** exports `sshDestination()` and `buildSshArgs()` for unit testing.
+- **Wiki documentation** rewritten: `WP-CLI-SSH-Setup.md` now includes explicit
+  field descriptions, common hosting examples (VPS, Kinsta, cPanel, GridPane),
+  expanded troubleshooting table, and manual testing commands.
+  `Configuration.md` updated to match the new field names.
+
 ## [1.6.0] - 2026-05-03
 
 ### Added
@@ -373,7 +397,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/gfargo/localpress/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/gfargo/localpress/compare/v1.5.0...v1.6.0
 [1.3.1]: https://github.com/gfargo/localpress/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/gfargo/localpress/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/gfargo/localpress/compare/v1.1.0...v1.2.0
