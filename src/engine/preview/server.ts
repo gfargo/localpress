@@ -171,8 +171,12 @@ export async function startPreviewServer(
         }
         try {
           const result = await options.onApply(state.lastResultBytes);
-          shutdown();
-          resolvePromise({ applied: true, result });
+          // Delay shutdown to ensure the response is fully sent to the browser
+          // before the server closes the TCP connection.
+          setTimeout(() => {
+            shutdown();
+            resolvePromise({ applied: true, result });
+          }, 500);
           return new Response(JSON.stringify(result), {
             headers: { 'Content-Type': 'application/json' },
           });

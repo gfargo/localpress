@@ -515,16 +515,10 @@ export function MediaBrowser({
       if (item?.mimeType.startsWith('image/'))
         doExit({ type: 'remove-bg', id: item.id, page, cursor, preview: true });
     } else if (input === 'O') {
+      // Skip the terminal settings form — go straight to browser preview.
       const item = filteredItems[cursor];
       if (item) {
-        setOptimizeQuality('');
-        setOptimizeFormat('keep');
-        setOptimizeKeepOriginal(false);
-        setOptimizeActiveField('quality');
-        setOptimizeMode(true);
-        // Flag that this optimize session should use --preview.
-        // We store it in a ref-like pattern via the state.
-        setOptimizePreview(true);
+        doExit({ type: 'optimize', id: item.id, page, cursor, preview: true });
       }
     } else if (input === 'c') {
       const item = filteredItems[cursor];
