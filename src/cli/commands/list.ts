@@ -60,11 +60,11 @@ export function registerListCommand(program: Command): void {
         const { useState: useReactState, useEffect: useReactEffect } = React.default;
         const { MediaBrowser } = await import('../components/MediaBrowser.tsx');
         const { spawnSync } = await import('node:child_process');
+        const { getSelfBin, buildSelfArgs } = await import('../utils/self-invoke.ts');
 
-        // argv[1] is a .ts script in dev mode; the compiled binary repeats argv[0].
-        const isDevMode = /\.(ts|mts|js|mjs)$/.test(process.argv[1] ?? '');
+        const selfBin = getSelfBin(process.argv, process.execPath);
         const selfArgs = (cmd: string, id: string, extra: string[] = []) =>
-          isDevMode ? [process.argv[1], cmd, id, ...extra] : [cmd, id, ...extra];
+          buildSelfArgs(process.argv, process.execPath, cmd, id, extra);
 
         const { spawn: spawnBg } = await import('node:child_process');
         const openInBrowser = (id: number) => {
@@ -263,7 +263,7 @@ export function registerListCommand(program: Command): void {
               subCmd = 'edit';
           }
 
-          spawnSync(process.argv[0], selfArgs(subCmd, String(pendingAction.id), extraArgs), {
+          spawnSync(selfBin, selfArgs(subCmd, String(pendingAction.id), extraArgs), {
             stdio: 'inherit',
           });
 
