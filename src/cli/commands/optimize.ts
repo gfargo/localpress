@@ -69,6 +69,10 @@ export function registerOptimizeCommand(program: Command): void {
     .option('--preview-port <port>', 'port for the preview server (default: auto)', (v) =>
       Number.parseInt(v, 10),
     )
+    .option(
+      '--regenerate-thumbnails',
+      'regenerate WordPress thumbnails after replace-in-place (slower)',
+    )
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -174,7 +178,9 @@ export function registerOptimizeCommand(program: Command): void {
               const replaceAdapter = resolver.tryResolve('replace-in-place');
               if (replaceAdapter) {
                 try {
-                  await replaceAdapter.replaceInPlace(id, resultBytes);
+                  await replaceAdapter.replaceInPlace(id, resultBytes, {
+                    regenerateThumbnails: Boolean(options.regenerateThumbnails),
+                  });
                   resultWpId = id;
                 } catch (err) {
                   if (!(err instanceof CapabilityUnavailableError) || parentOpts.strict) {
@@ -362,7 +368,9 @@ export function registerOptimizeCommand(program: Command): void {
             const replaceAdapter = resolver.tryResolve('replace-in-place');
             if (replaceAdapter) {
               try {
-                await replaceAdapter.replaceInPlace(item.id, result.bytes);
+                await replaceAdapter.replaceInPlace(item.id, result.bytes, {
+                  regenerateThumbnails: Boolean(options.regenerateThumbnails),
+                });
                 resultWpId = item.id;
               } catch (err) {
                 if (err instanceof CapabilityUnavailableError) {
