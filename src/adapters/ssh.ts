@@ -40,6 +40,7 @@ export async function scpUpload(
   }
   if (ssh.identityFile) {
     args.push('-i', ssh.identityFile);
+    args.push('-o', 'IdentitiesOnly=yes');
   }
 
   // Disable strict host key checking for non-interactive use.
@@ -67,6 +68,7 @@ export async function scpDownload(
   }
   if (ssh.identityFile) {
     args.push('-i', ssh.identityFile);
+    args.push('-o', 'IdentitiesOnly=yes');
   }
 
   args.push('-o', 'StrictHostKeyChecking=accept-new');
@@ -99,6 +101,9 @@ export function buildSshArgs(ssh: SshConfig): string[] {
   }
   if (ssh.identityFile) {
     args.push('-i', ssh.identityFile);
+    // Only use the specified key — don't let the agent offer all its keys first,
+    // which causes "Too many authentication failures" on servers with low MaxAuthTries.
+    args.push('-o', 'IdentitiesOnly=yes');
   }
 
   // Disable strict host key checking for non-interactive use.
