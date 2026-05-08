@@ -11,6 +11,7 @@ import { Command, Option } from 'commander';
 import packageJson from '../../package.json' with { type: 'json' };
 import { registerAuditCommand } from './commands/audit.ts';
 import { registerCaptionCommand } from './commands/caption.ts';
+import { registerCompletionsCommand } from './commands/completions.ts';
 import { registerConfigCommand } from './commands/config.ts';
 import { registerConvertCommand } from './commands/convert.ts';
 import { registerDoctorCommand } from './commands/doctor.ts';
@@ -77,6 +78,7 @@ registerPullCommand(program);
 registerPushCommand(program);
 registerReferencesCommand(program);
 registerUpdateCommand(program);
+registerCompletionsCommand(program);
 
 // Top-level help footer.
 program.addHelpText(
