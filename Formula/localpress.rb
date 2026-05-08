@@ -39,26 +39,23 @@ class Localpress < Formula
     end
   end
 
-  depends_on "vips"
-
   def install
     bin.install Dir["localpress*"].first => "localpress"
-
-    # Install sharp globally so the compiled binary can find it at runtime.
-    # sharp is a native module that can't be bundled into single-file binaries.
-    system "npm", "install", "-g", "sharp"
   end
 
   def caveats
     <<~EOS
-      localpress requires sharp for image processing.
-      It was installed globally via npm during formula installation.
+      localpress uses sharp (libvips) for image processing.
 
-      If you encounter issues, reinstall with:
+      On first use of optimize/convert/resize/remove-bg, localpress will
+      check if sharp is installed globally and offer to install it for you.
+
+      You can also install it manually at any time:
+        bun install -g sharp
+        # or:
         npm install -g sharp
 
-      Verify with:
-        localpress doctor
+      Run `localpress doctor` to verify your setup.
     EOS
   end
 
