@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-05-08
+
+### Changed
+- **Distribution model**: localpress is now distributed as a tarball (bundle +
+  node_modules + shell wrapper) instead of a compiled single-file binary. This
+  fixes the long-standing issue where image operations (optimize, convert, resize,
+  remove-bg) failed on Homebrew installs because sharp couldn't be loaded from
+  within Bun's compiled binary virtual filesystem.
+- **Homebrew formula**: now `depends_on "oven-sh/bun/bun"` and installs the
+  tarball to `libexec/` with a thin wrapper at `bin/`. `brew install` still works
+  as a single command — Bun is handled transparently as a dependency.
+- **`localpress update`**: now downloads and extracts tarballs instead of swapping
+  a single binary. Includes atomic directory replacement with backup + rollback.
+- **Self-invoke logic**: new 3-mode detection (dev mode, tarball via LOCALPRESS_BIN
+  env var, fallback) for correct subcommand dispatch from `list -i`.
+- **Prompt utility**: extracted shared y/N prompt using readline instead of raw
+  mode (fixes buffered input consumption in auto-install prompt).
+
+### Fixed
+- **Image operations work on Homebrew installs**: sharp and all its transitive
+  dependencies are now bundled in the tarball's `node_modules/`. No more
+  "sharp is not installed" errors. No more asking users to install sharp manually.
+
 ## [1.10.1] - 2026-05-08
 
 ### Fixed
@@ -526,7 +549,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.10.1...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/gfargo/localpress/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/gfargo/localpress/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/gfargo/localpress/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/gfargo/localpress/compare/v1.8.2...v1.9.0
