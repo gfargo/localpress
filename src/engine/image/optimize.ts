@@ -15,6 +15,7 @@
  */
 
 import { isJsquashSupported, jsquashEncode } from './jsquash.ts';
+import { loadSharp } from './sharp-loader.ts';
 import type {
   CompressionMode,
   ImageFormat,
@@ -33,8 +34,8 @@ export async function optimizeImage(
   sourceMimeType: string,
   opts: OptimizeOptions = {},
 ): Promise<OptimizeResult> {
-  // Lazy-load sharp so the CLI boots even if sharp's platform binary is missing.
-  const { default: sharp } = await import('sharp');
+  // Lazy-load sharp (native or WASM fallback) so the CLI boots fast.
+  const sharp = await loadSharp();
 
   // Probe the source image for metadata.
   const metadata = await sharp(sourceBytes).metadata();

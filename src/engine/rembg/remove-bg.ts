@@ -82,7 +82,8 @@ export async function removeBackground(
   const modelPath = await ensureModel(modelName, options.onProgress);
 
   // 2. Lazy-load dependencies.
-  const { default: sharp } = await import('sharp');
+  const { loadSharp } = await import('../image/sharp-loader.ts');
+  const sharp = await loadSharp();
   // onnxruntime-node is loaded dynamically — it has native binaries that
   // may not be present at typecheck time or in all environments.
   const ort = (await import('onnxruntime-node')) as import('./onnx-types.ts').OnnxRuntime;
