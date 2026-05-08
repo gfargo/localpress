@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-05-08
+
+### Added
+- **`localpress update` command**: self-update via GitHub Releases. Checks for
+  newer versions, downloads the correct platform binary, and replaces the current
+  binary in-place. `--check` for scripting (exit 1 if update available), `--yes`
+  for unattended installs. Detects Homebrew installations and suggests
+  `brew upgrade` instead. Full `--json` support.
+- **`localpress completions` command**: generates shell completion scripts for
+  bash, zsh, and fish. All 19 commands with subcommand-specific options, typed
+  argument completions (formats, models, sort fields), and shell-idiomatic
+  patterns.
+- **Full stats dashboard** (`localpress stats`): now shows library overview
+  (total attachments, size, optimized/unoptimized %), format breakdown (JPEG,
+  PNG, WebP, AVIF counts), and recent operations grouped by date — in addition
+  to the existing processing history stats.
+- **New `SiteDb` methods**: `getLibraryOverview()`, `getFormatBreakdown()`,
+  `getRecentOperations()` for the stats dashboard.
+
+### Fixed
+- **SSH "Too many authentication failures"**: added `IdentitiesOnly=yes` when
+  `identityFile` is configured. Prevents the SSH agent from offering all its
+  keys before trying the specified one, which caused disconnects on servers with
+  low `MaxAuthTries`.
+
 ## [1.7.0] - 2026-05-08
 
 ### Added
@@ -397,7 +422,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/gfargo/localpress/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/gfargo/localpress/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/gfargo/localpress/compare/v1.5.0...v1.6.0
 [1.3.1]: https://github.com/gfargo/localpress/compare/v1.3.0...v1.3.1
