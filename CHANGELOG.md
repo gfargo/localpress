@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-05-08
+
+### Added
+- **Loading spinner for `list -i`**: shows "⠋ Loading media library..." while the
+  initial page is being fetched from the REST API. Previously the terminal was
+  blank for 3-8 seconds during the fetch, making it look like the command hung.
+
+### Fixed
+- **`list -i` subcommand dispatch**: pressing `o` (optimize), `e` (edit), etc. in
+  the interactive browser failed with `Script not found "optimize"` on compiled
+  binaries. The subprocess was being spawned with `bun` as the binary instead of
+  the localpress executable. Extracted self-invoke logic into a testable utility
+  (`src/cli/utils/self-invoke.ts`) that correctly detects dev mode vs compiled
+  binary and uses `process.execPath` for the latter.
+
 ## [1.8.1] - 2026-05-08
 
 ### Fixed
@@ -435,7 +450,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.8.1...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.8.2...HEAD
+[1.8.2]: https://github.com/gfargo/localpress/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/gfargo/localpress/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/gfargo/localpress/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/gfargo/localpress/compare/v1.6.0...v1.7.0
