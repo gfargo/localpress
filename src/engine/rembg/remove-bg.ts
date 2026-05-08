@@ -82,7 +82,27 @@ export async function removeBackground(
   const modelPath = await ensureModel(modelName, options.onProgress);
 
   // 2. Lazy-load dependencies.
-  const { default: sharp } = await import('sharp');
+  // biome-ignore lint/suspicious/noExplicitAny: sharp's type export is complex
+  let sharp: any;
+  try {
+    const mod = await import('sharp');
+    sharp = mod.default;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('Cannot find package') || msg.includes('MODULE_NOT_FOUND')) {
+      throw new Error(
+        'sharp is not installed. Background removal requires sharp for image processing.\n\n' +
+          'Install it with:\n' +
+          '  npm install -g sharp\n' +
+          '  # or, if using Bun:\n' +
+          '  bun install -g sharp\n\n' +
+          'If you installed localpress via Homebrew, run:\n' +
+          '  brew install vips && npm install -g sharp\n\n' +
+          'See: https://sharp.pixelplumbing.com/install',
+      );
+    }
+    throw err;
+  }
   // onnxruntime-node is loaded dynamically — it has native binaries that
   // may not be present at typecheck time or in all environments.
   const ort = (await import('onnxruntime-node')) as import('./onnx-types.ts').OnnxRuntime;

@@ -34,7 +34,27 @@ export async function optimizeImage(
   opts: OptimizeOptions = {},
 ): Promise<OptimizeResult> {
   // Lazy-load sharp so the CLI boots even if sharp's platform binary is missing.
-  const { default: sharp } = await import('sharp');
+  // biome-ignore lint/suspicious/noExplicitAny: sharp's type export is complex
+  let sharp: any;
+  try {
+    const mod = await import('sharp');
+    sharp = mod.default;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('Cannot find package') || msg.includes('MODULE_NOT_FOUND')) {
+      throw new Error(
+        'sharp is not installed. Image processing requires sharp.\n\n' +
+          'Install it with:\n' +
+          '  npm install -g sharp\n' +
+          '  # or, if using Bun:\n' +
+          '  bun install -g sharp\n\n' +
+          'If you installed localpress via Homebrew, run:\n' +
+          '  brew install vips && npm install -g sharp\n\n' +
+          'See: https://sharp.pixelplumbing.com/install',
+      );
+    }
+    throw err;
+  }
 
   // Probe the source image for metadata.
   const metadata = await sharp(sourceBytes).metadata();
