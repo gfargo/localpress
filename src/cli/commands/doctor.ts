@@ -159,12 +159,40 @@ export function registerDoctorCommand(program: Command): void {
           await loadSharp();
           sharpAvailable = true;
         } catch {
-          issues.push({
-            severity: 'error',
-            message:
-              'sharp is not installed — optimize, convert, resize, and remove-bg will not work',
-            fix: 'Run `bun install -g sharp` or `npm install -g sharp` (macOS: `brew install vips` first)',
-          });
+          // If --fix is passed, try to auto-install.
+          if (options.fix) {
+            info('sharp is not installed. Installing now...');
+            const { installSharpGlobally, loadSharp } = await import(
+              '../../engine/image/sharp-loader.ts'
+            );
+            const ok = await installSharpGlobally();
+            if (ok) {
+              try {
+                await loadSharp();
+                sharpAvailable = true;
+                info('  ✓ sharp installed successfully');
+              } catch {
+                issues.push({
+                  severity: 'error',
+                  message:
+                    'sharp installation completed but module still not found. Try restarting your shell.',
+                });
+              }
+            } else {
+              issues.push({
+                severity: 'error',
+                message: 'Auto-install failed. Neither bun nor npm is available.',
+                fix: 'Install bun or npm, then run `localpress doctor --fix` again',
+              });
+            }
+          } else {
+            issues.push({
+              severity: 'error',
+              message:
+                'sharp is not installed — optimize, convert, resize, and remove-bg will not work',
+              fix: 'Run `localpress doctor --fix` to auto-install, or manually: `bun install -g sharp`',
+            });
+          }
         }
 
         // -- Plugin detection --------------------------------------------------

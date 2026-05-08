@@ -41,6 +41,18 @@ export function registerResizeCommand(program: Command): void {
       const resolver = new AdapterResolver(site);
       const getAdapter = resolver.resolve('get');
 
+      // Preload sharp (with auto-install prompt if missing).
+      try {
+        const { loadSharpWithPrompt } = await import('../../engine/image/sharp-loader.ts');
+        await loadSharpWithPrompt({
+          autoYes: Boolean(parentOpts.yes),
+          noPrompt: Boolean(parentOpts.json) || Boolean(parentOpts.quiet),
+        });
+      } catch (err) {
+        error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+
       const db = SiteDb.init(getSiteDbPath(site.name));
       db.ensureSite(site.name, site.url);
 
