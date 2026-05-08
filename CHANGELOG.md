@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.11.0] - 2026-05-08
 
+### Added
+- **`localpress watch` command**: continuous directory watcher that automatically
+  pushes new/changed images to WordPress. Supports `--optimize`, `--to <format>`,
+  `--max-width`, `--max-height` for processing before upload. `--delete` flag
+  removes from WP when local files are deleted. Uses SHA-256 deduplication and
+  persists file→attachment mappings in SQLite (schema v3 migration).
+
 ### Changed
 - **Distribution model**: localpress is now distributed as a tarball (bundle +
   node_modules + shell wrapper) instead of a compiled single-file binary. This
@@ -24,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   env var, fallback) for correct subcommand dispatch from `list -i`.
 - **Prompt utility**: extracted shared y/N prompt using readline instead of raw
   mode (fixes buffered input consumption in auto-install prompt).
+- **Shell completions**: updated for `watch` command with all its flags.
 
 ### Fixed
 - **Image operations work on Homebrew installs**: sharp and all its transitive

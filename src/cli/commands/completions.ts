@@ -67,6 +67,7 @@ const COMMANDS = [
   'push',
   'references',
   'update',
+  'watch',
   'completions',
   'help',
 ];
@@ -169,6 +170,9 @@ _localpress() {
     completions)
       COMPREPLY=( $(compgen -W "bash zsh fish" -- "\${cur}") )
       ;;
+    watch)
+      COMPREPLY=( $(compgen -W "--optimize --quality --to --max-width --max-height --delete --debounce --help" -- "\${cur}") )
+      ;;
     *)
       COMPREPLY=( $(compgen -W "\${global_opts}" -- "\${cur}") )
       ;;
@@ -220,6 +224,7 @@ _localpress() {
     'push:Upload a local file to the media library'
     'references:Show where an attachment is used'
     'update:Check for updates and self-update'
+    'watch:Watch a directory and auto-push images to WordPress'
     'completions:Generate shell completion scripts'
     'help:Display help for a command'
   )
@@ -379,6 +384,18 @@ _localpress() {
         '--check[Just check without installing]' \\
         '(-h --help)'{-h,--help}'[Display help]'
       ;;
+    watch)
+      _arguments -s \\
+        '--optimize[Run optimization pipeline before uploading]' \\
+        '--quality[Target quality (1-100)]:quality:' \\
+        '--to[Convert to format before uploading]:format:(webp avif jpeg png)' \\
+        '--max-width[Maximum width]:pixels:' \\
+        '--max-height[Maximum height]:pixels:' \\
+        '--delete[Delete from WordPress when local file is removed]' \\
+        '--debounce[Debounce interval in ms]:ms:' \\
+        '(-h --help)'{-h,--help}'[Display help]' \\
+        ':directory:_directories'
+      ;;
     completions)
       _arguments -s \\
         ':shell:(bash zsh fish)' \\
@@ -438,6 +455,7 @@ function generateFish(): string {
     ...fishCommand('references', 'Show where an attachment is used'),
     ...fishCommand('update', 'Check for updates and self-update'),
     ...fishCommand('completions', 'Generate shell completion scripts'),
+    ...fishCommand('watch', 'Watch a directory and auto-push images to WordPress'),
     ...fishCommand('help', 'Display help for a command'),
     '',
     '# Subcommand options',
@@ -524,6 +542,14 @@ function generateFish(): string {
     ...fishSubOpt('references', '--update-to', 'Rewrite references to new ID', '-r'),
     '',
     ...fishSubOpt('update', '--check', 'Just check without installing'),
+    '',
+    ...fishSubOpt('watch', '--optimize', 'Run optimization pipeline before uploading'),
+    ...fishSubOpt('watch', '--quality', 'Target quality (1-100)', '-r'),
+    ...fishSubOpt('watch', '--to', 'Convert to format', '-r -a "webp avif jpeg png"'),
+    ...fishSubOpt('watch', '--max-width', 'Maximum width', '-r'),
+    ...fishSubOpt('watch', '--max-height', 'Maximum height', '-r'),
+    ...fishSubOpt('watch', '--delete', 'Delete from WordPress when local file is removed'),
+    ...fishSubOpt('watch', '--debounce', 'Debounce interval in ms', '-r'),
     '',
     '# completions subcommand',
     'complete -c localpress -n "__fish_seen_subcommand_from completions" -a "bash zsh fish" -d "Shell type"',

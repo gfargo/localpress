@@ -36,7 +36,7 @@ describe('SiteDb.init', () => {
     // Access the underlying Database to check the version.
     // We use getStoredSchemaVersion via a fresh Database connection.
     // Since we're using :memory:, we verify via the SiteDb's own state.
-    expect(SCHEMA_VERSION).toBe(2);
+    expect(SCHEMA_VERSION).toBe(3);
     db.close();
   });
 });
