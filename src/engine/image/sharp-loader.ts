@@ -213,27 +213,9 @@ export async function loadSharpWithPrompt(opts: {
 }
 
 /**
- * Minimal y/N prompt using raw stdin.
+ * y/N prompt — delegates to the shared prompt util which uses readline.
  */
 async function promptYesNo(message: string): Promise<boolean> {
-  process.stdout.write(`${message} `);
-
-  return new Promise((resolve) => {
-    const onData = (data: Buffer) => {
-      const input = data.toString().trim().toLowerCase();
-      process.stdin.removeListener('data', onData);
-      process.stdin.pause();
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
-      }
-      process.stdout.write('\n');
-      resolve(input === 'y' || input === 'yes');
-    };
-
-    process.stdin.resume();
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-    }
-    process.stdin.once('data', onData);
-  });
+  const { promptYesNo: sharedPrompt } = await import('../../cli/utils/prompt.ts');
+  return sharedPrompt(message);
 }
