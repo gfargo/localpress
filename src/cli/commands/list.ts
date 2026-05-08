@@ -129,13 +129,22 @@ export function registerListCommand(program: Command): void {
         // Loop: re-enter the TUI after each subcommand until the user quits.
         while (true) {
           let result: { items: MediaItem[]; total: number; totalPages: number };
+
+          // Show a loading spinner while fetching the page.
+          const spinner = render(
+            React.default.createElement(InkText, { color: 'cyan' }, '⠋ Loading media library...'),
+          );
+
           try {
             result = await adapter.listMediaPage({ ...filters, page: interactivePage });
           } catch (err) {
+            spinner.unmount();
             error(err instanceof Error ? err.message : String(err));
             process.exit(4);
             return;
           }
+
+          spinner.unmount();
 
           if (result.items.length === 0 && interactivePage === 1) {
             info('No media items found.');
