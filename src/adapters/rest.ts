@@ -172,7 +172,11 @@ export class RestAdapter implements WpBackend {
     return mapWpMediaToItem(raw);
   }
 
-  async replaceInPlace(id: number, _file: Buffer): Promise<MediaItem> {
+  async replaceInPlace(
+    id: number,
+    _file: Buffer,
+    _options?: import('./types.ts').ReplaceOptions,
+  ): Promise<MediaItem> {
     // The REST API genuinely cannot replace attachment file bytes in place.
     throw new CapabilityUnavailableError(
       'replace-in-place',

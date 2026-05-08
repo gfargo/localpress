@@ -72,6 +72,22 @@ export class WpCliAdapter implements WpBackend {
     }
   }
 
+  /**
+   * Get the WordPress uploads base directory, cached after first retrieval.
+   * Saves an SSH round-trip on subsequent replace-in-place operations.
+   */
+  private cachedUploadsDir: string | null = null;
+
+  private async getUploadsDir(): Promise<string> {
+    if (this.cachedUploadsDir) return this.cachedUploadsDir;
+
+    const output = await this.wp(
+      `eval 'echo wp_upload_dir()["basedir"];' 2>/dev/null || echo "${this.wpPath}/wp-content/uploads"`,
+    );
+    this.cachedUploadsDir = output.trim();
+    return this.cachedUploadsDir;
+  }
+
   // Discovery -----------------------------------------------------------------
 
   async listMedia(filters: ListFilters): Promise<MediaItem[]> {
@@ -195,14 +211,16 @@ export class WpCliAdapter implements WpBackend {
     return this.getMedia(newId);
   }
 
-  async replaceInPlace(id: number, file: Buffer): Promise<MediaItem> {
+  async replaceInPlace(
+    id: number,
+    file: Buffer,
+    options?: import('./types.ts').ReplaceOptions,
+  ): Promise<MediaItem> {
     // Get the current attachment's file path on the server.
     const currentFile = await this.wp(`post meta get ${id} _wp_attached_file`);
-    const uploadsDir = await this.wp(
-      `eval 'echo wp_upload_dir()["basedir"];' 2>/dev/null || echo "/var/www/html/wp-content/uploads"`,
-    );
+    const uploadsDir = await this.getUploadsDir();
 
-    const remotePath = `${uploadsDir.trim()}/${currentFile.trim()}`;
+    const remotePath = `${uploadsDir}/${currentFile.trim()}`;
 
     // Write to local temp, SCP to remote, overwrite the file.
     const localTmp = join(tmpdir(), `localpress-replace-${Date.now()}`);
@@ -214,8 +232,10 @@ export class WpCliAdapter implements WpBackend {
     // Move the file into place and fix permissions.
     await sshExec(this.ssh, `mv "${remoteTmp}" "${remotePath}" && chmod 644 "${remotePath}"`);
 
-    // Regenerate thumbnails for the replaced file.
-    await this.wp(`media regenerate ${id} --yes`);
+    // Regenerate thumbnails only if explicitly requested.
+    if (options?.regenerateThumbnails) {
+      await this.wp(`media regenerate ${id} --yes`);
+    }
 
     // Clean up local temp.
     try {

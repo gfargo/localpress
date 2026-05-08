@@ -97,6 +97,12 @@ export interface UpdateMetadata {
   description?: string;
 }
 
+/** Options for replace-in-place operations. */
+export interface ReplaceOptions {
+  /** Regenerate WordPress thumbnails after replacing. Default: false. */
+  regenerateThumbnails?: boolean;
+}
+
 /** Result of a `pruneOrphans` operation. */
 export interface PruneResult {
   /** Files in the uploads dir not registered as attachments. */
@@ -147,7 +153,7 @@ export interface WpBackend {
   // Mutation
   upload(file: Buffer, metadata: UploadMetadata): Promise<MediaItem>;
   /** Replace the file bytes of an existing attachment, preserving its ID. */
-  replaceInPlace(id: number, file: Buffer): Promise<MediaItem>;
+  replaceInPlace(id: number, file: Buffer, options?: ReplaceOptions): Promise<MediaItem>;
   updateMetadata(id: number, metadata: UpdateMetadata): Promise<void>;
   delete(id: number, options?: { force?: boolean }): Promise<void>;
 
