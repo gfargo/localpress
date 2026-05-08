@@ -71,6 +71,21 @@ export function registerRemoveBgCommand(program: Command): void {
         return;
       }
 
+      // Preload sharp (with auto-install prompt if missing).
+      // Skip for --rembg mode since that uses system Python, not sharp.
+      if (!options.rembg) {
+        try {
+          const { loadSharpWithPrompt } = await import('../../engine/image/sharp-loader.ts');
+          await loadSharpWithPrompt({
+            autoYes: Boolean(parentOpts.yes),
+            noPrompt: Boolean(parentOpts.json) || Boolean(parentOpts.quiet),
+          });
+        } catch (err) {
+          error(err instanceof Error ? err.message : String(err));
+          process.exit(1);
+        }
+      }
+
       // --preview: open a browser-based preview for a single attachment.
       if (options.preview) {
         const ids = idStrs.map((s) => Number.parseInt(s, 10));

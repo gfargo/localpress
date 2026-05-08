@@ -46,7 +46,6 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@img/sharp-wasm32": "^0.34.5",
     "@jsquash/avif": "^2.1.1",
     "@jsquash/jpeg": "^1.6.0",
     "@jsquash/oxipng": "^2.3.0",

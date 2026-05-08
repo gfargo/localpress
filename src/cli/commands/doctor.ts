@@ -152,6 +152,49 @@ export function registerDoctorCommand(program: Command): void {
           });
         }
 
+        // -- Sharp availability check -----------------------------------------
+        let sharpAvailable = false;
+        try {
+          const { loadSharp } = await import('../../engine/image/sharp-loader.ts');
+          await loadSharp();
+          sharpAvailable = true;
+        } catch {
+          // If --fix is passed, try to auto-install.
+          if (options.fix) {
+            info('sharp is not installed. Installing now...');
+            const { installSharpGlobally, loadSharp } = await import(
+              '../../engine/image/sharp-loader.ts'
+            );
+            const ok = await installSharpGlobally();
+            if (ok) {
+              try {
+                await loadSharp();
+                sharpAvailable = true;
+                info('  ✓ sharp installed successfully');
+              } catch {
+                issues.push({
+                  severity: 'error',
+                  message:
+                    'sharp installation completed but module still not found. Try restarting your shell.',
+                });
+              }
+            } else {
+              issues.push({
+                severity: 'error',
+                message: 'Auto-install failed. Neither bun nor npm is available.',
+                fix: 'Install bun or npm, then run `localpress doctor --fix` again',
+              });
+            }
+          } else {
+            issues.push({
+              severity: 'error',
+              message:
+                'sharp is not installed — optimize, convert, resize, and remove-bg will not work',
+              fix: 'Run `localpress doctor --fix` to auto-install, or manually: `bun install -g sharp`',
+            });
+          }
+        }
+
         // -- Plugin detection --------------------------------------------------
         let plugins: PluginStatus[] = [];
         if (options.plugins || options.fix) {
@@ -208,6 +251,7 @@ export function registerDoctorCommand(program: Command): void {
             site: name,
             url: site.url,
             connectionOk,
+            sharpAvailable,
             adapters: availability,
             capabilities: report,
             issues,
@@ -218,6 +262,7 @@ export function registerDoctorCommand(program: Command): void {
           info(`  ${connectionOk ? '✓' : '✗'} REST API connection`);
           info(`  ${availability.wpCli ? '✓' : '✗'} WP-CLI (SSH)`);
           info(`  ${availability.mcp ? '✓' : '✗'} MCP`);
+          info(`  ${sharpAvailable ? '✓' : '✗'} sharp (image processing)`);
           info('');
           info('  Capabilities:');
           for (const cap of report) {

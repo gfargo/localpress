@@ -92,6 +92,18 @@ export function registerOptimizeCommand(program: Command): void {
         process.exit(2);
       }
 
+      // Preload sharp (with auto-install prompt if missing).
+      try {
+        const { loadSharpWithPrompt } = await import('../../engine/image/sharp-loader.ts');
+        await loadSharpWithPrompt({
+          autoYes: Boolean(parentOpts.yes),
+          noPrompt: Boolean(parentOpts.json) || Boolean(parentOpts.quiet),
+        });
+      } catch (err) {
+        error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+
       // --preview: open a browser-based preview for a single attachment.
       if (options.preview) {
         if (!hasExplicitIds || idStrs.length !== 1) {
