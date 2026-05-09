@@ -126,6 +126,9 @@ jobs:
       - name: Debug tarball contents (top 10 largest packages)
         run: |
           du -sm dist/localpress-linux-x64/node_modules/*/ 2>/dev/null | sort -rn | head -10
+          echo "--- onnxruntime-node bin structure ---"
+          find dist/localpress-linux-x64/node_modules/onnxruntime-node/bin -type d | head -20
+          du -sm dist/localpress-linux-x64/node_modules/onnxruntime-node/bin/napi-v6/linux/*/ 2>/dev/null
 
       - name: Run tarball smoke tests
         run: bun run test:tarball
