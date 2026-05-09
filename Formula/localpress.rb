@@ -24,22 +24,22 @@ class Localpress < Formula
   on_macos do
     on_arm do
       url "https://github.com/gfargo/localpress/releases/download/v#{version}/localpress-darwin-arm64.tar.gz"
-      sha256 "fc1de002b4a721541521cc5b5a27e34f6d2a19158003ad90ca79ab22d0dd6cf2"
+      sha256 "408f54056d3015679a77a3d1218d5920d1cc413f4514b2bca3bc17cc2d7782a1"
     end
     on_intel do
       url "https://github.com/gfargo/localpress/releases/download/v#{version}/localpress-darwin-x64.tar.gz"
-      sha256 "3a7706613d0419a9ee14f5751913e7b06439a9afca4e69a361f27347867db423"
+      sha256 "8af8d8a27128762b8aec43142f8c45b3c2f39422e55f29699162fe86be4760fe"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/gfargo/localpress/releases/download/v#{version}/localpress-linux-arm64.tar.gz"
-      sha256 "a82cab242d79acf3f273198561490636694f651f5e4e51702149f49a5f23f061"
+      sha256 "bf40cd9a7123ee8119b2b2c4c530eff3e82ffafcd0ba6fbaff4f270aeea501b7"
     end
     on_intel do
       url "https://github.com/gfargo/localpress/releases/download/v#{version}/localpress-linux-x64.tar.gz"
-      sha256 "6e47894e0534ef1994000e791646471f78c6ee6a66d8b68a6ffe9fb80b6bfb24"
+      sha256 "0e5d21c03c4b61b6720b8877d07c9d87bfa5fac876ab7e7b6d960fb828ebab5f"
     end
   end
 
