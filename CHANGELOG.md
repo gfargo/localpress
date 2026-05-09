@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.2] - 2026-05-09
+
+### Fixed
+- **Tarball size reduced from ~231MB to ~26MB**: stripped unused onnxruntime-node
+  platform binaries (darwin, win32, linux/arm64) and GPU provider libraries
+  (`libonnxruntime_providers_cuda.so` ~329MB, TensorRT) — localpress uses CPU
+  inference only.
+- **Tarball smoke tests**: new CI job builds the linux-x64 tarball and runs 9
+  smoke tests on every PR, verifying binary functionality, sharp availability,
+  platform-specific deps, and size limits.
+
 ## [1.11.1] - 2026-05-08
 
 ### Fixed
@@ -565,7 +576,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.11.1...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.11.2...HEAD
+[1.11.2]: https://github.com/gfargo/localpress/compare/v1.11.1...v1.11.2
 [1.11.1]: https://github.com/gfargo/localpress/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/gfargo/localpress/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/gfargo/localpress/compare/v1.10.0...v1.10.1
