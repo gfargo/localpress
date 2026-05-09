@@ -188,7 +188,7 @@ console.log(JSON.stringify({ width: meta.width, height: meta.height, ok: true })
   });
 
   test.skipIf(!TARBALL_AVAILABLE)('onnxruntime-node is available for remove-bg', () => {
-    // Verify the onnxruntime binary exists for the current platform
+    // Verify the onnxruntime binary exists for the current platform+arch
     const onnxBinDir = join(
       TARBALL_DIR,
       'node_modules',
@@ -196,15 +196,21 @@ console.log(JSON.stringify({ width: meta.width, height: meta.height, ok: true })
       'bin',
       'napi-v6',
       process.platform,
+      process.arch,
     );
     expect(existsSync(onnxBinDir)).toBe(true);
 
-    // Verify no other platform binaries are present (size check)
+    // Verify no other platform directories are present
     const onnxPlatformDir = join(TARBALL_DIR, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6');
     const { readdirSync } = require('node:fs');
-    const dirs = readdirSync(onnxPlatformDir);
-    expect(dirs).toHaveLength(1);
-    expect(dirs[0]).toBe(process.platform);
+    const platformDirs = readdirSync(onnxPlatformDir);
+    expect(platformDirs).toHaveLength(1);
+    expect(platformDirs[0]).toBe(process.platform);
+
+    // Verify no other arch directories within the platform
+    const archDirs = readdirSync(join(onnxPlatformDir, process.platform));
+    expect(archDirs).toHaveLength(1);
+    expect(archDirs[0]).toBe(process.arch);
   });
 
   test.skipIf(!TARBALL_AVAILABLE)('only target platform sharp binaries are present', () => {

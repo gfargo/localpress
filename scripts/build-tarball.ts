@@ -129,16 +129,28 @@ async function buildTarball(opts: BuildOptions): Promise<void> {
 
   // 4b. Strip unused platform binaries from onnxruntime-node.
   // onnxruntime-node bundles ALL platform binaries in one package (darwin/linux/win32).
-  // We only need the target platform's binaries — remove the rest to save ~180MB.
+  // Structure: bin/napi-v6/<platform>/<arch>/
+  // We only need the target platform+arch — remove everything else.
   console.log('  Stripping unused onnxruntime-node platform binaries...');
   const onnxBinDir = join(stagingDir, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6');
   if (existsSync(onnxBinDir)) {
     const { readdirSync } = await import('node:fs');
     const platformDirs = readdirSync(onnxBinDir);
-    for (const dir of platformDirs) {
-      if (dir !== os) {
-        await rm(join(onnxBinDir, dir), { recursive: true, force: true });
-        console.log(`    Removed ${dir}/`);
+    for (const platformDir of platformDirs) {
+      if (platformDir !== os) {
+        // Remove entire wrong-platform directory
+        await rm(join(onnxBinDir, platformDir), { recursive: true, force: true });
+        console.log(`    Removed ${platformDir}/`);
+      } else {
+        // Keep this platform but strip wrong arch subdirs
+        const archDirPath = join(onnxBinDir, platformDir);
+        const archDirs = readdirSync(archDirPath);
+        for (const archDir of archDirs) {
+          if (archDir !== arch) {
+            await rm(join(archDirPath, archDir), { recursive: true, force: true });
+            console.log(`    Removed ${platformDir}/${archDir}/`);
+          }
+        }
       }
     }
   }
