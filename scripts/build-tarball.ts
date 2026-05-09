@@ -127,6 +127,22 @@ async function buildTarball(opts: BuildOptions): Promise<void> {
     throw new Error('npm install failed');
   }
 
+  // 4b. Strip unused platform binaries from onnxruntime-node.
+  // onnxruntime-node bundles ALL platform binaries in one package (darwin/linux/win32).
+  // We only need the target platform's binaries — remove the rest to save ~180MB.
+  console.log('  Stripping unused onnxruntime-node platform binaries...');
+  const onnxBinDir = join(stagingDir, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6');
+  if (existsSync(onnxBinDir)) {
+    const { readdirSync } = await import('node:fs');
+    const platformDirs = readdirSync(onnxBinDir);
+    for (const dir of platformDirs) {
+      if (dir !== os) {
+        await rm(join(onnxBinDir, dir), { recursive: true, force: true });
+        console.log(`    Removed ${dir}/`);
+      }
+    }
+  }
+
   // 5. Write the wrapper script
   console.log('  Writing wrapper script...');
   if (platform.startsWith('windows')) {
