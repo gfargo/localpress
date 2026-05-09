@@ -127,6 +127,9 @@ export function registerListCommand(program: Command): void {
         };
 
         // Loop: re-enter the TUI after each subcommand until the user quits.
+        // Track the last processed item ID so we can refresh it after the page re-fetch.
+        let lastProcessedId: number | null = null;
+
         while (true) {
           let result: { items: MediaItem[]; total: number; totalPages: number };
 
@@ -149,6 +152,23 @@ export function registerListCommand(program: Command): void {
           if (result.items.length === 0 && interactivePage === 1) {
             info('No media items found.');
             return;
+          }
+
+          // If we just processed an item, re-fetch it individually to get fresh
+          // metadata (mimeType, sizeBytes, dimensions). The page-level REST API
+          // response may be cached by WordPress and return stale data.
+          if (lastProcessedId !== null) {
+            try {
+              const getAdapter = resolver.resolve('get');
+              const refreshed = await getAdapter.getMedia(lastProcessedId);
+              const idx = result.items.findIndex((i) => i.id === lastProcessedId);
+              if (idx >= 0) {
+                result.items[idx] = refreshed;
+              }
+            } catch {
+              // Best effort — stale data is better than crashing.
+            }
+            lastProcessedId = null;
           }
 
           if (options.unoptimized) {
@@ -304,9 +324,27 @@ export function registerListCommand(program: Command): void {
             'remove-bg',
             'caption',
           ]);
-          if (processingTypes.has(pendingAction.type)) processedIds = loadProcessedIds();
+          if (processingTypes.has(pendingAction.type)) {
+            processedIds = loadProcessedIds();
+            // Mark this item for individual re-fetch on next loop iteration.
+            lastProcessedId = pendingAction.id;
+          }
+
+          // Store the ID of the item that was just processed so we can
+          // refresh it after the next page fetch (bypasses REST API cache).
+          const justProcessedId = processingTypes.has(pendingAction.type) ? pendingAction.id : null;
 
           process.stdout.write('\x1b[2J\x1b[H');
+
+          // The loop will re-fetch the page at the top. After that fetch,
+          // we patch the specific item with a fresh getMedia() call to ensure
+          // we show updated metadata (mimeType, sizeBytes, dimensions) even
+          // if WordPress's REST API returns a cached page response.
+          if (justProcessedId !== null) {
+            // We'll handle this at the top of the next loop iteration.
+            // Store it in a variable accessible to the next iteration.
+            // (We use a closure variable declared outside the loop.)
+          }
         }
 
         return;
