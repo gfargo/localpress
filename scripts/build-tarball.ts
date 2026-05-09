@@ -97,9 +97,16 @@ async function buildTarball(opts: BuildOptions): Promise<void> {
   // 4. Install production dependencies
   console.log('  Installing production dependencies (this may take a minute)...');
   const [os, arch] = parsePlatform(platform);
+
+  // Set npm_config_os and npm_config_cpu env vars so npm only installs
+  // platform-specific optional deps (e.g. only darwin-arm64 sharp binaries,
+  // not all 8 platform variants). This is the correct way to cross-install.
   const installEnv = {
     ...process.env,
-    // Force bun/npm to install the right platform-specific packages for sharp
+    npm_config_os: os,
+    npm_config_cpu: arch,
+    // Also set libc for Linux musl detection
+    ...(os === 'linux' ? { npm_config_libc: 'glibc' } : {}),
   };
 
   // Use npm with explicit --os and --cpu flags so cross-platform builds install the right sharp binaries
