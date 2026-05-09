@@ -17,7 +17,9 @@ class Localpress < Formula
   version "1.11.0"
   license "MIT"
 
-  depends_on "oven-sh/bun/bun"
+  # Bun is required at runtime but not declared as a Homebrew dependency
+  # because it lives in a third-party tap (oven-sh/bun) that Homebrew won't
+  # auto-tap. The wrapper script checks for bun and provides install instructions.
 
   on_macos do
     on_arm do
@@ -56,7 +58,10 @@ class Localpress < Formula
 
   def caveats
     <<~EOS
-      localpress is installed with all dependencies bundled.
+      localpress requires Bun as its runtime. If not already installed:
+        brew tap oven-sh/bun && brew install bun
+        # or:
+        curl -fsSL https://bun.sh/install | bash
 
       To verify:
         localpress --version
