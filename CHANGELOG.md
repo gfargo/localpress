@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.3] - 2026-05-09
+
+### Fixed
+- **Stale metadata in `list -i` after processing**: after optimize/convert/resize/
+  remove-bg, the browser now re-fetches the specific item individually to bypass
+  WordPress's page-level REST API cache. The list immediately shows the correct
+  updated mimeType, file size, and dimensions.
+- **Browser preview shows fresh metadata after apply**: the success screen now
+  displays the actual format, size, and dimensions from WordPress (e.g.
+  "Uploaded as #2204 · WEBP · 114.2 KB · 1672×941") instead of just the ID.
+
 ## [1.11.2] - 2026-05-09
 
 ### Fixed
@@ -576,7 +587,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.11.2...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.11.3...HEAD
+[1.11.3]: https://github.com/gfargo/localpress/compare/v1.11.2...v1.11.3
 [1.11.2]: https://github.com/gfargo/localpress/compare/v1.11.1...v1.11.2
 [1.11.1]: https://github.com/gfargo/localpress/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/gfargo/localpress/compare/v1.10.1...v1.11.0
