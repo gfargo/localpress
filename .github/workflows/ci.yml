@@ -123,12 +123,6 @@ jobs:
       - name: Build tarball (linux-x64)
         run: bun run build:linux-x64
 
-      - name: Debug tarball contents (top 10 largest packages)
-        run: |
-          du -sm dist/localpress-linux-x64/node_modules/*/ 2>/dev/null | sort -rn | head -10
-          echo "--- onnxruntime-node linux/x64 contents ---"
-          ls -lh dist/localpress-linux-x64/node_modules/onnxruntime-node/bin/napi-v6/linux/x64/ 2>/dev/null | head -20
-
       - name: Run tarball smoke tests
         run: bun run test:tarball
 

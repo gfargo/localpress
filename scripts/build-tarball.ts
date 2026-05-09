@@ -131,6 +131,7 @@ async function buildTarball(opts: BuildOptions): Promise<void> {
   // onnxruntime-node bundles ALL platform binaries in one package (darwin/linux/win32).
   // Structure: bin/napi-v6/<platform>/<arch>/
   // We only need the target platform+arch — remove everything else.
+  // Also remove GPU provider libraries (CUDA/TensorRT) — we use CPU inference only.
   console.log('  Stripping unused onnxruntime-node platform binaries...');
   const onnxBinDir = join(stagingDir, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6');
   if (existsSync(onnxBinDir)) {
@@ -149,6 +150,22 @@ async function buildTarball(opts: BuildOptions): Promise<void> {
           if (archDir !== arch) {
             await rm(join(archDirPath, archDir), { recursive: true, force: true });
             console.log(`    Removed ${platformDir}/${archDir}/`);
+          } else {
+            // Strip GPU provider libraries — we use CPU inference only
+            // libonnxruntime_providers_cuda.so (~329MB) and TensorRT are not needed
+            const targetArchDir = join(archDirPath, archDir);
+            const files = readdirSync(targetArchDir);
+            for (const file of files) {
+              if (
+                file.includes('cuda') ||
+                file.includes('tensorrt') ||
+                file.includes('providers_cuda') ||
+                file.includes('providers_tensorrt')
+              ) {
+                await rm(join(targetArchDir, file), { force: true });
+                console.log(`    Removed GPU provider: ${file}`);
+              }
+            }
           }
         }
       }
