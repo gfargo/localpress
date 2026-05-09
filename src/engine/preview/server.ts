@@ -55,6 +55,15 @@ export interface ProcessResult {
 export interface ApplyResult {
   wpId: number;
   message: string;
+  /** Fresh metadata from WordPress after the upload — for UI display. */
+  freshItem?: {
+    filename: string;
+    mimeType: string;
+    sizeBytes?: number;
+    width?: number;
+    height?: number;
+    url: string;
+  };
 }
 
 /**

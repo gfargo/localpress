@@ -375,7 +375,16 @@ export function buildOptimizeHtml(): string {
       const res = await fetch('/api/apply', { method: 'POST' }); const data = await res.json();
       if (data.error) { showToast(data.error, 'error'); btnApply.disabled = false; btnApply.textContent = 'Apply & Upload to WordPress'; return; }
       showToast('Uploaded as #' + data.wpId, 'success'); btnApply.textContent = 'Applied ✓';
-      setTimeout(() => { document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#e4e6ef;font-family:sans-serif"><h2 style="color:#22c55e">✓ Applied</h2><p style="color:#8b8fa3">Uploaded as #' + data.wpId + '. You can close this tab.</p></div>'; }, 1500);
+      // Build success message with fresh metadata if available
+      let successDetails = 'Uploaded as #' + data.wpId + '.';
+      if (data.freshItem) {
+        const fi = data.freshItem;
+        const sizeStr = fi.sizeBytes ? ' · ' + formatBytes(fi.sizeBytes) : '';
+        const dimsStr = (fi.width && fi.height) ? ' · ' + fi.width + '×' + fi.height : '';
+        const fmtStr = fi.mimeType ? ' · ' + fi.mimeType.replace('image/', '').toUpperCase() : '';
+        successDetails = 'Uploaded as #' + data.wpId + fmtStr + sizeStr + dimsStr + '.';
+      }
+      setTimeout(() => { document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#e4e6ef;font-family:sans-serif"><h2 style="color:#22c55e">✓ Applied</h2><p style="color:#8b8fa3">' + successDetails + ' You can close this tab.</p></div>'; }, 1500);
     } catch (err) { showToast('Upload failed: ' + err.message, 'error'); btnApply.disabled = false; btnApply.textContent = 'Apply & Upload to WordPress'; }
   }
   async function cancelPreview() {
