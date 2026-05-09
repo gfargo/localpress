@@ -138,13 +138,36 @@ bun "%DIR%\\bundle.js" %*
 set -e
 DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Require bun to be installed
+# Auto-install bun if not found
 if ! command -v bun >/dev/null 2>&1; then
-  echo "localpress requires Bun. Install it with:" >&2
-  echo "  brew install oven-sh/bun/bun" >&2
-  echo "  # or:" >&2
-  echo "  curl -fsSL https://bun.sh/install | bash" >&2
-  exit 127
+  echo "" >&2
+  echo "localpress requires Bun (JavaScript runtime)." >&2
+  echo "" >&2
+
+  # Try to auto-install
+  if [ -t 0 ]; then
+    printf "Install Bun now? [Y/n] " >&2
+    read -r answer
+    case "\$answer" in
+      [nN]*) 
+        echo "Install manually: curl -fsSL https://bun.sh/install | bash" >&2
+        exit 127
+        ;;
+    esac
+  fi
+
+  echo "Installing Bun..." >&2
+  curl -fsSL https://bun.sh/install | bash
+  export BUN_INSTALL="\$HOME/.bun"
+  export PATH="\$BUN_INSTALL/bin:\$PATH"
+
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "Bun installation failed. Install manually:" >&2
+    echo "  curl -fsSL https://bun.sh/install | bash" >&2
+    exit 127
+  fi
+  echo "✓ Bun installed." >&2
+  echo "" >&2
 fi
 
 # Export the path to this wrapper so the CLI can re-invoke itself
