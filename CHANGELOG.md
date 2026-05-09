@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-05-08
+
+### Fixed
+- **Tarball size reduced from 648MB to ~106MB**: CI was installing all 8 platform
+  variants of sharp's native binaries. Setting `npm_config_os` and `npm_config_cpu`
+  environment variables during `npm install` now correctly filters to only the
+  target platform's binaries.
+
 ## [1.11.0] - 2026-05-08
 
 ### Added
@@ -557,7 +565,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.11.1...HEAD
+[1.11.1]: https://github.com/gfargo/localpress/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/gfargo/localpress/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/gfargo/localpress/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/gfargo/localpress/compare/v1.9.0...v1.10.0
