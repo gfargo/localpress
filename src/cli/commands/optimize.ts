@@ -219,7 +219,24 @@ export function registerOptimizeCommand(program: Command): void {
               resultWpId: resultWpId !== item.id ? resultWpId : null,
             });
             db.close();
-            return { wpId: resultWpId, message: `Uploaded as #${resultWpId}` };
+
+            // Re-fetch the item from WordPress to get fresh metadata for the UI.
+            let freshItem: import('../../engine/preview/server.ts').ApplyResult['freshItem'];
+            try {
+              const refreshed = await getAdapter.getMedia(resultWpId ?? id);
+              freshItem = {
+                filename: refreshed.filename,
+                mimeType: refreshed.mimeType,
+                sizeBytes: refreshed.sizeBytes,
+                width: refreshed.width,
+                height: refreshed.height,
+                url: refreshed.url,
+              };
+            } catch {
+              // Best effort — UI will show basic success without fresh metadata.
+            }
+
+            return { wpId: resultWpId, message: `Uploaded as #${resultWpId}`, freshItem };
           },
         });
 
