@@ -127,6 +127,51 @@ async function buildTarball(opts: BuildOptions): Promise<void> {
     throw new Error('npm install failed');
   }
 
+  // 4b. Strip unused platform binaries from onnxruntime-node.
+  // onnxruntime-node bundles ALL platform binaries in one package (darwin/linux/win32).
+  // Structure: bin/napi-v6/<platform>/<arch>/
+  // We only need the target platform+arch — remove everything else.
+  // Also remove GPU provider libraries (CUDA/TensorRT) — we use CPU inference only.
+  console.log('  Stripping unused onnxruntime-node platform binaries...');
+  const onnxBinDir = join(stagingDir, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6');
+  if (existsSync(onnxBinDir)) {
+    const { readdirSync } = await import('node:fs');
+    const platformDirs = readdirSync(onnxBinDir);
+    for (const platformDir of platformDirs) {
+      if (platformDir !== os) {
+        // Remove entire wrong-platform directory
+        await rm(join(onnxBinDir, platformDir), { recursive: true, force: true });
+        console.log(`    Removed ${platformDir}/`);
+      } else {
+        // Keep this platform but strip wrong arch subdirs
+        const archDirPath = join(onnxBinDir, platformDir);
+        const archDirs = readdirSync(archDirPath);
+        for (const archDir of archDirs) {
+          if (archDir !== arch) {
+            await rm(join(archDirPath, archDir), { recursive: true, force: true });
+            console.log(`    Removed ${platformDir}/${archDir}/`);
+          } else {
+            // Strip GPU provider libraries — we use CPU inference only
+            // libonnxruntime_providers_cuda.so (~329MB) and TensorRT are not needed
+            const targetArchDir = join(archDirPath, archDir);
+            const files = readdirSync(targetArchDir);
+            for (const file of files) {
+              if (
+                file.includes('cuda') ||
+                file.includes('tensorrt') ||
+                file.includes('providers_cuda') ||
+                file.includes('providers_tensorrt')
+              ) {
+                await rm(join(targetArchDir, file), { force: true });
+                console.log(`    Removed GPU provider: ${file}`);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   // 5. Write the wrapper script
   console.log('  Writing wrapper script...');
   if (platform.startsWith('windows')) {
