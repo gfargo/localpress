@@ -53,7 +53,16 @@ export async function generateCaption(
 ): Promise<CaptionResult> {
   const baseUrl = options.ollamaUrl ?? DEFAULT_OLLAMA_URL;
   const model = options.model ?? DEFAULT_OLLAMA_MODEL;
-  const prompt = options.prompt ?? DEFAULT_PROMPT;
+
+  // Build the prompt — append language instruction if specified.
+  let prompt: string;
+  if (options.prompt) {
+    prompt = options.prompt;
+  } else if (options.language) {
+    prompt = `Write concise alt-text for this image in ${options.language}. Describe only what is visually present. Be factual and specific. Keep it under 125 characters. Respond with only the alt-text — no prefix, quotes, or explanation.`;
+  } else {
+    prompt = DEFAULT_PROMPT;
+  }
 
   const start = Date.now();
   const b64 = imageBuffer.toString('base64');
