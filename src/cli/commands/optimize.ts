@@ -73,12 +73,38 @@ export function registerOptimizeCommand(program: Command): void {
       '--regenerate-thumbnails',
       'regenerate WordPress thumbnails after replace-in-place (slower)',
     )
+    .option('--profile <name>', 'use a named optimization profile (from localpress config)')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
       const resolver = new AdapterResolver(site);
       const adapter = resolver.resolve('list');
+
+      // Resolve named profile (if --profile is passed).
+      let profileQuality: number | undefined;
+      let profileFormat: ImageFormat | undefined;
+      let profileMaxWidth: number | undefined;
+      let profileMaxHeight: number | undefined;
+      let profileEncoder: 'sharp' | 'jsquash' | undefined;
+      let profileStripMetadata: boolean | undefined;
+
+      if (options.profile) {
+        const profile = config.profiles?.[options.profile];
+        if (!profile) {
+          error(
+            `Profile '${options.profile}' not found. Available profiles: ${Object.keys(config.profiles ?? {}).join(', ') || '(none)'}.\n` +
+              `Create one with: localpress config set-profile ${options.profile} --quality 75 --format webp`,
+          );
+          process.exit(3);
+        }
+        profileQuality = profile.quality;
+        profileFormat = profile.format as ImageFormat | undefined;
+        profileMaxWidth = profile.maxWidth;
+        profileMaxHeight = profile.maxHeight;
+        profileEncoder = profile.encoder;
+        profileStripMetadata = profile.stripMetadata;
+      }
 
       const hasExplicitIds = idStrs.length > 0;
       const isBulk = options.all || options.unoptimized;
@@ -136,6 +162,19 @@ export function registerOptimizeCommand(program: Command): void {
 
         info(`  Starting preview for #${id} (${item.filename})...`);
 
+        // Pass available profiles to the browser UI.
+        const profiles = config.profiles
+          ? Object.entries(config.profiles).map(([name, p]) => ({
+              name,
+              quality: p.quality,
+              format: p.format,
+              maxWidth: p.maxWidth,
+              maxHeight: p.maxHeight,
+              encoder: p.encoder,
+              description: p.description,
+            }))
+          : [];
+
         const { applied, result } = await startPreviewServer({
           port: options.previewPort ?? 0,
           sourceBytes,
@@ -146,6 +185,7 @@ export function registerOptimizeCommand(program: Command): void {
           wpId: id,
           mode: 'optimize',
           html: buildOptimizeHtml(),
+          extraMeta: { profiles, activeProfile: options.profile ?? null },
           onProcess: async (params): Promise<ProcessResult> => {
             const opts: OptimizeOptions = {
               toFormat:
@@ -340,12 +380,15 @@ export function registerOptimizeCommand(program: Command): void {
       }
 
       // Build optimization options.
+      // Priority: explicit CLI flags > profile values > built-in defaults.
       const optimizeOpts: OptimizeOptions = {
-        toFormat: options.to as ImageFormat | undefined,
+        toFormat: (options.to as ImageFormat | undefined) ?? profileFormat,
         mode: options.mode,
-        quality: options.quality,
-        stripMetadata: true,
-        encoder: options.encoder === 'jsquash' ? 'jsquash' : 'sharp',
+        quality: options.quality ?? profileQuality,
+        maxWidth: profileMaxWidth,
+        maxHeight: profileMaxHeight,
+        stripMetadata: profileStripMetadata ?? true,
+        encoder: options.encoder === 'jsquash' ? 'jsquash' : (profileEncoder ?? 'sharp'),
       };
 
       // Open the site DB for recording processing history.

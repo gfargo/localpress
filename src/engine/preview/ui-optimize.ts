@@ -170,6 +170,15 @@ export function buildOptimizeHtml(): string {
   </div>
   <div class="sidebar">
     <div class="sidebar-section">
+      <h3>Profile</h3>
+      <div class="control-group">
+        <label>Optimization profile</label>
+        <select id="profile" onchange="applyProfile()">
+          <option value="">— None (manual settings) —</option>
+        </select>
+      </div>
+    </div>
+    <div class="sidebar-section">
       <h3>Format</h3>
       <div class="control-group">
         <label>Output format</label>
@@ -264,7 +273,52 @@ export function buildOptimizeHtml(): string {
       meta.width && meta.height ? meta.width + '×' + meta.height + 'px' : '',
       formatBytes(meta.sizeBytes),
     ].filter(Boolean).join('  ·  ');
+
+    // Populate profile dropdown if profiles are available.
+    if (meta.profiles && meta.profiles.length > 0) {
+      const sel = document.getElementById('profile');
+      for (const p of meta.profiles) {
+        const opt = document.createElement('option');
+        opt.value = p.name;
+        const parts = [p.name];
+        if (p.description) parts[0] += ' — ' + p.description;
+        else {
+          const hints = [];
+          if (p.quality) hints.push('q' + p.quality);
+          if (p.format) hints.push(p.format);
+          if (p.maxWidth) hints.push(p.maxWidth + 'px');
+          if (hints.length) parts[0] += ' (' + hints.join(', ') + ')';
+        }
+        opt.textContent = parts[0];
+        sel.appendChild(opt);
+      }
+      // Pre-select active profile if one was passed via CLI.
+      if (meta.activeProfile) {
+        sel.value = meta.activeProfile;
+        applyProfile();
+      }
+    } else {
+      // Hide profile section if no profiles exist.
+      document.getElementById('profile').closest('.sidebar-section').style.display = 'none';
+    }
+
     showSourceImage();
+  }
+
+  function applyProfile() {
+    const sel = document.getElementById('profile');
+    const name = sel.value;
+    if (!name || !meta.profiles) return;
+    const profile = meta.profiles.find(p => p.name === name);
+    if (!profile) return;
+    if (profile.quality) { qualityInput.value = profile.quality; qualityValue.textContent = profile.quality; }
+    if (profile.format) { document.getElementById('format').value = profile.format; }
+    else { document.getElementById('format').value = 'keep'; }
+    if (profile.encoder) { document.getElementById('encoder').value = profile.encoder; }
+    if (profile.maxWidth) { document.getElementById('max-width').value = profile.maxWidth; }
+    else { document.getElementById('max-width').value = ''; }
+    if (profile.maxHeight) { document.getElementById('max-height').value = profile.maxHeight; }
+    else { document.getElementById('max-height').value = ''; }
   }
 
   function clearCanvas() {

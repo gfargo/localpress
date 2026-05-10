@@ -44,6 +44,8 @@ export interface PreviewServerOptions {
   timeoutMs?: number;
   /** HTML content for the UI page. */
   html: string;
+  /** Extra metadata to include in the /api/meta response (e.g. profiles). */
+  extraMeta?: Record<string, unknown>;
 }
 
 export interface ProcessResult {
@@ -227,6 +229,7 @@ export async function startPreviewServer(
             height: options.height,
             sizeBytes: options.sourceBytes.length,
             wpId: options.wpId,
+            ...(options.extraMeta ?? {}),
           }),
           { headers: { 'Content-Type': 'application/json' } },
         );
