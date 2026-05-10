@@ -39,7 +39,7 @@ export interface PreviewServerOptions {
   /** Called when the user clicks "Process" with the given params. Returns result bytes. */
   onProcess: (params: Record<string, unknown>) => Promise<ProcessResult>;
   /** Called when the user clicks "Apply" to commit the result. */
-  onApply: (resultBytes: Buffer) => Promise<ApplyResult>;
+  onApply: (resultBytes: Buffer, resultMimeType: string | null) => Promise<ApplyResult>;
   /** Auto-shutdown timeout in ms. Default: 10 minutes. */
   timeoutMs?: number;
   /** HTML content for the UI page. */
@@ -79,12 +79,14 @@ export async function startPreviewServer(
   // Mutable state shared between the fetch handler and lifecycle management.
   const state: {
     lastResultBytes: Buffer | null;
+    lastResultMimeType: string | null;
     timeoutId: ReturnType<typeof setTimeout> | null;
     server: ReturnType<typeof Bun.serve> | null;
     wsConnected: boolean;
     wsHeartbeatId: ReturnType<typeof setInterval> | null;
   } = {
     lastResultBytes: null,
+    lastResultMimeType: null,
     timeoutId: null,
     server: null,
     wsConnected: false,
@@ -156,6 +158,7 @@ export async function startPreviewServer(
           const params = (await req.json()) as Record<string, unknown>;
           const result = await options.onProcess(params);
           state.lastResultBytes = result.bytes;
+          state.lastResultMimeType = result.mimeType;
           return new Response(
             JSON.stringify({
               stats: result.stats,
@@ -183,7 +186,7 @@ export async function startPreviewServer(
         }
         try {
           info('  Applying optimized image to WordPress...');
-          const result = await options.onApply(state.lastResultBytes);
+          const result = await options.onApply(state.lastResultBytes, state.lastResultMimeType);
           info(`  ✓ Applied successfully (${result.message})`);
           // Delay shutdown to ensure the response is fully sent to the browser
           // before the server closes the TCP connection.

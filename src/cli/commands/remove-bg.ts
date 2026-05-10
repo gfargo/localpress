@@ -161,7 +161,7 @@ export function registerRemoveBgCommand(program: Command): void {
               },
             };
           },
-          onApply: async (resultBytes): Promise<ApplyResult> => {
+          onApply: async (resultBytes, _resultMimeType): Promise<ApplyResult> => {
             const db = SiteDb.init(getSiteDbPath(site.name));
             db.ensureSite(site.name, site.url);
 

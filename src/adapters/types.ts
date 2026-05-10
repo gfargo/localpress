@@ -101,6 +101,10 @@ export interface UpdateMetadata {
 export interface ReplaceOptions {
   /** Regenerate WordPress thumbnails after replacing. Default: false. */
   regenerateThumbnails?: boolean;
+  /** New MIME type if the format changed (e.g. image/png → image/webp). */
+  newMimeType?: string;
+  /** New filename extension if the format changed (e.g. '.webp'). */
+  newExtension?: string;
 }
 
 /** Result of a `pruneOrphans` operation. */

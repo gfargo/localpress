@@ -177,12 +177,16 @@ export function registerOptimizeCommand(program: Command): void {
               },
             };
           },
-          onApply: async (resultBytes): Promise<ApplyResult> => {
+          onApply: async (resultBytes, resultMimeType): Promise<ApplyResult> => {
             const db = SiteDb.init(getSiteDbPath(site.name));
             db.ensureSite(site.name, site.url);
 
             const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
             const resultHash = createHash('sha256').update(resultBytes).digest('hex');
+
+            // Determine if the format changed.
+            const formatChanged = resultMimeType && resultMimeType !== item.mimeType;
+            const newExtension = formatChanged ? mimeToExtension(resultMimeType) : undefined;
 
             let resultWpId: number | null = null;
 
@@ -192,6 +196,8 @@ export function registerOptimizeCommand(program: Command): void {
                 try {
                   await replaceAdapter.replaceInPlace(id, resultBytes, {
                     regenerateThumbnails: Boolean(options.regenerateThumbnails),
+                    newMimeType: formatChanged ? resultMimeType : undefined,
+                    newExtension,
                   });
                   resultWpId = id;
                 } catch (err) {
@@ -396,9 +402,16 @@ export function registerOptimizeCommand(program: Command): void {
             // Try replace-in-place.
             const replaceAdapter = resolver.tryResolve('replace-in-place');
             if (replaceAdapter) {
+              // Detect format change for metadata update.
+              const outputMime = formatToMime(result.after.format);
+              const formatChanged = outputMime !== item.mimeType;
+              const newExt = formatChanged ? mimeToExtension(outputMime) : undefined;
+
               try {
                 await replaceAdapter.replaceInPlace(item.id, result.bytes, {
                   regenerateThumbnails: Boolean(options.regenerateThumbnails),
+                  newMimeType: formatChanged ? outputMime : undefined,
+                  newExtension: newExt,
                 });
                 resultWpId = item.id;
               } catch (err) {
@@ -530,6 +543,28 @@ export function registerOptimizeCommand(program: Command): void {
 }
 
 // -- Helpers ------------------------------------------------------------------
+
+function mimeToExtension(mimeType: string): string | undefined {
+  const map: Record<string, string> = {
+    'image/webp': '.webp',
+    'image/avif': '.avif',
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/gif': '.gif',
+  };
+  return map[mimeType];
+}
+
+function formatToMime(format: string): string {
+  const map: Record<string, string> = {
+    webp: 'image/webp',
+    avif: 'image/avif',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    gif: 'image/gif',
+  };
+  return map[format] ?? `image/${format}`;
+}
 
 function recordSuccess(
   db: SiteDb,
