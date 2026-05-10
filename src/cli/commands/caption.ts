@@ -39,7 +39,9 @@ export function registerCaptionCommand(program: Command): void {
       DEFAULT_OLLAMA_URL,
     )
     .option('--missing-alt', 'only process attachments that have no alt text set')
+    .option('--all', 'process all image attachments (dry-run unless --apply)')
     .option('--overwrite', 'replace existing alt text (default: skip if already set)')
+    .option('--language <lang>', 'generate alt text in this language (e.g. "Spanish", "French")')
     .option('--dry-run', 'print generated captions without updating WordPress')
     .option('--list-models', 'list Ollama models available locally and exit')
     .action(async (idStrs: string[], options) => {
@@ -107,13 +109,31 @@ export function registerCaptionCommand(program: Command): void {
           return;
         }
         info(`  Found ${ids.length} attachment(s) without alt text.\n`);
+      } else if (options.all) {
+        info('  Fetching all image attachments…');
+        const allItems = await fetchAllImageAttachments(listAdapter);
+        ids = allItems.map((item) => item.id);
+        if (ids.length === 0) {
+          info('No image attachments found.');
+          return;
+        }
+        info(`  Found ${ids.length} image attachment(s).\n`);
       } else {
         error(
-          'Specify attachment IDs or use --missing-alt to target items without alt text.\n' +
+          'Specify attachment IDs, or use --missing-alt / --all for bulk operations.\n' +
             'Example: localpress caption 123 124\n' +
-            '         localpress caption --missing-alt',
+            '         localpress caption --missing-alt\n' +
+            '         localpress caption --all --dry-run',
         );
         process.exit(2);
+      }
+
+      // Bulk operations (--all, --missing-alt) are dry-run by default unless --apply is passed.
+      const isBulk = !idStrs.length && (options.missingAlt || options.all);
+      const isDryRun = options.dryRun || (isBulk && !parentOpts.apply);
+
+      if (isBulk && !parentOpts.apply && !options.dryRun) {
+        info('  Dry-run: pass --apply to write captions to WordPress.\n');
       }
 
       const db = SiteDb.init(getSiteDbPath(site.name));
@@ -165,11 +185,12 @@ export function registerCaptionCommand(program: Command): void {
             model: options.model,
             prompt: options.prompt,
             ollamaUrl: options.ollamaUrl,
+            language: options.language,
           });
 
           info(`    ✓ "${result.caption}" (${result.durationMs}ms)`);
 
-          if (!options.dryRun) {
+          if (!isDryRun) {
             await updateAdapter.updateMetadata(id, { altText: result.caption });
           }
 
@@ -185,7 +206,7 @@ export function registerCaptionCommand(program: Command): void {
             lastSeenAt: Date.now(),
           });
 
-          if (!options.dryRun) {
+          if (!isDryRun) {
             db.recordProcessing({
               siteName: site.name,
               wpId: item.id,
@@ -241,7 +262,7 @@ export function registerCaptionCommand(program: Command): void {
 
       if (parentOpts.json) {
         printJson({
-          dryRun: options.dryRun ?? false,
+          dryRun: isDryRun,
           processed: results.filter((r) => !r.skipped).length,
           skipped: results.filter((r) => r.skipped).length,
           failures,
@@ -252,7 +273,7 @@ export function registerCaptionCommand(program: Command): void {
 
       const acted = results.filter((r) => !r.skipped);
       if (acted.length > 0 || failures > 0) {
-        const dryNote = options.dryRun ? ' (dry run — WordPress not updated)' : '';
+        const dryNote = isDryRun ? ' (dry run — WordPress not updated)' : '';
         info(
           `\n  Done: ${acted.length} captioned, ${results.filter((r) => r.skipped).length} skipped, ${failures} failed${dryNote}.`,
         );
