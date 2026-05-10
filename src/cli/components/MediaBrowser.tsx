@@ -72,6 +72,14 @@ interface Props {
   onPageChange: (page: number) => Promise<PagedResult<MediaItem>>;
   onFetchItem?: (id: number) => Promise<MediaItem>;
   onOpenInBrowser?: (id: number) => void;
+  /** Available optimization profiles from config. */
+  profiles?: Array<{
+    name: string;
+    quality?: number;
+    format?: string;
+    maxWidth?: number;
+    maxHeight?: number;
+  }>;
 }
 
 const SIDEBAR_WIDTH = 38;
@@ -125,6 +133,7 @@ export function MediaBrowser({
   onPageChange,
   onFetchItem,
   onOpenInBrowser,
+  profiles,
 }: Props) {
   const { exit } = useApp();
 
@@ -160,9 +169,10 @@ export function MediaBrowser({
   const [optimizeQuality, setOptimizeQuality] = useState('');
   const [optimizeFormat, setOptimizeFormat] = useState<OptimizeFormat>('keep');
   const [optimizeKeepOriginal, setOptimizeKeepOriginal] = useState(false);
-  const [optimizeActiveField, setOptimizeActiveField] = useState<'quality' | 'format' | 'keep'>(
-    'quality',
-  );
+  const [optimizeActiveField, setOptimizeActiveField] = useState<
+    'profile' | 'quality' | 'format' | 'keep'
+  >('profile');
+  const [optimizeProfile, setOptimizeProfile] = useState('');
 
   // Convert format picker overlay ([c]) — two-step: format then quality.
   const [convertMode, setConvertMode] = useState(false);
@@ -300,16 +310,57 @@ export function MediaBrowser({
         setOptimizeQuality('');
         setOptimizeFormat('keep');
         setOptimizeKeepOriginal(false);
-        setOptimizeActiveField('quality');
+        setOptimizeActiveField('profile');
+        setOptimizeProfile('');
         return;
       }
       if (key.tab) {
         setOptimizeActiveField((f) => {
+          if (f === 'profile') return 'quality';
           if (f === 'quality') return 'format';
           if (f === 'format') return 'keep';
-          return 'quality';
+          return 'profile';
         });
         return;
+      }
+      if (optimizeActiveField === 'profile') {
+        if (profiles && profiles.length > 0) {
+          const profileNames = ['', ...profiles.map((p) => p.name)];
+          const idx = profileNames.indexOf(optimizeProfile);
+          if (key.rightArrow || input === ' ') {
+            const next = profileNames[(idx + 1) % profileNames.length];
+            setOptimizeProfile(next);
+            // Apply profile values as defaults.
+            if (next) {
+              const p = profiles.find((pr) => pr.name === next);
+              if (p) {
+                if (p.quality) setOptimizeQuality(String(p.quality));
+                if (p.format && OPTIMIZE_FORMATS.includes(p.format as OptimizeFormat)) {
+                  setOptimizeFormat(p.format as OptimizeFormat);
+                }
+              }
+            }
+            return;
+          }
+          if (key.leftArrow) {
+            const next = profileNames[(idx - 1 + profileNames.length) % profileNames.length];
+            setOptimizeProfile(next);
+            if (next) {
+              const p = profiles.find((pr) => pr.name === next);
+              if (p) {
+                if (p.quality) setOptimizeQuality(String(p.quality));
+                if (p.format && OPTIMIZE_FORMATS.includes(p.format as OptimizeFormat)) {
+                  setOptimizeFormat(p.format as OptimizeFormat);
+                }
+              }
+            }
+            return;
+          }
+        }
+        if (key.return) {
+          setOptimizeActiveField('quality');
+          return;
+        }
       }
       if (optimizeActiveField === 'quality') {
         if (key.backspace || key.delete) {
@@ -354,7 +405,8 @@ export function MediaBrowser({
         setOptimizeQuality('');
         setOptimizeFormat('keep');
         setOptimizeKeepOriginal(false);
-        setOptimizeActiveField('quality');
+        setOptimizeActiveField('profile');
+        setOptimizeProfile('');
         doExit({ type: 'optimize', id: item.id, page, cursor, quality, to, keepOriginal, preview });
       }
       return;
@@ -643,6 +695,27 @@ export function MediaBrowser({
         <Box flexDirection="column" paddingX={2} paddingY={1} gap={1}>
           <Text dimColor>Leave fields blank to use defaults. [Tab] to move between fields.</Text>
           <Text> </Text>
+
+          {/* Profile field */}
+          {profiles && profiles.length > 0 && (
+            <Box gap={2} alignItems="center">
+              <Text
+                color={optimizeActiveField === 'profile' ? 'green' : undefined}
+                dimColor={optimizeActiveField !== 'profile'}
+                bold={optimizeActiveField === 'profile'}
+              >
+                Profile:
+              </Text>
+              <Text
+                color={optimizeProfile ? 'green' : undefined}
+                dimColor={!optimizeProfile}
+                inverse={optimizeActiveField === 'profile'}
+              >
+                {optimizeProfile || '(none)'}
+              </Text>
+              {optimizeActiveField === 'profile' && <Text dimColor> ← → or space to cycle</Text>}
+            </Box>
+          )}
 
           {/* Quality field */}
           <Box gap={2} alignItems="center">

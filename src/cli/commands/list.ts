@@ -185,6 +185,15 @@ export function registerListCommand(program: Command): void {
               processedIds,
               sortBy: filters.sortBy,
               sortOrder: filters.sortOrder,
+              profiles: config.profiles
+                ? Object.entries(config.profiles).map(([name, p]) => ({
+                    name,
+                    quality: p.quality,
+                    format: p.format,
+                    maxWidth: p.maxWidth,
+                    maxHeight: p.maxHeight,
+                  }))
+                : undefined,
               onFetchItem: (id: number) => adapter.getMedia(id),
               onOpenInBrowser: openInBrowser,
               onAction: (action) => {
