@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-05-10
+
+### Added
+- **`localpress export` command**: export the full media library (or a filtered
+  subset) as a ZIP archive or directory. Preserves WP uploads directory structure
+  and includes a `manifest.json` with full metadata (id, title, alt, caption,
+  SHA-256 hash) for round-trip re-import. Supports `--all`, `--unoptimized`,
+  `--type`, `--since`, `--larger-than`, `--include-sizes`, `--flat` filters.
+- **`localpress import` command**: bulk import local files, directories, or ZIP
+  archives into the WordPress media library. Supports `--optimize` with
+  `--quality`, `--to`, `--max-width`, `--max-height` for processing before upload.
+  `--preserve-ids` reads manifest metadata from a previous export to restore alt
+  text, titles, captions, and descriptions. Concurrency-controlled uploads.
+- **`--profile <name>` flag on `optimize`**: loads a named optimization profile
+  from config and uses its values (quality, format, maxWidth, maxHeight, encoder,
+  stripMetadata) as defaults. Explicit CLI flags override profile values. Clear
+  error with available profiles listed if the profile doesn't exist.
+- **Profile selector in browser preview**: dropdown at the top of the optimize
+  preview sidebar pre-fills quality/format/encoder/resize fields when a profile
+  is selected.
+- **Profile selector in interactive list**: the optimize overlay (`[o]`) now
+  includes a profile field — use ← → or space to cycle through available profiles.
+  Selecting a profile pre-fills quality and format fields.
+- **Unit tests**: 29 new tests covering profile resolution, export/import command
+  registration, ZIP round-trip integrity, CRC-32, image file detection, and
+  directory scanning.
+
 ## [1.12.0] - 2026-05-10
 
 ### Fixed
@@ -599,6 +626,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
 [Unreleased]: https://github.com/gfargo/localpress/compare/v1.12.0...HEAD
+[1.13.0]: https://github.com/gfargo/localpress/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/gfargo/localpress/compare/v1.11.3...v1.12.0
 [1.11.3]: https://github.com/gfargo/localpress/compare/v1.11.2...v1.11.3
 [1.11.2]: https://github.com/gfargo/localpress/compare/v1.11.1...v1.11.2
