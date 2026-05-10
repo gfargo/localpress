@@ -60,11 +60,9 @@ export function registerListCommand(program: Command): void {
         const { useState: useReactState, useEffect: useReactEffect } = React.default;
         const { MediaBrowser } = await import('../components/MediaBrowser.tsx');
         const { spawnSync } = await import('node:child_process');
-        const { getSelfBin, buildSelfArgs } = await import('../utils/self-invoke.ts');
+        const { getSelfBin, isDevMode } = await import('../utils/self-invoke.ts');
 
         const selfBin = getSelfBin(process.argv, process.execPath);
-        const selfArgs = (cmd: string, id: string, extra: string[] = []) =>
-          buildSelfArgs(process.argv, process.execPath, cmd, id, extra);
 
         const { spawn: spawnBg } = await import('node:child_process');
         const openInBrowser = (id: number) => {
@@ -250,40 +248,75 @@ export function registerListCommand(program: Command): void {
 
           let subCmd: string;
           let extraArgs: string[] = [];
+          let targetIds: string[] = [];
+
           switch (pendingAction.type) {
             case 'optimize':
               subCmd = 'optimize';
+              targetIds = [String(pendingAction.id)];
               if (pendingAction.quality !== undefined)
                 extraArgs.push('--quality', String(pendingAction.quality));
               if (pendingAction.to) extraArgs.push('--to', pendingAction.to);
               if (pendingAction.keepOriginal) extraArgs.push('--keep-original');
               if (pendingAction.preview) extraArgs.push('--preview');
               break;
+            case 'bulk-optimize':
+              subCmd = 'optimize';
+              targetIds = pendingAction.ids.map(String);
+              if (pendingAction.quality !== undefined)
+                extraArgs.push('--quality', String(pendingAction.quality));
+              if (pendingAction.to) extraArgs.push('--to', pendingAction.to);
+              extraArgs.push('--apply');
+              break;
             case 'remove-bg':
               subCmd = 'remove-bg';
+              targetIds = [String(pendingAction.id)];
               if (pendingAction.preview) extraArgs.push('--preview');
+              break;
+            case 'bulk-remove-bg':
+              subCmd = 'remove-bg';
+              targetIds = pendingAction.ids.map(String);
+              extraArgs.push('--apply');
               break;
             case 'caption':
               subCmd = 'caption';
+              targetIds = [String(pendingAction.id)];
               break;
             case 'convert':
               subCmd = 'convert';
+              targetIds = [String(pendingAction.id)];
               extraArgs = ['--to', pendingAction.to];
               if (pendingAction.quality !== undefined)
                 extraArgs.push('--quality', String(pendingAction.quality));
               break;
+            case 'bulk-convert':
+              subCmd = 'convert';
+              targetIds = pendingAction.ids.map(String);
+              extraArgs = ['--to', pendingAction.to];
+              extraArgs.push('--apply');
+              break;
             case 'resize':
               subCmd = 'resize';
+              targetIds = [String(pendingAction.id)];
               if (pendingAction.maxWidth)
                 extraArgs.push('--max-width', String(pendingAction.maxWidth));
               if (pendingAction.maxHeight)
                 extraArgs.push('--max-height', String(pendingAction.maxHeight));
               break;
+            case 'bulk-pull':
+              subCmd = 'pull';
+              targetIds = pendingAction.ids.map(String);
+              break;
             default:
               subCmd = 'edit';
+              targetIds = ['id' in pendingAction ? String(pendingAction.id) : '0'];
           }
 
-          spawnSync(selfBin, selfArgs(subCmd, String(pendingAction.id), extraArgs), {
+          // Spawn the subcommand with all target IDs.
+          const cmdArgs = isDevMode(process.argv, process.execPath)
+            ? [process.argv[1], subCmd, ...targetIds, ...extraArgs]
+            : [subCmd, ...targetIds, ...extraArgs];
+          spawnSync(selfBin, cmdArgs, {
             stdio: 'inherit',
           });
 
@@ -323,16 +356,22 @@ export function registerListCommand(program: Command): void {
             'convert',
             'remove-bg',
             'caption',
+            'bulk-optimize',
+            'bulk-remove-bg',
+            'bulk-convert',
           ]);
           if (processingTypes.has(pendingAction.type)) {
             processedIds = loadProcessedIds();
-            // Mark this item for individual re-fetch on next loop iteration.
-            lastProcessedId = pendingAction.id;
+            // Mark the first processed item for individual re-fetch on next loop iteration.
+            lastProcessedId = 'id' in pendingAction ? pendingAction.id : null;
           }
 
           // Store the ID of the item that was just processed so we can
           // refresh it after the next page fetch (bypasses REST API cache).
-          const justProcessedId = processingTypes.has(pendingAction.type) ? pendingAction.id : null;
+          const justProcessedId =
+            processingTypes.has(pendingAction.type) && 'id' in pendingAction
+              ? pendingAction.id
+              : null;
 
           process.stdout.write('\x1b[2J\x1b[H');
 

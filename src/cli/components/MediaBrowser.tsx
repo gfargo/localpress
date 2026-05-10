@@ -46,7 +46,18 @@ export type MediaBrowserAction =
       maxWidth?: number;
       maxHeight?: number;
     }
-  | { type: 'browser-preview'; id: number; page: number; cursor: number };
+  | { type: 'browser-preview'; id: number; page: number; cursor: number }
+  | {
+      type: 'bulk-optimize';
+      ids: number[];
+      page: number;
+      cursor: number;
+      quality?: number;
+      to?: string;
+    }
+  | { type: 'bulk-remove-bg'; ids: number[]; page: number; cursor: number }
+  | { type: 'bulk-convert'; ids: number[]; page: number; cursor: number; to: string }
+  | { type: 'bulk-pull'; ids: number[]; page: number; cursor: number };
 
 interface Props {
   initialItems: MediaItem[];
@@ -164,6 +175,9 @@ export function MediaBrowser({
   const [resizeWidth, setResizeWidth] = useState('');
   const [resizeHeight, setResizeHeight] = useState('');
   const [resizeActiveField, setResizeActiveField] = useState<'width' | 'height'>('width');
+
+  // Multi-select state.
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   const termWidth = process.stdout.columns ?? 100;
   const termHeight = process.stdout.rows ?? 24;
@@ -471,9 +485,34 @@ export function MediaBrowser({
       loadPage(page + 1);
     } else if (input === 'b' || key.leftArrow) {
       loadPage(page - 1);
+    } else if (input === ' ') {
+      // Space: toggle selection on current item.
+      const item = filteredItems[cursor];
+      if (item) {
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          if (next.has(item.id)) {
+            next.delete(item.id);
+          } else {
+            next.add(item.id);
+          }
+          return next;
+        });
+        // Move cursor down after selecting (like file managers).
+        setCursor((c) => Math.min(filteredItems.length - 1, c + 1));
+      }
+    } else if (key.ctrl && input === 'a') {
+      // Ctrl+A: select all on current page.
+      setSelectedIds(new Set(filteredItems.map((i) => i.id)));
+    } else if (key.ctrl && input === 'd') {
+      // Ctrl+D: deselect all.
+      setSelectedIds(new Set());
     } else if (key.escape || input === 'q') {
       if (searchQuery) {
         setSearchQuery('');
+      } else if (selectedIds.size > 0) {
+        // Escape clears selection first, then quits.
+        setSelectedIds(new Set());
       } else {
         doExit({ type: 'quit', page, cursor });
       }
@@ -497,6 +536,11 @@ export function MediaBrowser({
         doExit({ type: 'show', id: item.id, page, cursor });
       }
     } else if (input === 'o') {
+      // If items are selected, dispatch bulk optimize.
+      if (selectedIds.size > 0) {
+        doExit({ type: 'bulk-optimize', ids: [...selectedIds], page, cursor });
+        return;
+      }
       const item = filteredItems[cursor];
       if (item) {
         setOptimizeQuality('');
@@ -507,6 +551,11 @@ export function MediaBrowser({
         setOptimizeMode(true);
       }
     } else if (input === 'r') {
+      // If items are selected, dispatch bulk remove-bg.
+      if (selectedIds.size > 0) {
+        doExit({ type: 'bulk-remove-bg', ids: [...selectedIds], page, cursor });
+        return;
+      }
       const item = filteredItems[cursor];
       if (item?.mimeType.startsWith('image/'))
         doExit({ type: 'remove-bg', id: item.id, page, cursor });
@@ -1101,12 +1150,13 @@ export function MediaBrowser({
               // Keep the previous page's rows visible (dimmed) while loading —
               // avoids the tall-box → rows layout thrash that causes flicker.
               const isSelected = !loading && scrollStart + i === cursor;
+              const isChecked = selectedIds.has(item.id);
               const isProcessed = !loading && processedIds.has(item.id);
               const isImage = item.mimeType.startsWith('image/');
               const missingAlt = !loading && isImage && !item.altText;
               const size = item.sizeBytes ? formatBytes(item.sizeBytes) : '     ';
               const ext = (item.mimeType.split('/')[1] ?? '').slice(0, 4).padEnd(4);
-              const maxName = listWidth - 30;
+              const maxName = listWidth - 32;
               const name =
                 item.filename.length > maxName
                   ? `${item.filename.slice(0, maxName - 1)}…`
@@ -1119,7 +1169,7 @@ export function MediaBrowser({
                     color={isSelected ? undefined : isProcessed ? 'green' : undefined}
                     dimColor={loading || (!isSelected && !isProcessed)}
                   >
-                    {isSelected ? '▶ ' : '  '}
+                    {isSelected ? '▶ ' : isChecked ? '● ' : '  '}
                     <Text color={isSelected ? undefined : 'cyan'}>
                       #{String(item.id).padEnd(5)}
                     </Text>{' '}
