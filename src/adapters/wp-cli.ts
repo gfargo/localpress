@@ -220,9 +220,17 @@ export class WpCliAdapter implements WpBackend {
     const currentFile = await this.wp(`post meta get ${id} _wp_attached_file`);
     const uploadsDir = await this.getUploadsDir();
 
-    const remotePath = `${uploadsDir}/${currentFile.trim()}`;
+    let remotePath = `${uploadsDir}/${currentFile.trim()}`;
 
-    // Write to local temp, SCP to remote, overwrite the file.
+    // If the format changed, we need to rename the file and update WP metadata.
+    let newFilePath = currentFile.trim();
+    if (options?.newExtension) {
+      // Change the extension: 2024/12/image.png → 2024/12/image.webp
+      newFilePath = currentFile.trim().replace(/\.[^.]+$/, options.newExtension);
+      remotePath = `${uploadsDir}/${newFilePath}`;
+    }
+
+    // Write to local temp, SCP to remote, place at the (possibly new) path.
     const localTmp = join(tmpdir(), `localpress-replace-${Date.now()}`);
     await Bun.write(localTmp, file);
 
@@ -231,6 +239,40 @@ export class WpCliAdapter implements WpBackend {
 
     // Move the file into place and fix permissions.
     await sshExec(this.ssh, `mv "${remoteTmp}" "${remotePath}" && chmod 644 "${remotePath}"`);
+
+    // If the format changed, delete the old file and update WordPress metadata.
+    if (options?.newExtension && newFilePath !== currentFile.trim()) {
+      const oldRemotePath = `${uploadsDir}/${currentFile.trim()}`;
+      // Delete the old file (it's now at a different path).
+      await sshExec(this.ssh, `rm -f "${oldRemotePath}"`).catch(() => {});
+
+      // Update _wp_attached_file meta to the new path.
+      await this.wp(`post meta update ${id} _wp_attached_file "${newFilePath}"`);
+
+      // Update the post MIME type via wp post update (handles quoting correctly).
+      if (options.newMimeType) {
+        await sshExec(
+          this.ssh,
+          `cd ${this.wpPath} && wp post update ${id} --post_mime_type="${options.newMimeType}" --allow-root`,
+        );
+      }
+
+      // Update attachment metadata (file field and filesize).
+      try {
+        const metaJson = await this.wp(`post meta get ${id} _wp_attachment_metadata --format=json`);
+        const meta = JSON.parse(metaJson);
+        if (meta?.file) {
+          meta.file = newFilePath;
+          meta.filesize = file.length;
+          const updatedMeta = JSON.stringify(meta).replace(/'/g, "\\'");
+          await this.wp(
+            `post meta update ${id} _wp_attachment_metadata '${updatedMeta}' --format=json`,
+          );
+        }
+      } catch {
+        // Best effort — metadata update is non-critical.
+      }
+    }
 
     // Regenerate thumbnails only if explicitly requested.
     if (options?.regenerateThumbnails) {
