@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-05-10
+
+### Added
+- **`caption --all` flag**: process all image attachments in the library. Follows
+  the safe-by-default pattern — bulk operations are dry-run unless `--apply` is
+  passed, matching the `optimize` command's behavior.
+- **`caption --language <lang>` flag**: generate alt text in any language the
+  Ollama model supports (e.g. `--language Spanish`, `--language French`). Modifies
+  the prompt to request output in the specified language.
+
+### Changed
+- **Caption bulk ops are now safe-by-default**: both `--all` and `--missing-alt`
+  dry-run unless `--apply` is passed. Previously `--missing-alt` wrote immediately.
+  Explicit IDs still execute immediately.
+
 ## [1.13.0] - 2026-05-10
 
 ### Added
@@ -626,6 +641,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
 [Unreleased]: https://github.com/gfargo/localpress/compare/v1.12.0...HEAD
+[1.13.1]: https://github.com/gfargo/localpress/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/gfargo/localpress/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/gfargo/localpress/compare/v1.11.3...v1.12.0
 [1.11.3]: https://github.com/gfargo/localpress/compare/v1.11.2...v1.11.3
