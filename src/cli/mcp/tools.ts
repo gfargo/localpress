@@ -419,7 +419,12 @@ export function registerTools(server: McpServer): void {
         unoptimized: z.boolean().optional().describe('Process all unoptimized items'),
         all: z.boolean().optional().describe('Process every attachment'),
         quality: z.number().int().min(1).max(100).optional(),
-        format: z.enum(['webp', 'avif', 'jpeg', 'png']).optional(),
+        to: z
+          .enum(['webp', 'avif', 'jpeg', 'png'])
+          .optional()
+          .describe(
+            'Convert during optimization: webp, avif, jpeg, or png. Defaults to the source format when omitted.',
+          ),
         maxWidth: z.number().int().positive().optional(),
         maxHeight: z.number().int().positive().optional(),
         encoder: z.enum(['sharp', 'jsquash']).optional(),
@@ -435,7 +440,7 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--unoptimized', a.unoptimized);
       flag(argv, '--all', a.all);
       opt(argv, '--quality', a.quality);
-      opt(argv, '--format', a.format);
+      opt(argv, '--to', a.to);
       opt(argv, '--max-width', a.maxWidth);
       opt(argv, '--max-height', a.maxHeight);
       opt(argv, '--encoder', a.encoder);

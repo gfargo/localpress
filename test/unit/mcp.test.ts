@@ -127,4 +127,19 @@ describe('mcp server', () => {
       await close();
     }
   }, 30_000);
+
+  test('optimize tool exposes `to` (not `format`) — regression for #50', async () => {
+    // Bug: the optimize MCP tool used to advertise a `format` field that got
+    // mapped to `--format`, but the CLI takes `--to`. Verify the rename to `to`.
+    const { client, close } = await connectClient();
+    try {
+      const { tools } = await client.listTools();
+      const optimize = tools.find((t) => t.name === 'optimize');
+      const schema = optimize?.inputSchema as { properties?: Record<string, unknown> };
+      expect(schema.properties).toHaveProperty('to');
+      expect(schema.properties).not.toHaveProperty('format');
+    } finally {
+      await close();
+    }
+  }, 30_000);
 });
