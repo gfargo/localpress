@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-05-11
+
+### Added
+- **`localpress metadata` command + `update_metadata` MCP tool**: directly set
+  alt text, title, caption, or description on attachment(s) — the manual-edit
+  path that complements `caption`'s AI generation. Bulk-applies the same
+  metadata across multiple IDs. Idempotent (skips items where all incoming
+  fields already match). Time-machine snapshot captured before each write.
+- **`localpress delete` command + `delete` MCP tool**: remove attachments,
+  defaulting to WP trash (recoverable from admin); `--force` permanently
+  deletes. Binary snapshot captured before delete so `undo` can re-upload
+  the file (as a new attachment ID; references need manual rewriting since
+  WordPress assigns new IDs). Completes CRUD on the attachment surface.
+- **`list --search`**: free-text search across filename and title for the
+  `list` command. WP REST native `?search=` server-side. Composes with all
+  existing filters. `list` MCP tool gains the matching `search` field.
+- **`--concurrency` passthrough on bulk MCP tools**: `optimize`, `convert`,
+  `resize`, `remove_bg`, `caption`, `export`, and `import` MCP tools now
+  accept a `concurrency` field that maps to `--concurrency <n>` at the CLI
+  top level. Bulk captioning 300+ images drops from 30-90 min serially to
+  ~8-23 min at `concurrency: 4`.
+- **`watch_status` MCP tool + `localpress watch-status` command**: reports
+  which directories have been watched on the active site (historical
+  mapping data + last-activity timestamps). Live-process detection is
+  honest about being not-yet-implemented — the schema includes a
+  `runningDetectionImplemented: false` field for forward compatibility.
+- **Complete schema parity for `import` and `export` MCP tools**:
+  - `export` gained: `largerThan`, `includeSizes`, `flat`, `concurrency`
+  - `import` gained: `quality`, `maxHeight`, `stripMetadata`, `title`,
+    `altText`, `post`, `concurrency`
+
+### Fixed
+- **`optimize` MCP tool maps to `--to`, not `--format`** (#50): the optimize
+  tool advertised a `format` input that mapped to a nonexistent `--format`
+  CLI flag, silently failing every format-conversion attempt via MCP.
+  Renamed the input field to `to` (matching the CLI flag and the convention
+  used by `convert`/`import`) and updated the argv builder. The schema
+  change is technically breaking — but any client that previously passed
+  `format` was already silently broken.
+
+### Notes
+- This release expands the MCP tool surface from 20 to 27 tools — adding
+  `update_metadata`, `delete`, `watch_status`, plus the previously-added
+  history/undo cluster. The agent-driven surface is now meaningfully more
+  complete: agents can edit, delete, find, parallelize, and check
+  automation state without dropping out of the loop.
+
 ## [1.15.2] - 2026-05-11
 
 ### Fixed
