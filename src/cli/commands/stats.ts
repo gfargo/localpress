@@ -13,6 +13,12 @@
  */
 
 import type { Command } from 'commander';
+import {
+  DEFAULT_MAX_SIZE_BYTES,
+  openSnapshotStore,
+  resolveHistoryConfig,
+} from '../../engine/history/index.ts';
+import type { HistoryStats } from '../../engine/history/index.ts';
 import type {
   FormatCount,
   LibraryOverview,
@@ -20,7 +26,7 @@ import type {
   SiteStats,
 } from '../../engine/state/db.ts';
 import { SiteDb } from '../../engine/state/db.ts';
-import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson } from '../utils/output.ts';
 
 export function registerStatsCommand(program: Command): void {
@@ -56,9 +62,24 @@ export function registerStatsCommand(program: Command): void {
         const overview = db.getLibraryOverview(site.name);
         const formats = db.getFormatBreakdown(site.name);
         const recent = db.getRecentOperations(site.name, 10);
+        const historyStore = openSnapshotStore(db, getConfigDir());
+        const history = historyStore.getStats(site.name);
+        const historyResolved = resolveHistoryConfig(config.history);
         db.close();
 
-        results.push({ site: site.name, url: site.url, stats, overview, formats, recent });
+        results.push({
+          site: site.name,
+          url: site.url,
+          stats,
+          overview,
+          formats,
+          recent,
+          history: {
+            ...history,
+            maxSizeBytes: historyResolved.maxSizeBytes ?? DEFAULT_MAX_SIZE_BYTES,
+            enabled: historyResolved.enabled,
+          },
+        });
       }
 
       if (parentOpts.json) {
@@ -73,6 +94,7 @@ export function registerStatsCommand(program: Command): void {
         overview?: LibraryOverview;
         formats?: FormatCount[];
         recent?: RecentOperation[];
+        history?: HistoryStats & { maxSizeBytes: number; enabled: boolean };
         error?: string;
       }>) {
         if (result.error || !result.stats) {
@@ -172,6 +194,39 @@ export function registerStatsCommand(program: Command): void {
               `    ${r.date}  ${r.operation.padEnd(12)} ${String(r.itemCount).padStart(4)} items${savedStr}`,
             );
           }
+          info('');
+        }
+
+        // Time-machine / history
+        if (result.history) {
+          const h = result.history;
+          info('  History (undo):');
+          if (!h.enabled) {
+            info('    Disabled (config.history.enabled = false)');
+            info('');
+            continue;
+          }
+          if (h.snapshotCount === 0) {
+            info('    No snapshots yet — destructive ops will start capturing automatically.');
+            info('');
+            continue;
+          }
+          const usedPct = ((h.totalBytes / h.maxSizeBytes) * 100).toFixed(1);
+          const oldest = h.oldestSnapshotAt
+            ? new Date(h.oldestSnapshotAt).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+              })
+            : '—';
+          info(
+            `    Snapshots:           ${h.snapshotCount.toLocaleString()} across ${h.sessionCount.toLocaleString()} session${h.sessionCount === 1 ? '' : 's'}`,
+          );
+          info(
+            `    Storage used:        ${formatBytes(h.totalBytes)} / ${formatBytes(h.maxSizeBytes)} (${usedPct}%)`,
+          );
+          info(`    Oldest snapshot:     ${oldest}`);
+          info(`    Retention policy:    size-capped, ${formatBytes(h.maxSizeBytes)}`);
           info('');
         }
       }

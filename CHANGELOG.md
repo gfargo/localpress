@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-05-11
+
+### Added
+- **Time-machine / undo**: every destructive op (`optimize`, `convert`, `resize`,
+  `remove-bg`, `caption`) now writes a snapshot of the pre-change state to
+  local storage before mutating WordPress. Snapshots are organized into
+  sessions (one per command invocation) and walkable per attachment — undoing
+  once reverts the most recent op, undoing again reverts the one before, all
+  the way back to the original upload. Idempotent skips don't create
+  snapshots, so re-running unchanged ops costs nothing.
+- **`localpress history` command**: browse the local snapshot archive.
+  Subcommands: list (default), `show <id>`, `prune`, `clear`. Filters by
+  session, attachment ID, or operation. Pass `-i` for an interactive Ink TUI
+  browser mirroring the `list -i` UX.
+- **`localpress undo` command**: restore from snapshot(s). Defaults to the
+  last session and runs as a dry-run unless `--apply` is passed (matches the
+  safe-by-default pattern from optimize/caption/etc.). Single-target modes
+  (`--snapshot <id>`, `--attachment <id>`) execute immediately. Restore uses
+  the existing replace-in-place path with REST/upload-new fallback.
+- **Schema v4**: new `sessions` and `snapshots` SQLite tables, idempotent
+  migration. Blob storage at `~/.config/localpress/snapshots/<site>/<session>/`.
+- **`stats` shows history block**: snapshot count, storage used vs cap,
+  oldest snapshot age, retention policy. `--json` shape extends accordingly.
+- **Config keys**: `history.enabled` (default true) and `history.maxSizeBytes`
+  (default 2 GiB per site). Set via `localpress config set history.maxSizeBytes <n>`.
+- **Default retention policy**: size-capped at 2 GiB per site. Auto-prune runs
+  at the end of every destructive op, dropping oldest snapshots first.
+- **4 new MCP tools**: `history_list`, `history_show`, `undo`, `history_prune`.
+  New `localpress://history` resource for read-only context.
+
+### Notes
+- This pairs naturally with v1.14.0's MCP server: agents can now self-correct.
+  If an agent runs the wrong bulk op, it (or the user) can call `undo` to
+  walk back to the previous state — no external backups needed.
+- Snapshots include file bytes for image-changing ops and just metadata
+  (alt text, title, caption) for `caption`. Caption snapshots are essentially
+  free (a few hundred bytes each).
+- Retention is per-site. Each configured site has its own 2 GB cap by default;
+  override per site via config.
+- Interactive commands (`edit`, `watch`) aren't snapshotted — `edit`'s
+  round-trip already preserves the original locally; `watch` continuously
+  syncs new files and snapshotting every change would be wasteful.
+
 ## [1.14.0] - 2026-05-11
 
 ### Added

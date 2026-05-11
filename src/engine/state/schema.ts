@@ -15,7 +15,7 @@
  * On startup, the DB layer compares this against the stored value and applies
  * pending migrations.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
  * Initial schema (v1). Idempotent — safe to run on every CLI invocation.
@@ -120,6 +120,51 @@ export const MIGRATIONS: Migration[] = [
 
       CREATE INDEX IF NOT EXISTS idx_watch_mappings_wp_id
         ON watch_mappings(site_name, wp_id);
+    `,
+  },
+  {
+    version: 4,
+    description: 'Add sessions + snapshots tables for the time-machine / undo feature',
+    up: `
+      CREATE TABLE IF NOT EXISTS sessions (
+        id            TEXT PRIMARY KEY,
+        site_name     TEXT NOT NULL,
+        command       TEXT NOT NULL,
+        params_json   TEXT,
+        started_at    INTEGER NOT NULL,
+        finished_at   INTEGER,
+        item_count    INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (site_name) REFERENCES sites(name) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_sessions_site_started
+        ON sessions(site_name, started_at DESC);
+
+      CREATE TABLE IF NOT EXISTS snapshots (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id    TEXT NOT NULL,
+        site_name     TEXT NOT NULL,
+        wp_id         INTEGER NOT NULL,
+        operation     TEXT NOT NULL,
+        kind          TEXT NOT NULL,                -- 'binary' | 'metadata-only'
+        blob_path     TEXT,                          -- nullable for metadata-only
+        blob_size     INTEGER NOT NULL DEFAULT 0,
+        before_meta   TEXT NOT NULL,                 -- JSON: filename, mimeType, altText, title, caption, width, height, sizeBytes
+        before_hash   TEXT,
+        created_at    INTEGER NOT NULL,
+        restored_at   INTEGER,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+        FOREIGN KEY (site_name) REFERENCES sites(name) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_snapshots_site_created
+        ON snapshots(site_name, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_snapshots_session
+        ON snapshots(session_id, created_at);
+
+      CREATE INDEX IF NOT EXISTS idx_snapshots_wp_id
+        ON snapshots(site_name, wp_id, created_at DESC);
     `,
   },
 ];

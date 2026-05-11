@@ -79,6 +79,15 @@ export class SiteDb {
     return new SiteDb(db);
   }
 
+  /**
+   * Escape hatch for subsystems that need direct SQLite access (e.g. the
+   * SnapshotStore, which owns its own tables but shares the per-site db).
+   * Prefer the typed helpers on SiteDb when one exists for your use case.
+   */
+  raw(): Database {
+    return this.db;
+  }
+
   // Site CRUD -----------------------------------------------------------------
 
   /** Ensure a site row exists (needed for foreign keys on attachments). */

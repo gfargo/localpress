@@ -71,9 +71,24 @@ describe('mcp server', () => {
       const uris = resources.map((r) => r.uri).sort();
       expect(uris).toEqual([
         'localpress://capabilities',
+        'localpress://history',
         'localpress://sites',
         'localpress://stats',
       ]);
+    } finally {
+      await close();
+    }
+  }, 30_000);
+
+  test('time-machine tools are registered', async () => {
+    const { client, close } = await connectClient();
+    try {
+      const { tools } = await client.listTools();
+      const names = tools.map((t) => t.name);
+      expect(names).toContain('history_list');
+      expect(names).toContain('history_show');
+      expect(names).toContain('history_prune');
+      expect(names).toContain('undo');
     } finally {
       await close();
     }

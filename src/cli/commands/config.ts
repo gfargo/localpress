@@ -285,6 +285,29 @@ const SETTABLE_KEYS: Record<
       c.defaults.concurrency = n;
     },
   },
+  'history.enabled': {
+    get: (c) => c.history?.enabled ?? true,
+    set: (c, v) => {
+      const normalized = v.toLowerCase();
+      if (!['true', 'false', '1', '0', 'yes', 'no'].includes(normalized)) {
+        throw new Error('history.enabled must be true or false');
+      }
+      const enabled = normalized === 'true' || normalized === '1' || normalized === 'yes';
+      if (!c.history) c.history = {};
+      c.history.enabled = enabled;
+    },
+  },
+  'history.maxSizeBytes': {
+    get: (c) => c.history?.maxSizeBytes,
+    set: (c, v) => {
+      const n = Number.parseInt(v, 10);
+      if (Number.isNaN(n) || n < 0) {
+        throw new Error('history.maxSizeBytes must be a non-negative integer (bytes)');
+      }
+      if (!c.history) c.history = {};
+      c.history.maxSizeBytes = n;
+    },
+  },
 };
 
 function getConfigValue(config: Config, key: string): unknown {

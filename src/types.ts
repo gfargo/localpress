@@ -81,6 +81,13 @@ export interface Config {
     /** Default concurrency for bulk ops. */
     concurrency?: number;
   };
+  /** Time-machine / undo retention settings. */
+  history?: {
+    /** Disable snapshotting entirely (default: enabled). */
+    enabled?: boolean;
+    /** Auto-prune when total snapshot storage exceeds this many bytes. Default: 2 GiB. */
+    maxSizeBytes?: number;
+  };
 }
 
 /**

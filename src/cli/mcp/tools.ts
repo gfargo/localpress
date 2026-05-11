@@ -694,4 +694,135 @@ export function registerTools(server: McpServer): void {
       return runCli(argv, a.site as string | undefined);
     },
   );
+
+  // ---------------------------------------------------------------------------
+  // Time-machine / undo
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    'history_list',
+    {
+      title: 'List recent sessions and snapshots',
+      description:
+        'Browse the local time-machine archive. Each destructive op creates a session containing per-attachment snapshots that can be restored.',
+      inputSchema: {
+        ...commonSiteArg,
+        session: z.string().optional().describe('Filter to a specific session ID'),
+        attachment: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Filter to a specific attachment ID'),
+        operation: z
+          .enum(['optimize', 'convert', 'resize', 'remove-bg', 'caption'])
+          .optional()
+          .describe('Filter by operation'),
+        limit: z.number().int().positive().max(500).optional(),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['history'];
+      opt(argv, '--session', a.session);
+      opt(argv, '--attachment', a.attachment);
+      opt(argv, '--operation', a.operation);
+      opt(argv, '--limit', a.limit);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
+    'history_show',
+    {
+      title: 'Show session or snapshot details',
+      description: 'Show details for a session ID (8-char prefix) or a snapshot ID (integer).',
+      inputSchema: {
+        ...commonSiteArg,
+        id: z
+          .string()
+          .describe('Session ID prefix (e.g. "a1b2c3d4") or snapshot ID as a string (e.g. "42")'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      return runCli(['history', 'show', a.id as string], a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
+    'undo',
+    {
+      title: 'Restore from a snapshot',
+      description:
+        'Restore from snapshot(s) — the time-machine reverse of optimize/convert/resize/remove-bg/caption. Defaults to the last session. Bulk undos dry-run unless apply=true; --snapshot and --attachment execute immediately.',
+      inputSchema: {
+        ...commonSiteArg,
+        sessionId: z
+          .string()
+          .optional()
+          .describe('Session ID (or 8-char prefix). Omit to undo the last session.'),
+        snapshot: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Restore one specific snapshot by ID'),
+        attachment: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Restore the most recent un-restored snapshot for this attachment'),
+        apply: z.boolean().optional().describe('Required for bulk (session-targeted) undos'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['undo'];
+      if (typeof a.sessionId === 'string') argv.push(a.sessionId);
+      opt(argv, '--snapshot', a.snapshot);
+      opt(argv, '--attachment', a.attachment);
+      flag(argv, '--apply', a.apply);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
+    'history_prune',
+    {
+      title: 'Apply retention policy',
+      description:
+        'Drop oldest snapshots per the active retention policy. Default policy reads from config (history.maxSizeBytes); pass overrides as args.',
+      inputSchema: {
+        ...commonSiteArg,
+        maxSize: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Override: total snapshot bytes cap'),
+        olderThan: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Drop snapshots older than this many days'),
+        maxSessions: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Keep only the N most recent sessions'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['history', 'prune'];
+      opt(argv, '--max-size', a.maxSize);
+      opt(argv, '--older-than', a.olderThan);
+      opt(argv, '--max-sessions', a.maxSessions);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
 }
