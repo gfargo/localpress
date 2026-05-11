@@ -50,8 +50,8 @@ function ids(argv: string[], value: unknown): void {
 }
 
 /** Run a CLI command and shape the response for MCP. */
-async function runCli(args: string[], site?: string) {
-  const result = await invokeCli({ args, site });
+async function runCli(args: string[], site?: string, concurrency?: number) {
+  const result = await invokeCli({ args, site, concurrency });
   if (!result.ok) {
     return {
       isError: true as const,
@@ -436,6 +436,12 @@ export function registerTools(server: McpServer): void {
         profile: z.string().optional().describe('Use a named profile from config'),
         stripMetadata: z.boolean().optional(),
         apply: z.boolean().optional().describe('Opt out of dry-run for bulk ops'),
+        concurrency: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Parallel workers for bulk ops (default: CPU count - 1)'),
       },
     },
     async (args) => {
@@ -452,7 +458,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--profile', a.profile);
       flag(argv, '--strip-metadata', a.stripMetadata);
       flag(argv, '--apply', a.apply);
-      return runCli(argv, a.site as string | undefined);
+      return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
 
@@ -468,6 +474,7 @@ export function registerTools(server: McpServer): void {
         to: z.enum(['webp', 'avif', 'jpeg', 'png']).describe('Target format'),
         quality: z.number().int().min(1).max(100).optional(),
         apply: z.boolean().optional(),
+        concurrency: z.number().int().positive().optional().describe('Parallel workers'),
       },
     },
     async (args) => {
@@ -478,7 +485,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--to', a.to);
       opt(argv, '--quality', a.quality);
       flag(argv, '--apply', a.apply);
-      return runCli(argv, a.site as string | undefined);
+      return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
 
@@ -495,6 +502,7 @@ export function registerTools(server: McpServer): void {
         maxWidth: z.number().int().positive().optional(),
         maxHeight: z.number().int().positive().optional(),
         apply: z.boolean().optional(),
+        concurrency: z.number().int().positive().optional().describe('Parallel workers'),
       },
     },
     async (args) => {
@@ -505,7 +513,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--max-width', a.maxWidth);
       opt(argv, '--max-height', a.maxHeight);
       flag(argv, '--apply', a.apply);
-      return runCli(argv, a.site as string | undefined);
+      return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
 
@@ -528,6 +536,7 @@ export function registerTools(server: McpServer): void {
         rembg: z.boolean().optional().describe('Use system Python rembg instead of built-in ONNX'),
         rembgModel: z.string().optional().describe('Model name when using --rembg'),
         apply: z.boolean().optional(),
+        concurrency: z.number().int().positive().optional().describe('Parallel workers'),
       },
     },
     async (args) => {
@@ -539,7 +548,7 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--rembg', a.rembg);
       opt(argv, '--rembg-model', a.rembgModel);
       flag(argv, '--apply', a.apply);
-      return runCli(argv, a.site as string | undefined);
+      return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
 
@@ -562,6 +571,12 @@ export function registerTools(server: McpServer): void {
         overwrite: z.boolean().optional(),
         listModels: z.boolean().optional().describe('List locally available vision models'),
         apply: z.boolean().optional(),
+        concurrency: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Parallel workers for bulk captioning'),
       },
     },
     async (args) => {
@@ -575,7 +590,7 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--overwrite', a.overwrite);
       flag(argv, '--list-models', a.listModels);
       flag(argv, '--apply', a.apply);
-      return runCli(argv, a.site as string | undefined);
+      return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
 
@@ -730,6 +745,7 @@ export function registerTools(server: McpServer): void {
         to: z.string().describe('Destination file (.zip) or directory'),
         type: z.string().optional(),
         since: z.string().optional(),
+        concurrency: z.number().int().positive().optional().describe('Parallel workers'),
       },
     },
     async (args) => {
@@ -741,7 +757,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--to', a.to);
       opt(argv, '--type', a.type);
       opt(argv, '--since', a.since);
-      return runCli(argv, a.site as string | undefined);
+      return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
 
@@ -761,6 +777,7 @@ export function registerTools(server: McpServer): void {
         maxWidth: z.number().int().positive().optional(),
         preserveIds: z.boolean().optional(),
         dryRun: z.boolean().optional(),
+        concurrency: z.number().int().positive().optional().describe('Parallel uploads'),
       },
     },
     async (args) => {
@@ -771,7 +788,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--max-width', a.maxWidth);
       flag(argv, '--preserve-ids', a.preserveIds);
       flag(argv, '--dry-run', a.dryRun);
-      return runCli(argv, a.site as string | undefined);
+      return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
 

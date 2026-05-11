@@ -29,6 +29,8 @@ export interface CliResult {
 export interface InvokeOptions {
   /** Override site for this call. Maps to `--site <name>`. */
   site?: string;
+  /** Parallel workers for bulk ops. Maps to `--concurrency <n>` at the top level. */
+  concurrency?: number;
   /** Subcommand and its args, e.g. `['list', '--unoptimized']`. */
   args: string[];
   /** Working directory for the child process. */
@@ -48,8 +50,14 @@ export async function invokeCli(opts: InvokeOptions): Promise<CliResult> {
   // Suppress info-level chatter; we only want the JSON record.
   if (!baseArgs.includes('--quiet')) baseArgs.push('--quiet');
 
-  // Inject --site if provided. CLI accepts --site at the top level.
-  const argsWithSite = opts.site ? ['--site', opts.site, ...baseArgs] : baseArgs;
+  // Inject top-level flags (--site, --concurrency) — these go BEFORE the
+  // subcommand in commander, not as subcommand options.
+  const topLevelFlags: string[] = [];
+  if (opts.site) topLevelFlags.push('--site', opts.site);
+  if (typeof opts.concurrency === 'number') {
+    topLevelFlags.push('--concurrency', String(opts.concurrency));
+  }
+  const argsWithSite = [...topLevelFlags, ...baseArgs];
 
   // In dev mode (`bun src/cli/index.ts mcp`), we need to re-invoke with the
   // script path as the first arg so bun knows what to run. In prod (compiled
