@@ -66,20 +66,28 @@ async function runCli(args: string[], site?: string) {
       ],
     };
   }
+
+  // Build text content — include stderr warnings/errors if present.
+  const textContent =
+    typeof result.stdout === 'string' ? result.stdout : JSON.stringify(result.stdout, null, 2);
+  const fullText = result.stderr
+    ? `${textContent}\n\n--- stderr ---\n${result.stderr}`
+    : textContent;
+
+  // structuredContent must be a record (object), not an array.
+  // Wrap arrays in { items: [...] } to satisfy the MCP protocol.
+  let structured: Record<string, unknown> | undefined;
+  if (typeof result.stdout === 'object' && result.stdout !== null) {
+    if (Array.isArray(result.stdout)) {
+      structured = { items: result.stdout };
+    } else {
+      structured = result.stdout as Record<string, unknown>;
+    }
+  }
+
   return {
-    content: [
-      {
-        type: 'text' as const,
-        text:
-          typeof result.stdout === 'string'
-            ? result.stdout
-            : JSON.stringify(result.stdout, null, 2),
-      },
-    ],
-    structuredContent:
-      typeof result.stdout === 'object' && result.stdout !== null
-        ? (result.stdout as Record<string, unknown>)
-        : undefined,
+    content: [{ type: 'text' as const, text: fullText }],
+    structuredContent: structured,
   };
 }
 
@@ -530,7 +538,7 @@ export function registerTools(server: McpServer): void {
     {
       title: 'Generate alt text (AI)',
       description:
-        'Generate alt text using a local Ollama vision model. Requires Ollama running at http://localhost:11434.',
+        'Generate alt text using a local Ollama vision model. Requires Ollama running at http://localhost:11434 with a vision model pulled (e.g. `ollama pull moondream` or `ollama pull llava-llama3`). Default model is moondream — pass model param to use a different one.',
       inputSchema: {
         ...commonSiteArg,
         ids: z.array(z.number().int().positive()).optional(),
