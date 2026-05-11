@@ -1,18 +1,19 @@
 # localpress
 
+[![GitHub Release](https://img.shields.io/github/v/release/gfargo/localpress)](https://github.com/gfargo/localpress/releases)
+[![Homebrew](https://img.shields.io/badge/homebrew-gfargo%2Flocalpress-orange)](https://github.com/gfargo/homebrew-localpress)
+[![License: MIT](https://img.shields.io/github/license/gfargo/localpress)](LICENSE)
+[![GitHub issues](https://img.shields.io/github/issues/gfargo/localpress)](https://github.com/gfargo/localpress/issues)
+[![GitHub pull requests](https://img.shields.io/github/issues-pr/gfargo/localpress)](https://github.com/gfargo/localpress/pulls)
+[![Last Commit](https://img.shields.io/github/last-commit/gfargo/localpress)](https://github.com/gfargo/localpress/tree/main)
+[![CI](https://img.shields.io/github/actions/workflow/status/gfargo/localpress/ci.yml?label=CI)](https://github.com/gfargo/localpress/actions/workflows/ci.yml)
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/gfargo?label=Sponsors)](https://github.com/sponsors/gfargo)
+
 > Your laptop, your library.
 
-Local-compute WordPress media optimization. `localpress` is a CLI tool that uses your laptop's CPU and GPU to compress images, remove backgrounds, convert formats, and round-trip with desktop editors — then syncs the results back to your remote WordPress site via the REST API. No recurring credits. No cloud SaaS. No plugin to install on the WP side.
+Local-compute WordPress media optimization CLI. Uses your laptop's CPU and GPU to compress images, remove backgrounds, convert formats, generate alt-text, and round-trip with desktop editors — then syncs results back to your remote WordPress site via the REST API. No recurring credits. No cloud SaaS. No plugin required.
 
-A companion **skill** (`skill/SKILL.md`) teaches AI agents how to drive the CLI and compose it with whatever WordPress MCP server you already have connected.
-
----
-
-## Why this exists
-
-The dominant WordPress image-optimization plugins (Smush, ShortPixel, Imagify, Optimole) charge for cloud compute that modern laptops can do for free. EWWW does free local processing but requires server-side binaries that many shared hosts block. Nobody currently combines (a) WordPress-awareness, (b) processing on the *user's* local machine, and (c) round-trip workflows with desktop editors.
-
-`localpress` fills that gap.
+**[Website](https://localpress.griffen.codes)** · **[Docs](https://localpress.griffen.codes/docs)** · **[Wiki](https://github.com/gfargo/localpress/wiki)** · **[Releases](https://github.com/gfargo/localpress/releases)**
 
 ---
 
@@ -21,29 +22,20 @@ The dominant WordPress image-optimization plugins (Smush, ShortPixel, Imagify, O
 ### Homebrew (macOS / Linux)
 
 ```bash
-brew tap gfargo/localpress
-brew install localpress
-```
-
-Or in one step:
-
-```bash
 brew install gfargo/localpress/localpress
 ```
 
 ### Pre-built binaries
 
-Download from the [releases page](https://github.com/gfargo/localpress/releases). Binaries are available for macOS (arm64/x64), Linux (arm64/x64), and Windows (x64).
+Download from the [releases page](https://github.com/gfargo/localpress/releases). Available for macOS (arm64/x64), Linux (arm64/x64), and Windows (x64).
 
 ### From source
 
-Requires [Bun](https://bun.sh) >= 1.1.0.
+Requires [Bun](https://bun.sh) >= 1.1.0:
 
 ```bash
-git clone https://github.com/gfargo/localpress.git
-cd localpress
-bun install
-bun run dev -- --help
+git clone https://github.com/gfargo/localpress.git && cd localpress
+bun install && bun run dev -- --help
 ```
 
 ---
@@ -51,191 +43,86 @@ bun run dev -- --help
 ## Quick start
 
 ```bash
-# Connect a WordPress site (interactive Ink wizard)
+# 1. Connect your WordPress site
 localpress init
 
-# See what backends and capabilities are available
-localpress doctor
+# 2. Audit your media library
+localpress audit
 
-# Check for relevant WP plugins and potential conflicts
-localpress doctor --plugins
-
-# List unoptimized images in the library
-localpress list --unoptimized
-
-# Optimize a few attachments (compression + WebP/AVIF)
-localpress optimize 123 124 125
-
-# Optimize everything unprocessed (dry-run by default, --apply to execute)
+# 3. Optimize everything
 localpress optimize --unoptimized --apply
 
-# Convert to WebP
-localpress convert 123 124 --to webp
-
-# Resize to max 1200px wide
-localpress resize 123 --max-width 1200
-
-# Remove background using local AI (downloads model on first use)
-localpress remove-bg 123
-
-# Preview background removal in the browser before applying
-localpress remove-bg 123 --preview
-
-# Preview optimization settings in the browser
-localpress optimize 123 --preview
-
-# Open in your editor, watch for saves, sync back automatically
-localpress edit 123
-
-# Find every place an attachment is used
-localpress references 1234
-
-# Generate alt text for all images missing it (requires Ollama)
-localpress caption --missing-alt
-
-# View cumulative processing stats
-localpress stats
-
-# Sort media by file size, largest first
-localpress list --sort size
-
-# Audit the library for issues (oversized, duplicates, broken refs, and more)
-localpress audit
+# 4. Generate alt text for accessibility
+localpress caption --missing-alt --apply
 ```
 
 ---
 
-## Commands
-
-| Command | Description |
-| --- | --- |
-| `init` | Connect a WordPress site (interactive Ink wizard) |
-| `sites` | List, add, switch, or remove configured sites |
-| `doctor` | Show backend availability, capability matrix, plugin detection, `--fix` |
-| `config` | Read/write config values, manage named optimization profiles |
-| `list` | List media with filters, sorting (`--sort size`/`name`/`id`), and interactive TUI |
-| `show <id>` | Show metadata and optimization history for an attachment |
-| `stats` | Cumulative processing stats from local SQLite — files touched, bytes saved, per-op breakdown |
-| `audit` | Find unoptimized, large, missing-alt, oversized, duplicate, and orphan media |
-| `optimize` | Compress and optionally convert media (the marquee command) |
-| `convert` | Convert between formats (webp, avif, jpeg, png) |
-| `resize` | Resize preserving aspect ratio, regenerate WP thumbnails |
-| `caption` | AI alt-text generation using a local [Ollama](https://ollama.com) vision model — no cloud API |
-| `remove-bg` | AI background removal using local ONNX Runtime + U2-Net |
-| `edit` | Open in desktop editor, watch for saves, sync back to WP |
-| `pull` | Download attachments to local directory |
-| `push` | Upload local files, with replace-in-place fallback |
-| `references` | Find where an attachment is used across posts and pages |
-
-All commands accept `--json` for machine-readable output (used by the skill for AI agent integration).
-
----
-
-## Audit checks
-
-The `audit` command runs multiple checks in a single pass:
-
-| Flag | What it finds |
-| --- | --- |
-| `--unoptimized` | Images not yet processed by localpress |
-| `--large` | Images larger than `--threshold` (default 1 MB) |
-| `--missing-alt` | Images without alt text |
-| `--display-size` | Images significantly larger than their largest registered WP thumbnail |
-| `--duplicates` | Perceptually identical or near-identical images (dHash via sharp) |
-| `--broken-refs` | Attachment URLs that return 404 or are unreachable |
-| `--orphans` | Files on disk with no DB record (requires WP-CLI) |
-
-Run with no flags to execute all REST-based checks at once.
-
----
-
-## Config & profiles
+## What it does
 
 ```bash
-# Set global defaults
-localpress config set defaults.quality 80
-localpress config set defaults.format webp
+# Compress images (sharp + jSquash WASM codecs)
+localpress optimize 123 124 125
+localpress optimize --unoptimized --profile hero --apply
 
-# Create a named optimization profile
-localpress config set-profile hero --quality 75 --format webp --max-width 1920 --description "Hero images"
-localpress config set-profile thumbnail --quality 85 --max-width 400 --strip-metadata
+# Convert formats (JPEG → WebP → AVIF)
+localpress convert 123 --to webp
 
-# List profiles
-localpress config list-profiles
+# Resize preserving aspect ratio
+localpress resize 123 --max-width 1920
 
-# Use a profile (coming soon in optimize --profile)
-localpress config get-profile hero
+# Remove backgrounds with local AI (5 ONNX models including BiRefNet)
+localpress remove-bg 123 --model birefnet-lite --preview
+
+# Generate alt text with local Ollama vision model
+localpress caption --missing-alt --language Spanish --apply
+
+# Open in GIMP/Photoshop/Preview, save, auto-sync back
+localpress edit 123
+
+# Export your entire library for migration
+localpress export --all --to ./backup.zip
+
+# Import with optimization on upload
+localpress import ./photos/ --optimize --to webp
+
+# Find where an attachment is used
+localpress references 1234
+
+# Set metadata directly
+localpress metadata 123 --alt "Product photo on white background"
+
+# Watch a directory and auto-push new images
+localpress watch ./assets/images --optimize
 ```
 
 ---
 
-## Global flags
+## 30 commands
 
-| Flag | Effect |
-| --- | --- |
-| `--site <name>` | Override the active site for this command |
-| `--json` | Machine-readable NDJSON output |
-| `--quiet` | Errors only; suppress info messages |
-| `--dry-run` | Show what would happen without executing |
-| `--apply` | Execute bulk operations (overrides default dry-run) |
-| `--strict` | Fail loudly when capability fallbacks would activate |
-| `--concurrency <n>` | Parallel workers for bulk ops (default: CPU count − 1) |
-| `--yes` | Skip confirmation prompts |
+| Category | Commands |
+|----------|----------|
+| **Setup** | `init`, `sites`, `doctor`, `config` |
+| **Discovery** | `list`, `show`, `stats`, `audit`, `references` |
+| **Processing** | `optimize`, `convert`, `resize`, `remove-bg`, `caption`, `metadata` |
+| **Migration** | `export`, `import` |
+| **Automation** | `watch` |
+| **Server-side** | `regenerate` |
+| **Round-trip** | `edit` |
+| **Low-level** | `pull`, `push`, `delete` |
+| **Time-machine** | `history`, `undo` |
+| **Maintenance** | `update`, `completions` |
 
----
-
-## Architecture
-
-```text
-┌──────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  Skill (md)  │───▶│  localpress CLI  │───▶│  Remote WP site │
-│  for agents  │    │  (TS + Bun)      │    │  (REST / SSH)   │
-└──────────────┘    └──────────────────┘    └─────────────────┘
-                            │
-                    ┌───────┴────────┐
-                    │  Engine layer  │
-                    │  sharp/jsquash │
-                    │  ONNX Runtime  │
-                    │  Ollama vision │
-                    │  SQLite state  │
-                    └───────┬────────┘
-                    ┌───────┴────────┐
-                    │ Adapter layer  │
-                    │ REST | WP-CLI  │
-                    └────────────────┘
-```
-
-The CLI talks to WordPress through a **backend adapter** that auto-detects what's available — REST API always, WP-CLI over SSH if configured. The capability resolver picks the best backend per operation.
-
-**Two encoding backends:** sharp (default, native libvips) or jSquash WASM codecs (`--encoder jsquash`) for OxiPNG-level PNG compression and cross-platform consistency.
-
-**AI background removal:** ONNX Runtime + U2-Net models (Apache-2.0), or system Python rembg via `--rembg` flag.
-
-**AI alt-text generation:** `caption` command drives a local [Ollama](https://ollama.com) vision model — no cloud API, no credits, no data leaving your machine. Recommended model: `moondream` (~1.7 GB). See the [Ollama Setup guide](https://localpress.griffen.codes/docs/ollama-setup).
+All commands accept `--json` for machine-readable output and `--help` for usage details.
 
 ---
 
-## Key behaviors
+## AI agent integration (MCP)
 
-**Safe by default for bulk ops.** `optimize --all` and `optimize --unoptimized` dry-run unless `--apply` is passed. Explicit IDs execute immediately.
-
-**Idempotent.** Re-running optimize on an already-processed attachment is a no-op if the source hasn't changed (SHA-256 hash comparison). Safe to run repeatedly.
-
-**Replace-in-place fallback.** Tries WP-CLI first (if SSH is configured), falls back to new attachment + references report. `--strict` fails instead of falling back.
-
-**Background removal models.** Downloads on first use and caches locally. Available models: `u2net` (~176MB, best quality), `u2netp` (~4.7MB, fast), `silueta` (~44MB, balanced). Use `--rembg` to shell out to system Python rembg instead.
-
-**Always undoable.** Every destructive op writes a snapshot of the pre-change state to local storage. Walk it back with `localpress undo` (defaults to the last session, dry-run unless `--apply`), browse with `localpress history -i`, manage retention with `localpress history prune`. Default cap: 2 GB per site. Agents driving via MCP get `undo` as a first-class tool.
-
----
-
-## AI agent integration
-
-Two ways to drive localpress from an agent:
-
-**1. MCP server (recommended)** — `localpress mcp` is a stdio Model Context Protocol server that exposes 20 typed tools and 3 resources. Add it to any MCP host (Claude Desktop, Cursor, Claude Code, VS Code) with a one-line config:
+localpress ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server with 32 typed tools. Add it to any MCP host:
 
 ```jsonc
+// Claude Desktop, Cursor, VS Code, Kiro, etc.
 {
   "mcpServers": {
     "localpress": { "command": "localpress", "args": ["mcp"] }
@@ -243,11 +130,71 @@ Two ways to drive localpress from an agent:
 }
 ```
 
-The agent gets typed schemas for every operation, structured results, and capability discovery via the `localpress://capabilities` resource. See [`.wiki/MCP-Setup.md`](.wiki/MCP-Setup.md) for full setup instructions per host.
+The agent gets typed schemas for every operation — optimize, caption, remove-bg, export/import, delete, undo, and more. Structured JSON results, capability discovery via resources, and concurrency control on all bulk operations.
 
-**2. Markdown skill** — `skill/SKILL.md` is a complete instruction sheet for agents that prefer shelling out to the CLI directly. Works in any agent that can run bash.
+A markdown **skill** (`skill/SKILL.md`) is also available for agents that prefer shelling out to the CLI directly.
 
-Always pass `--json` when running the CLI from an agent — the human-readable output is not designed for parsing.
+---
+
+## Key behaviors
+
+- **Safe by default** — bulk ops (`--all`, `--unoptimized`) dry-run unless `--apply` is passed. Explicit IDs execute immediately.
+- **Idempotent** — re-running optimize on an already-processed attachment is a no-op (SHA-256 hash comparison).
+- **Always undoable** — every destructive op snapshots the original. Restore with `localpress undo`.
+- **Named profiles** — `localpress config set-profile hero --quality 75 --format webp --max-width 1920` then `optimize --profile hero`.
+- **Replace-in-place** — tries WP-CLI over SSH first, falls back gracefully. `--strict` fails instead of falling back.
+- **Two encoders** — sharp (default, native libvips) or jSquash WASM codecs (`--encoder jsquash`) for OxiPNG-level PNG compression.
+- **Multilingual captions** — `caption --language French` generates alt text in any language the Ollama model supports.
+
+---
+
+## Architecture
+
+```text
+┌──────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  MCP Server (32  │───▶│  localpress CLI  │───▶│  Remote WP site │
+│  tools) / Skill  │    │  (TS + Bun)      │    │  (REST / SSH)   │
+└──────────────────┘    └──────────────────┘    └─────────────────┘
+                                │
+                        ┌───────┴────────┐
+                        │  Engine layer  │
+                        │  sharp/jsquash │
+                        │  ONNX Runtime  │
+                        │  Ollama vision │
+                        │  SQLite state  │
+                        └───────┬────────┘
+                        ┌───────┴────────┐
+                        │ Adapter layer  │
+                        │ REST | WP-CLI  │
+                        └────────────────┘
+```
+
+---
+
+## Background removal models
+
+| Model | Size | Quality | License |
+|-------|------|---------|---------|
+| `birefnet-lite` | ~224 MB | State-of-the-art | MIT |
+| `isnet-general-use` | ~176 MB | Great edges | Apache-2.0 |
+| `u2net` (default) | ~176 MB | General purpose | Apache-2.0 |
+| `silueta` | ~44 MB | Balanced | MIT |
+| `u2netp` | ~4.7 MB | Fast | Apache-2.0 |
+
+Models download on first use. Use `--preview` to adjust in the browser before applying. Or pass `--rembg` to use system Python rembg instead.
+
+---
+
+## Alt-text generation
+
+Requires [Ollama](https://ollama.com) running locally with a vision model:
+
+```bash
+ollama pull moondream    # ~1.7 GB, fast
+localpress caption --missing-alt --apply
+```
+
+No cloud API. No credits. No data leaves your machine. Supports `--language` for non-English output and `--model` to choose between installed vision models.
 
 ---
 
@@ -255,28 +202,23 @@ Always pass `--json` when running the CLI from an agent — the human-readable o
 
 ```bash
 bun install              # install deps
-git config core.hooksPath .githooks  # enable pre-commit lint + typecheck
-bun run dev -- --help    # run the CLI from source
+bun run dev -- --help    # run CLI from source
 bun run typecheck        # tsc --noEmit
 bun run lint             # biome check
-bun test                 # run all tests (36 unit + 9 integration)
-bun test test/unit/      # unit tests only
-bun run build            # build tarball at ./dist/localpress-<platform>.tar.gz
+bun test                 # 167 unit tests + integration
 bun run build:all        # build tarballs for all 5 platforms
 ```
 
-Integration tests require Docker. They spin up WordPress 6.7 + MySQL 8.0 via `test/integration/docker-compose.yml` and are skipped automatically when the environment variables aren't set.
-
-To run CI workflows locally before pushing, install [`act`](https://github.com/nektos/act) (`brew install act`) and run `act push -j integration-test`.
-
 ---
 
-## Docs
+## Links
 
-- [`docs/localpress-competitive-brief.md`](docs/localpress-competitive-brief.md) — market analysis and competitive positioning
-- [`docs/roadmap-ideas.md`](docs/roadmap-ideas.md) — extension brainstorm with 40+ ideas
-- [`docs/homebrew-tap.md`](docs/homebrew-tap.md) — Homebrew tap setup and release checklist
-- [`CLAUDE.md`](CLAUDE.md) — implementation status, locked decisions, and conventions for contributors
+- [Website & docs](https://localpress.griffen.codes)
+- [Wiki](https://github.com/gfargo/localpress/wiki)
+- [Competitive brief](docs/localpress-competitive-brief.md)
+- [Roadmap ideas](docs/roadmap-ideas.md)
+- [Homebrew tap setup](docs/homebrew-tap.md)
+- [CLAUDE.md](CLAUDE.md) — implementation status and conventions
 
 ---
 
