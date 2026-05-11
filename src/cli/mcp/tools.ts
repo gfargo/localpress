@@ -952,4 +952,24 @@ export function registerTools(server: McpServer): void {
       return runCli(argv, a.site as string | undefined);
     },
   );
+
+  // ---------------------------------------------------------------------------
+  // Watch automation (read-only status; start/stop intentionally not exposed)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    'watch_status',
+    {
+      title: 'Watch automation status',
+      description:
+        "Report which directories have been watched on the active site (file→attachment mappings) and last activity timestamps. NOTE: does not currently detect a live watcher process — only historical mapping data. Useful for agents to check 'is automation already wired up here?' before starting their own ops.",
+      inputSchema: {
+        ...commonSiteArg,
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      return runCli(['watch-status'], a.site as string | undefined);
+    },
+  );
 }

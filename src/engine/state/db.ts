@@ -437,6 +437,34 @@ export class SiteDb {
 
     return rows.map(mapWatchMappingRow);
   }
+
+  /**
+   * Summary of every directory that has ever been watched on a site.
+   * Returns one row per unique watch_dir with file count + most-recent
+   * activity timestamp. Used by `watch-status` to report orchestration state.
+   */
+  summarizeWatchDirectories(
+    siteName: string,
+  ): Array<{ watchDir: string; fileCount: number; lastActivityAt: number }> {
+    const rows = this.db
+      .query(
+        `SELECT watch_dir, COUNT(*) AS file_count, MAX(updated_at) AS last_activity
+         FROM watch_mappings
+         WHERE site_name = ?
+         GROUP BY watch_dir
+         ORDER BY last_activity DESC`,
+      )
+      .all(siteName) as Array<{
+      watch_dir: string;
+      file_count: number;
+      last_activity: number;
+    }>;
+    return rows.map((r) => ({
+      watchDir: r.watch_dir,
+      fileCount: r.file_count,
+      lastActivityAt: r.last_activity,
+    }));
+  }
 }
 
 // -- Internal row types and mappers -------------------------------------------
