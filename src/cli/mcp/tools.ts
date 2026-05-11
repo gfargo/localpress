@@ -595,6 +595,76 @@ export function registerTools(server: McpServer): void {
   );
 
   server.registerTool(
+    'generate_title',
+    {
+      title: 'Generate WP title (AI)',
+      description:
+        'Generate a short 3-7 word noun-phrase title for one or more attachments and write it to the WP post_title field. Companion to caption (alt text) and describe (long description). Bulk via --missing-title (auto-detects machine-generated names like Screenshot-…, IMG_…, DSC-…) or --all. Dry-run unless apply=true.',
+      inputSchema: {
+        ...commonSiteArg,
+        ids: z.array(z.number().int().positive()).optional(),
+        missingTitle: z
+          .boolean()
+          .optional()
+          .describe('Only items whose title looks auto-generated (Screenshot-…, IMG_…, etc.)'),
+        all: z.boolean().optional(),
+        model: z.string().optional(),
+        language: z.string().optional(),
+        overwrite: z.boolean().optional(),
+        apply: z.boolean().optional(),
+        concurrency: z.number().int().positive().optional(),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['title'];
+      ids(argv, a.ids);
+      flag(argv, '--missing-title', a.missingTitle);
+      flag(argv, '--all', a.all);
+      opt(argv, '--model', a.model);
+      opt(argv, '--language', a.language);
+      flag(argv, '--overwrite', a.overwrite);
+      flag(argv, '--apply', a.apply);
+      return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
+    },
+  );
+
+  server.registerTool(
+    'generate_description',
+    {
+      title: 'Generate WP description (AI)',
+      description:
+        'Generate a 2-3 sentence description for one or more attachments and write it to the WP description field. Useful for gallery captions and attachment-page SEO. Bulk via --missing-description or --all. Dry-run unless apply=true.',
+      inputSchema: {
+        ...commonSiteArg,
+        ids: z.array(z.number().int().positive()).optional(),
+        missingDescription: z
+          .boolean()
+          .optional()
+          .describe('Only items currently lacking a description'),
+        all: z.boolean().optional(),
+        model: z.string().optional(),
+        language: z.string().optional(),
+        overwrite: z.boolean().optional(),
+        apply: z.boolean().optional(),
+        concurrency: z.number().int().positive().optional(),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['describe'];
+      ids(argv, a.ids);
+      flag(argv, '--missing-description', a.missingDescription);
+      flag(argv, '--all', a.all);
+      opt(argv, '--model', a.model);
+      opt(argv, '--language', a.language);
+      flag(argv, '--overwrite', a.overwrite);
+      flag(argv, '--apply', a.apply);
+      return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
+    },
+  );
+
+  server.registerTool(
     'delete',
     {
       title: 'Delete attachments',
