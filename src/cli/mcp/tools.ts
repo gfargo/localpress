@@ -346,7 +346,7 @@ export function registerTools(server: McpServer): void {
     {
       title: 'Audit the media library',
       description:
-        'Find issues: unoptimized, oversized, missing alt text, oversized for display, duplicates, broken references, orphans.',
+        'Find issues: unoptimized, oversized, missing alt text, oversized for display, duplicates, broken references, orphans. Optional Ollama vision checks: quality (blurry/low-contrast) and ocrText (substring search inside images).',
       inputSchema: {
         ...commonSiteArg,
         unoptimized: z.boolean().optional(),
@@ -356,6 +356,16 @@ export function registerTools(server: McpServer): void {
         duplicates: z.boolean().optional(),
         brokenRefs: z.boolean().optional(),
         orphans: z.boolean().optional(),
+        quality: z
+          .boolean()
+          .optional()
+          .describe(
+            'Vision-based quality check (blurry/low-contrast); requires Ollama; slow (~10s/image)',
+          ),
+        ocrText: z
+          .string()
+          .optional()
+          .describe('Find images that visually contain this text (Ollama vision; slow)'),
         threshold: z
           .number()
           .int()
@@ -374,6 +384,8 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--duplicates', a.duplicates);
       flag(argv, '--broken-refs', a.brokenRefs);
       flag(argv, '--orphans', a.orphans);
+      flag(argv, '--quality', a.quality);
+      opt(argv, '--ocr-text', a.ocrText);
       opt(argv, '--threshold', a.threshold);
       return runCli(argv, a.site as string | undefined);
     },

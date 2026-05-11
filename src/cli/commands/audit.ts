@@ -35,7 +35,9 @@ interface AuditFinding {
     | 'missing-file'
     | 'display-size'
     | 'duplicate'
-    | 'broken-ref';
+    | 'broken-ref'
+    | 'quality'
+    | 'ocr-match';
   attachmentId: number;
   filename: string;
   detail: string;
@@ -65,6 +67,14 @@ export function registerAuditCommand(program: Command): void {
     )
     .option('--duplicates', 'flag perceptually identical or near-identical images (requires sharp)')
     .option('--broken-refs', 'flag attachment URLs referenced in post content that return 404')
+    .option(
+      '--quality',
+      'flag blurry / low-contrast / poorly-composed images via Ollama vision (slow; ~10s per image)',
+    )
+    .option(
+      '--ocr-text <term>',
+      'flag images that visually contain the supplied text (case-insensitive, via Ollama vision; slow)',
+    )
     .action(async (options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -81,7 +91,12 @@ export function registerAuditCommand(program: Command): void {
         !options.orphans &&
         !options.displaySize &&
         !options.duplicates &&
-        !options.brokenRefs;
+        !options.brokenRefs &&
+        !options.quality &&
+        !options.ocrText;
+      // Note: --quality and --ocrText are NOT included in runAll behavior —
+      // they require Ollama and are slow (~10s/image). They must be opted into
+      // explicitly.
 
       const findings: AuditFinding[] = [];
       const threshold = options.threshold ?? DEFAULT_THRESHOLD;
@@ -228,6 +243,24 @@ export function registerAuditCommand(program: Command): void {
         findings.push(...brokenFindings);
       }
 
+      // -- Vision: quality check (slow, per-item Ollama call) ------------------
+      if (options.quality) {
+        const images = allItems.filter((m) => m.mimeType.startsWith('image/'));
+        info(`Vision quality check on ${images.length} image(s) — slow (~10s/image)...`);
+        const effectiveModel: string = config.defaults?.captionModel ?? 'moondream';
+        const qualityFindings = await detectQualityIssues(images, effectiveModel);
+        findings.push(...qualityFindings);
+      }
+
+      // -- Vision: OCR text search (slow, per-item Ollama call) ----------------
+      if (options.ocrText) {
+        const images = allItems.filter((m) => m.mimeType.startsWith('image/'));
+        info(`Vision OCR search for "${options.ocrText}" on ${images.length} image(s) — slow...`);
+        const effectiveModel: string = config.defaults?.captionModel ?? 'moondream';
+        const ocrFindings = await detectOcrMatches(images, options.ocrText, effectiveModel);
+        findings.push(...ocrFindings);
+      }
+
       // -- Output --------------------------------------------------------------
       if (parentOpts.json) {
         printJson({
@@ -243,6 +276,8 @@ export function registerAuditCommand(program: Command): void {
             brokenRefs: findings.filter((f) => f.type === 'broken-ref').length,
             orphan: findings.filter((f) => f.type === 'orphan').length,
             missingFile: findings.filter((f) => f.type === 'missing-file').length,
+            quality: findings.filter((f) => f.type === 'quality').length,
+            ocrMatch: findings.filter((f) => f.type === 'ocr-match').length,
           },
         });
       } else {
@@ -280,6 +315,14 @@ export function registerAuditCommand(program: Command): void {
           missingFile: {
             label: 'Missing files (DB record, no file)',
             items: findings.filter((f) => f.type === 'missing-file'),
+          },
+          quality: {
+            label: 'Quality issues (blurry, low-contrast, etc.)',
+            items: findings.filter((f) => f.type === 'quality'),
+          },
+          ocrMatch: {
+            label: 'OCR matches',
+            items: findings.filter((f) => f.type === 'ocr-match'),
           },
         };
 
@@ -459,6 +502,90 @@ async function detectBrokenRefs(items: MediaItem[], _siteUrl: string): Promise<A
     );
   }
 
+  return findings;
+}
+
+// -- Vision audits -----------------------------------------------------------
+
+async function detectQualityIssues(images: MediaItem[], model: string): Promise<AuditFinding[]> {
+  const { generateCaption, isOllamaAvailable } = await import('../../engine/caption/ollama.ts');
+  if (!(await isOllamaAvailable())) {
+    warn('Ollama is not running — skipping --quality check.');
+    return [];
+  }
+
+  const findings: AuditFinding[] = [];
+  for (const item of images) {
+    try {
+      const response = await fetch(item.url);
+      if (!response.ok) continue;
+      const buf = Buffer.from(await response.arrayBuffer());
+
+      // Ask the model for a yes/no quality assessment with a one-line reason.
+      const result = await generateCaption(buf, {
+        kind: 'alt', // reuse alt pipeline for clean post-processing
+        model,
+        prompt:
+          'Is this image significantly blurry, low-contrast, badly exposed, or poorly composed? ' +
+          'Answer with exactly one word: "YES" or "NO" followed by a brief reason. ' +
+          'Example: "NO sharp and well-lit" or "YES motion blur on subject". Be strict — only flag clearly problematic images.',
+      });
+
+      const text = result.caption.trim();
+      if (/^yes\b/i.test(text)) {
+        findings.push({
+          type: 'quality',
+          attachmentId: item.id,
+          filename: item.filename,
+          detail: text.replace(/^yes[,:\s]*/i, '').trim() || 'flagged by quality check',
+        });
+      }
+    } catch {
+      // Skip items we can't fetch or process.
+    }
+  }
+  return findings;
+}
+
+async function detectOcrMatches(
+  images: MediaItem[],
+  searchTerm: string,
+  model: string,
+): Promise<AuditFinding[]> {
+  const { generateCaption, isOllamaAvailable } = await import('../../engine/caption/ollama.ts');
+  if (!(await isOllamaAvailable())) {
+    warn('Ollama is not running — skipping --ocr-text check.');
+    return [];
+  }
+
+  const findings: AuditFinding[] = [];
+  const safeTerm = JSON.stringify(searchTerm); // safely embed in prompt
+
+  for (const item of images) {
+    try {
+      const response = await fetch(item.url);
+      if (!response.ok) continue;
+      const buf = Buffer.from(await response.arrayBuffer());
+
+      const result = await generateCaption(buf, {
+        kind: 'alt',
+        model,
+        prompt: `Does this image visually contain the text ${safeTerm} (case-insensitive, partial match OK)? Answer with exactly one word: "YES" or "NO" followed by a brief note about what text is visible. Example: "NO no text visible" or "YES title bar reads exactly that". Be strict — only say YES if the text actually appears.`,
+      });
+
+      const text = result.caption.trim();
+      if (/^yes\b/i.test(text)) {
+        findings.push({
+          type: 'ocr-match',
+          attachmentId: item.id,
+          filename: item.filename,
+          detail: text.replace(/^yes[,:\s]*/i, '').trim() || `contains "${searchTerm}"`,
+        });
+      }
+    } catch {
+      // Skip items we can't fetch or process.
+    }
+  }
   return findings;
 }
 
