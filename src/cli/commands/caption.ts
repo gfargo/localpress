@@ -102,6 +102,47 @@ export function registerCaptionCommand(program: Command): void {
         process.exit(2);
       }
 
+      // Pre-flight: verify the resolved model is actually installed locally.
+      // Catches typos and "default model not pulled" cases BEFORE a 300-item
+      // bulk run fails the same way on every item.
+      try {
+        const installed = await listOllamaModels(options.ollamaUrl);
+        const installedNames = installed.map((m) => m.name);
+        const hasMatch = installedNames.some(
+          (n) =>
+            n === effectiveModel ||
+            n === `${effectiveModel}:latest` ||
+            n.startsWith(`${effectiveModel}:`),
+        );
+
+        if (!hasMatch) {
+          const visionModels = installedNames.filter((n) =>
+            /moondream|llava|bakllava|llama.*vision|qwen.*vl|minicpm|phi.*vision/i.test(n),
+          );
+
+          const visionList =
+            visionModels.length > 0
+              ? `\n\n  Your locally-available vision models:\n    ${visionModels.join('\n    ')}`
+              : '\n\n  No vision models installed locally.';
+
+          const remediation =
+            visionModels.length > 0
+              ? `  Or use one you already have:\n    localpress caption --model ${visionModels[0]} ...\n\n  Or set it as the project default:\n    localpress config set defaults.captionModel ${visionModels[0]}\n`
+              : '  Recommended starter model:\n    ollama pull moondream\n';
+
+          error(
+            `Ollama model '${effectiveModel}' is not available on ${options.ollamaUrl}.${visionList}\n\n  Pull the requested model:\n    ollama pull ${effectiveModel}\n\n${remediation}`,
+          );
+          process.exit(2);
+        }
+      } catch (preflightErr) {
+        // If the pre-flight check itself fails (e.g. network blip after the
+        // isOllamaAvailable probe), don't block the run — fall through to the
+        // bulk loop and let per-item failures handle it.
+        const m = preflightErr instanceof Error ? preflightErr.message : String(preflightErr);
+        warn(`Could not pre-flight check Ollama models (${m}); continuing anyway.`);
+      }
+
       // Resolve which attachment IDs to process.
       let ids: number[];
 
