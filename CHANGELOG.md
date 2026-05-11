@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-05-11
+
+### Added
+- **`localpress mcp` command**: first-party Model Context Protocol server.
+  Spawned by an MCP host (Claude Desktop, Cursor, Claude Code, etc.) as a
+  stdio child process, exposing 20 tools and 3 resources for agentic workflows.
+  Same binary, new entrypoint — no daemon, no hosting, no separate config.
+- **20 MCP tools** covering setup (`sites_*`, `doctor`, `config_*`), discovery
+  (`list`, `show`, `stats`, `audit`, `references`), processing (`optimize`,
+  `convert`, `resize`, `remove_bg`, `caption`), and library ops (`pull`, `push`,
+  `regenerate`, `export`, `import`). Every tool accepts an optional `site` arg;
+  when omitted, the active site from config is used.
+- **3 MCP resources** for read-only context: `localpress://sites`,
+  `localpress://stats`, `localpress://capabilities`.
+- **`@modelcontextprotocol/sdk` dep** (v1.29) — lazy-loaded so CLI startup time
+  is unaffected when not running as an MCP server.
+- **Round-trip MCP tests** (`test/unit/mcp.test.ts`): boots the server as a
+  real subprocess via the SDK's client, asserts on the protocol-level
+  responses (listTools, listResources, callTool, input schemas).
+
+### Notes
+- Bulk-op tools (`optimize`, `convert`, `resize`, `caption`, etc.) preserve
+  the CLI's safe-by-default behavior: passing `unoptimized: true` or
+  `all: true` dry-runs unless `apply: true` is also set.
+- Interactive commands (`edit`, `watch`, `init`, `update`, `completions`) are
+  intentionally not exposed — they require TTY and aren't meaningful in an
+  agentic context. Use the CLI directly for those.
+- Tools dispatch by spawning the same `localpress` binary recursively with
+  `--json --quiet`. This reuses the CLI's stable JSON contract, so every
+  existing CLI feature appears in the MCP server with zero per-tool engine
+  code. Hot paths can migrate to in-process dispatch later without breaking
+  schemas.
+
 ## [1.13.1] - 2026-05-10
 
 ### Added
