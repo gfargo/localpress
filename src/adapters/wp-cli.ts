@@ -105,6 +105,11 @@ export class WpCliAdapter implements WpBackend {
     if (filters.postId) {
       args.push(`--post_parent=${filters.postId}`);
     }
+    if (filters.search) {
+      // WP-CLI passes --s through to WP_Query, which searches post_title +
+      // post_content. Shell-escape since this goes through an SSH command.
+      args.push(`--s=${JSON.stringify(filters.search)}`);
+    }
     if (filters.perPage) {
       args.push(`--posts_per_page=${filters.perPage}`);
     }

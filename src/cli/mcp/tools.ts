@@ -265,7 +265,7 @@ export function registerTools(server: McpServer): void {
     {
       title: 'List media items',
       description:
-        "List media in the active site's library. Filters compose: unoptimized, type, size, post association, date range.",
+        "List media in the active site's library. Filters compose: unoptimized, type, size, post association, date range, free-text search.",
       inputSchema: {
         ...commonSiteArg,
         unoptimized: z.boolean().optional().describe("Only items localpress hasn't processed yet"),
@@ -278,6 +278,10 @@ export function registerTools(server: McpServer): void {
           .describe('Attachments associated with a specific post'),
         since: z.string().optional().describe('ISO date — only items uploaded since this date'),
         largerThan: z.number().int().positive().optional().describe('Minimum size in bytes'),
+        search: z
+          .string()
+          .optional()
+          .describe('Free-text search across filename and title (WP REST native `?search=`)'),
         limit: z.number().int().positive().max(100).optional().describe('Items per page'),
         page: z.number().int().positive().optional().describe('Page number'),
         sort: z.enum(['date', 'name', 'size', 'id']).optional(),
@@ -292,6 +296,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--post', a.post);
       opt(argv, '--since', a.since);
       opt(argv, '--larger-than', a.largerThan);
+      opt(argv, '--search', a.search);
       opt(argv, '--limit', a.limit);
       opt(argv, '--page', a.page);
       opt(argv, '--sort', a.sort);
