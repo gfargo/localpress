@@ -174,6 +174,22 @@ export function registerCaptionCommand(program: Command): void {
         try {
           const item = await getAdapter.getMedia(id);
 
+          // Ensure the attachment row exists before any recordProcessing call
+          // (processing_history has a FK on attachments). This runs
+          // unconditionally so failures during download / Ollama don't hit a
+          // FK violation in the catch block. Mirrors the pattern in remove-bg.
+          db.upsertAttachment({
+            siteName: site.name,
+            wpId: item.id,
+            sourceUrl: item.url,
+            sourceHash: null,
+            sizeBytes: item.sizeBytes ?? null,
+            width: item.width ?? null,
+            height: item.height ?? null,
+            mimeType: item.mimeType,
+            lastSeenAt: Date.now(),
+          });
+
           if (!item.mimeType.startsWith('image/')) {
             warn(`  ⚠ #${id} (${item.filename}) is not an image — skipping.`);
             continue;
@@ -278,21 +294,29 @@ export function registerCaptionCommand(program: Command): void {
           error(`    ✗ #${id}: ${message}`);
           failures++;
 
-          db.recordProcessing({
-            siteName: site.name,
-            wpId: id,
-            operation: 'caption',
-            paramsJson: JSON.stringify({ model: options.model }),
-            sourceHash: null,
-            resultHash: null,
-            bytesBefore: null,
-            bytesAfter: null,
-            resultWpId: null,
-            ranAt: Date.now(),
-            durationMs: Date.now() - startTime,
-            status: 'failure',
-            errorMessage: message,
-          });
+          // Wrap in try/catch — if the failure happened before the
+          // unconditional upsertAttachment (e.g. getMedia itself threw), the
+          // FK on processing_history would otherwise crash the whole loop.
+          // We'd rather lose the failure breadcrumb than abort the bulk run.
+          try {
+            db.recordProcessing({
+              siteName: site.name,
+              wpId: id,
+              operation: 'caption',
+              paramsJson: JSON.stringify({ model: options.model }),
+              sourceHash: null,
+              resultHash: null,
+              bytesBefore: null,
+              bytesAfter: null,
+              resultWpId: null,
+              ranAt: Date.now(),
+              durationMs: Date.now() - startTime,
+              status: 'failure',
+              errorMessage: message,
+            });
+          } catch {
+            // Best-effort breadcrumb; don't let it abort the loop.
+          }
         }
       }
 
