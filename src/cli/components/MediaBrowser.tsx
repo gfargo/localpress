@@ -68,6 +68,8 @@ interface Props {
   processedIds: Set<number>;
   sortBy?: SortField;
   sortOrder?: SortOrder;
+  /** Active site name — shown in the header so the user knows which WP site they're browsing. */
+  siteName?: string;
   onAction: (action: MediaBrowserAction) => void;
   onPageChange: (page: number) => Promise<PagedResult<MediaItem>>;
   onFetchItem?: (id: number) => Promise<MediaItem>;
@@ -129,6 +131,7 @@ export function MediaBrowser({
   processedIds,
   sortBy,
   sortOrder,
+  siteName,
   onAction,
   onPageChange,
   onFetchItem,
@@ -1153,6 +1156,7 @@ export function MediaBrowser({
           <Text bold color="green">
             localPress
           </Text>
+          {siteName && <Text color="cyan">· {siteName}</Text>}
           <Text dimColor>— media library</Text>
           {sortBy && sortBy !== 'date' && (
             <Text dimColor>
