@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.1] - 2026-05-11
+
+### Fixed
+- **`caption` produced empty responses on large images and multi-paragraph
+  essays on screenshots**: surfaced when testing moondream + llama3.2-vision
+  on a 4K Mac screenshot. moondream's context budget was blown by the raw
+  bytes (returned empty); llama3.2-vision produced 1.5 KB of analysis as
+  alt text instead of one sentence. Three safeguards now stack:
+  1. Pre-resize the image to 1024×1024 max via sharp before sending to
+     Ollama (vision models don't benefit from larger inputs and tiny
+     models choke on them).
+  2. Hard cap on output via `num_predict: 200` in the Ollama request body.
+  3. New `cleanCaption()` post-processor: strips surrounding quotes,
+     keeps only the first paragraph, cuts at the first bullet point,
+     strips common meta-phrase intros ("The image shows…", "I see…",
+     "Description:", etc.), and truncates at a word boundary at ~240
+     chars with an ellipsis if anything still got through. 11 unit tests.
+- **Empty-response error is now actionable**: includes a hint to try a
+  different `--model` instead of just reporting the empty response.
+
 ## [1.17.0] - 2026-05-11
 
 ### Added
