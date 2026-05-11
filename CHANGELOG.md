@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.16.1] - 2026-05-11
+
+### Fixed
+- **`caption` crashed with `FOREIGN KEY constraint failed` on per-item failures**:
+  when an Ollama 404 (missing model) or image-download 404 hit the catch
+  block, `recordProcessing` was called without first upserting an
+  attachment row. SQLite aborted the whole bulk run instead of skipping
+  the failed item and continuing. Adds the unconditional upfront
+  `upsertAttachment` already present in `remove-bg`, plus a defensive
+  try/catch on the failure-path `recordProcessing` so future regressions
+  fail soft.
+
 ## [1.16.0] - 2026-05-11
 
 ### Added
