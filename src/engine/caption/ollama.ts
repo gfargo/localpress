@@ -19,7 +19,7 @@
  *      at a word boundary if it's still too long.
  */
 
-import type { CaptionOptions, CaptionResult } from './types.ts';
+import type { CaptionOptions, CaptionResult, VisionKind } from './types.ts';
 
 export const DEFAULT_OLLAMA_MODEL = 'moondream';
 export const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
@@ -37,6 +37,33 @@ const DEFAULT_PROMPT =
   'Write concise alt-text for this image. Describe only what is visually present. ' +
   'Be factual and specific. Keep it under 125 characters. ' +
   'Respond with only the alt-text — no prefix, quotes, or explanation.';
+
+/** Per-kind prompt template; honoured when options.prompt isn't set. */
+function buildPrompt(kind: VisionKind, language?: string): string {
+  const lang = language ? ` Write in ${language}.` : '';
+  switch (kind) {
+    case 'title':
+      return `Write a short title for this image — 3 to 7 words, a noun phrase. No leading "Title:", no trailing punctuation, no quotes.${lang}`;
+    case 'description':
+      return `Write a 2-3 sentence description of this image suitable for an image gallery caption. Be factual and specific. Describe only what is visually present. No leading meta-phrase, no quotes.${lang}`;
+    case 'classify':
+      return (
+        'Classify this image as exactly one of: screenshot, photo, illustration, diagram. ' +
+        'Reply with only the single label word and nothing else.'
+      );
+    case 'tags':
+      return (
+        'Write 3 to 6 short comma-separated tags describing this image. ' +
+        'Each tag is one or two words, lowercase, no punctuation. ' +
+        'Reply with only the comma-separated list and nothing else.'
+      );
+    default:
+      // alt
+      return language
+        ? `Write concise alt-text for this image in ${language}. Describe only what is visually present. Be factual and specific. Keep it under 125 characters. Respond with only the alt-text — no prefix, quotes, or explanation.`
+        : DEFAULT_PROMPT;
+  }
+}
 
 interface OllamaGenerateResponse {
   model: string;
@@ -73,16 +100,10 @@ export async function generateCaption(
 ): Promise<CaptionResult> {
   const baseUrl = options.ollamaUrl ?? DEFAULT_OLLAMA_URL;
   const model = options.model ?? DEFAULT_OLLAMA_MODEL;
+  const kind: VisionKind = options.kind ?? 'alt';
 
-  // Build the prompt — append language instruction if specified.
-  let prompt: string;
-  if (options.prompt) {
-    prompt = options.prompt;
-  } else if (options.language) {
-    prompt = `Write concise alt-text for this image in ${options.language}. Describe only what is visually present. Be factual and specific. Keep it under 125 characters. Respond with only the alt-text — no prefix, quotes, or explanation.`;
-  } else {
-    prompt = DEFAULT_PROMPT;
-  }
+  // Build the prompt — caller can override, otherwise pick per-kind.
+  const prompt = options.prompt ?? buildPrompt(kind, options.language);
 
   const start = Date.now();
 
@@ -122,10 +143,86 @@ export async function generateCaption(
   }
 
   return {
-    caption: cleanCaption(data.response),
+    caption: cleanResponse(data.response, kind),
     model,
     durationMs: Date.now() - start,
   };
+}
+
+/**
+ * Dispatch post-processing based on kind. Defaults to `cleanCaption` (the
+ * existing alt-text cleaner) for alt + description, with tighter rules for
+ * title / classify / tags.
+ */
+export function cleanResponse(raw: string, kind: VisionKind): string {
+  switch (kind) {
+    case 'title':
+      return cleanTitle(raw);
+    case 'classify':
+      return cleanClassify(raw);
+    case 'tags':
+      return cleanTags(raw);
+    default:
+      return cleanCaption(raw);
+  }
+}
+
+/** Title: 3-7 word noun phrase, no trailing punctuation, ~80 char cap. */
+export function cleanTitle(raw: string): string {
+  let s = raw.trim();
+  s = s.replace(/^["']+|["']+$/g, '').trim();
+  // Take only the first line.
+  s = s.split(/\r?\n/, 1)[0].trim();
+  // Strip "Title:" / "Caption:" labels.
+  s = s.replace(/^(title|caption|alt[\s-]?text)\s*:\s*/i, '');
+  // Strip trailing punctuation.
+  s = s.replace(/[.!?;:,]+$/g, '');
+  // Hard cap at 80 chars at a word boundary.
+  if (s.length > 80) {
+    const cutoff = s.lastIndexOf(' ', 80);
+    s = s.slice(0, cutoff > 0 ? cutoff : 80);
+  }
+  return s.trim();
+}
+
+/** Classify: one label from a closed set, case-insensitive match. */
+export function cleanClassify(raw: string): string {
+  const labels = ['screenshot', 'photo', 'illustration', 'diagram'] as const;
+  const lower = raw.toLowerCase();
+  for (const l of labels) {
+    if (lower.includes(l)) return l;
+  }
+  // Fallback: return the first word.
+  return (
+    raw
+      .trim()
+      .split(/\s+/)[0]
+      .toLowerCase()
+      .replace(/[^a-z]/g, '') || 'unknown'
+  );
+}
+
+/** Tags: comma-separated short tokens; clean each, dedupe, keep first 6. */
+export function cleanTags(raw: string): string {
+  return cleanTagsArray(raw).join(', ');
+}
+
+/** Like cleanTags but returns the array form (used by commands that need it). */
+export function cleanTagsArray(raw: string): string[] {
+  return raw
+    .toLowerCase()
+    .replace(/[\n\r]/g, ',')
+    .split(',')
+    .map((t) =>
+      t
+        .trim()
+        .replace(/^[-*•\d.)\s]+/, '') // strip list markers
+        .replace(/[^a-z0-9 -]/g, '') // strip punctuation
+        .trim(),
+    )
+    .filter((t) => t.length > 0 && t.length <= 30)
+    .filter((t, i, arr) => arr.indexOf(t) === i)
+    .slice(0, 6);
 }
 
 /**
