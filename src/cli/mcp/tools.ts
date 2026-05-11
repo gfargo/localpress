@@ -575,6 +575,30 @@ export function registerTools(server: McpServer): void {
   );
 
   server.registerTool(
+    'delete',
+    {
+      title: 'Delete attachments',
+      description:
+        'Delete one or more attachments. Without `force: true`, WordPress moves them to trash (recoverable from the admin). With `force: true`, attachments + files are permanently removed. Pre-captures a binary snapshot for each attachment so `undo` can re-upload the file (as a new attachment ID; references will need rewriting).',
+      inputSchema: {
+        ...commonSiteArg,
+        ids: z.array(z.number().int().positive()).describe('Attachment IDs to delete'),
+        force: z
+          .boolean()
+          .optional()
+          .describe('Permanently delete (skip trash). Default: move to trash.'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['delete'];
+      ids(argv, a.ids);
+      flag(argv, '--force', a.force);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
     'update_metadata',
     {
       title: 'Set attachment metadata',
