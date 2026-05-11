@@ -665,6 +665,27 @@ export function registerTools(server: McpServer): void {
   );
 
   server.registerTool(
+    'classify',
+    {
+      title: 'Classify image type (AI)',
+      description:
+        'Detect whether an image is a screenshot, photo, illustration, or diagram via the Ollama vision model. Result is cached locally so `optimize` (when no explicit --to is given) picks smarter format defaults: screenshots/diagrams → PNG, photos/illustrations → WebP.',
+      inputSchema: {
+        ...commonSiteArg,
+        ids: z.array(z.number().int().positive()),
+        model: z.string().optional(),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['classify'];
+      ids(argv, a.ids);
+      opt(argv, '--model', a.model);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
     'rename',
     {
       title: 'Rename attachment slug',
