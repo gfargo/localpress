@@ -97,6 +97,8 @@ export interface UpdateMetadata {
   altText?: string;
   caption?: string;
   description?: string;
+  /** WP slug / post_name — affects the attachment permalink. Does NOT rename the underlying file. */
+  slug?: string;
 }
 
 /** Options for replace-in-place operations. */

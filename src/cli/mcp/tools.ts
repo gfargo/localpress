@@ -665,6 +665,39 @@ export function registerTools(server: McpServer): void {
   );
 
   server.registerTool(
+    'rename',
+    {
+      title: 'Rename attachment slug',
+      description:
+        "Rename one or more attachment slugs (permalinks). With `smart: true`, generate the new name via the Ollama vision model; with `to: '<name>'`, use the supplied string. Does NOT rename the underlying file on disk (slug only). Captures an undo snapshot before each change.",
+      inputSchema: {
+        ...commonSiteArg,
+        ids: z.array(z.number().int().positive()),
+        smart: z
+          .boolean()
+          .optional()
+          .describe('Generate the new name via the vision model. Mutually exclusive with `to`.'),
+        to: z
+          .string()
+          .optional()
+          .describe('Explicit new name (will be slugified). Mutually exclusive with `smart`.'),
+        model: z.string().optional().describe('Ollama model (smart mode only)'),
+        dryRun: z.boolean().optional(),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['rename'];
+      ids(argv, a.ids);
+      flag(argv, '--smart', a.smart);
+      opt(argv, '--to', a.to);
+      opt(argv, '--model', a.model);
+      flag(argv, '--dry-run', a.dryRun);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
     'delete',
     {
       title: 'Delete attachments',
