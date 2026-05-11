@@ -677,6 +677,40 @@ export function registerTools(server: McpServer): void {
   );
 
   server.registerTool(
+    'vision',
+    {
+      title: 'Generate all AI metadata fields (unified)',
+      description:
+        "Single-call unified workflow: generate alt, title, description, tags, and classification for one or more attachments in one pass. Print-only by default — pass apply=true to write the generated fields back to WordPress. Use `fields` to subset (e.g. 'alt,title'). Idempotent unless `overwrite: true` — won't clobber existing values.",
+      inputSchema: {
+        ...commonSiteArg,
+        ids: z.array(z.number().int().positive()),
+        fields: z
+          .string()
+          .optional()
+          .describe(
+            'Comma-separated subset of: alt, title, description, tags, classify. Defaults to all five.',
+          ),
+        model: z.string().optional(),
+        language: z.string().optional(),
+        overwrite: z.boolean().optional(),
+        apply: z.boolean().optional().describe('Write the generated values to WordPress'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['vision'];
+      ids(argv, a.ids);
+      opt(argv, '--fields', a.fields);
+      opt(argv, '--model', a.model);
+      opt(argv, '--language', a.language);
+      flag(argv, '--overwrite', a.overwrite);
+      flag(argv, '--apply', a.apply);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
     'tag',
     {
       title: 'Generate tags (AI)',
