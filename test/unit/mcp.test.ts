@@ -128,6 +128,24 @@ describe('mcp server', () => {
     }
   }, 30_000);
 
+  test('update_metadata tool is registered with the expected fields', async () => {
+    const { client, close } = await connectClient();
+    try {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === 'update_metadata');
+      expect(tool).toBeDefined();
+      const schema = tool?.inputSchema as { properties?: Record<string, unknown> };
+      expect(schema.properties).toHaveProperty('id');
+      expect(schema.properties).toHaveProperty('ids');
+      expect(schema.properties).toHaveProperty('altText');
+      expect(schema.properties).toHaveProperty('title');
+      expect(schema.properties).toHaveProperty('caption');
+      expect(schema.properties).toHaveProperty('description');
+    } finally {
+      await close();
+    }
+  }, 30_000);
+
   test('optimize tool exposes `to` (not `format`) — regression for #50', async () => {
     // Bug: the optimize MCP tool used to advertise a `format` field that got
     // mapped to `--format`, but the CLI takes `--to`. Verify the rename to `to`.
