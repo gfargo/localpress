@@ -80,6 +80,17 @@ describe('mcp server', () => {
     }
   }, 30_000);
 
+  test('watch_status tool is registered', async () => {
+    const { client, close } = await connectClient();
+    try {
+      const { tools } = await client.listTools();
+      const names = tools.map((t) => t.name);
+      expect(names).toContain('watch_status');
+    } finally {
+      await close();
+    }
+  }, 30_000);
+
   test('time-machine tools are registered', async () => {
     const { client, close } = await connectClient();
     try {

@@ -36,6 +36,7 @@ import { registerSitesCommand } from './commands/sites.ts';
 import { registerStatsCommand } from './commands/stats.ts';
 import { registerUndoCommand } from './commands/undo.ts';
 import { registerUpdateCommand } from './commands/update.ts';
+import { registerWatchStatusCommand } from './commands/watch-status.ts';
 import { registerWatchCommand } from './commands/watch.ts';
 import { setOutputOptions } from './utils/output.ts';
 
@@ -95,6 +96,7 @@ registerHistoryCommand(program);
 registerUndoCommand(program);
 registerUpdateCommand(program);
 registerWatchCommand(program);
+registerWatchStatusCommand(program);
 registerCompletionsCommand(program);
 registerMcpCommand(program);
 
