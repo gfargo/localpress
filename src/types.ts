@@ -80,6 +80,8 @@ export interface Config {
     format?: 'webp' | 'avif' | 'jpeg' | 'png';
     /** Default concurrency for bulk ops. */
     concurrency?: number;
+    /** Default Ollama vision model for `caption` (e.g. "moondream", "llava-llama3:latest"). */
+    captionModel?: string;
   };
   /** Time-machine / undo retention settings. */
   history?: {

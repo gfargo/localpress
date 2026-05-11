@@ -36,8 +36,7 @@ export function registerCaptionCommand(program: Command): void {
     .description('Generate alt-text for images using a local Ollama vision model')
     .option(
       '--model <name>',
-      `Ollama vision model to use (default: ${DEFAULT_OLLAMA_MODEL})`,
-      DEFAULT_OLLAMA_MODEL,
+      `Ollama vision model to use. Resolution order: --model > config.defaults.captionModel > built-in default (${DEFAULT_OLLAMA_MODEL})`,
     )
     .option('--prompt <text>', 'custom captioning prompt')
     .option(
@@ -83,20 +82,25 @@ export function registerCaptionCommand(program: Command): void {
         return;
       }
 
-      // Validate Ollama is reachable before doing any work.
-      if (!(await isOllamaAvailable(options.ollamaUrl))) {
-        error(
-          `Ollama is not running at ${options.ollamaUrl}.\n\n  Start it:       ollama serve\n  Pull a model:   ollama pull ${options.model}\n\n  Setup guide:    https://localpress.griffen.codes/docs/ollama-setup`,
-        );
-        process.exit(2);
-      }
-
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
       const resolver = new AdapterResolver(site);
       const listAdapter = resolver.resolve('list');
       const getAdapter = resolver.resolve('get');
       const updateAdapter = resolver.resolve('update-meta');
+
+      // Resolve the effective Ollama model:
+      //   --model flag > config.defaults.captionModel > built-in default
+      const effectiveModel: string =
+        options.model ?? config.defaults?.captionModel ?? DEFAULT_OLLAMA_MODEL;
+
+      // Validate Ollama is reachable before doing any work.
+      if (!(await isOllamaAvailable(options.ollamaUrl))) {
+        error(
+          `Ollama is not running at ${options.ollamaUrl}.\n\n  Start it:       ollama serve\n  Pull a model:   ollama pull ${effectiveModel}\n\n  Setup guide:    https://localpress.griffen.codes/docs/ollama-setup`,
+        );
+        process.exit(2);
+      }
 
       // Resolve which attachment IDs to process.
       let ids: number[];
@@ -153,7 +157,7 @@ export function registerCaptionCommand(program: Command): void {
       const historySession =
         historyConfig.enabled && !isDryRun
           ? openHistorySession(snapshotStore, site.name, 'caption', {
-              model: options.model,
+              model: effectiveModel,
               language: options.language,
               overwrite: options.overwrite ?? false,
             })
@@ -218,7 +222,7 @@ export function registerCaptionCommand(program: Command): void {
           const imageBuffer = Buffer.from(await response.arrayBuffer());
 
           const result = await generateCaption(imageBuffer, {
-            model: options.model,
+            model: effectiveModel,
             prompt: options.prompt,
             ollamaUrl: options.ollamaUrl,
             language: options.language,
@@ -303,7 +307,7 @@ export function registerCaptionCommand(program: Command): void {
               siteName: site.name,
               wpId: id,
               operation: 'caption',
-              paramsJson: JSON.stringify({ model: options.model }),
+              paramsJson: JSON.stringify({ model: effectiveModel }),
               sourceHash: null,
               resultHash: null,
               bytesBefore: null,
