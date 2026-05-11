@@ -665,6 +665,39 @@ export function registerTools(server: McpServer): void {
   );
 
   server.registerTool(
+    'tag',
+    {
+      title: 'Generate tags (AI)',
+      description:
+        "Generate 3-6 short tags via the Ollama vision model and append them to the attachment's caption as a `[tags: tag1, tag2, …]` block. Universal — doesn't require WP attachment taxonomies to be registered. Existing caption text is preserved; an existing `[tags: …]` block is left alone unless `overwrite: true`.",
+      inputSchema: {
+        ...commonSiteArg,
+        ids: z.array(z.number().int().positive()).optional(),
+        missingTags: z
+          .boolean()
+          .optional()
+          .describe('Only items without an existing [tags: …] block in their caption'),
+        all: z.boolean().optional(),
+        model: z.string().optional(),
+        overwrite: z.boolean().optional(),
+        apply: z.boolean().optional(),
+        concurrency: z.number().int().positive().optional(),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['tag'];
+      ids(argv, a.ids);
+      flag(argv, '--missing-tags', a.missingTags);
+      flag(argv, '--all', a.all);
+      opt(argv, '--model', a.model);
+      flag(argv, '--overwrite', a.overwrite);
+      flag(argv, '--apply', a.apply);
+      return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
+    },
+  );
+
+  server.registerTool(
     'classify',
     {
       title: 'Classify image type (AI)',
