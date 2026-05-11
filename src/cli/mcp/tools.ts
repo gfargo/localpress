@@ -574,6 +574,44 @@ export function registerTools(server: McpServer): void {
     },
   );
 
+  server.registerTool(
+    'update_metadata',
+    {
+      title: 'Set attachment metadata',
+      description:
+        'Directly set alt text, title, caption, or description on attachment(s). For AI-generated alt text, use `caption` instead. At least one field must be provided. Idempotent: skips items where all incoming fields already match.',
+      inputSchema: {
+        ...commonSiteArg,
+        id: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Single attachment ID. Use `ids` for bulk.'),
+        ids: z
+          .array(z.number().int().positive())
+          .optional()
+          .describe('Multiple attachment IDs (same metadata applied to each)'),
+        altText: z.string().optional(),
+        title: z.string().optional(),
+        caption: z.string().optional(),
+        description: z.string().optional(),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['metadata'];
+      // Accept either `id` (single) or `ids` (array). At least one must be set.
+      if (typeof a.id === 'number') argv.push(String(a.id));
+      if (Array.isArray(a.ids)) for (const x of a.ids) argv.push(String(x));
+      opt(argv, '--alt-text', a.altText);
+      opt(argv, '--title', a.title);
+      opt(argv, '--caption', a.caption);
+      opt(argv, '--description', a.description);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
   // ---------------------------------------------------------------------------
   // Round-trip & low-level
   // ---------------------------------------------------------------------------
