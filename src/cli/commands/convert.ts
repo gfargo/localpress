@@ -134,11 +134,19 @@ export function registerConvertCommand(program: Command): void {
           // Upload.
           let resultWpId: number | null = null;
 
+          // Determine format-change metadata for replace-in-place.
+          const targetMime = formatToMime(targetFormat);
+          const formatChanged = targetMime !== item.mimeType;
+          const newExtension = formatChanged ? mimeToExtension(targetMime) : undefined;
+
           if (!options.keepOriginal) {
             const replaceAdapter = resolver.tryResolve('replace-in-place');
             if (replaceAdapter) {
               try {
-                await replaceAdapter.replaceInPlace(id, result.bytes);
+                await replaceAdapter.replaceInPlace(id, result.bytes, {
+                  newMimeType: formatChanged ? targetMime : undefined,
+                  newExtension,
+                });
                 resultWpId = id;
               } catch (err) {
                 if (err instanceof CapabilityUnavailableError && !parentOpts.strict) {
@@ -240,4 +248,26 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatToMime(format: string): string {
+  const map: Record<string, string> = {
+    webp: 'image/webp',
+    avif: 'image/avif',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    gif: 'image/gif',
+  };
+  return map[format] ?? `image/${format}`;
+}
+
+function mimeToExtension(mimeType: string): string | undefined {
+  const map: Record<string, string> = {
+    'image/webp': '.webp',
+    'image/avif': '.avif',
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/gif': '.gif',
+  };
+  return map[mimeType];
 }

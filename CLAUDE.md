@@ -13,8 +13,8 @@ You're picking up `localpress` at **v1.6.0**. The full v1.0 implementation plan 
 
 ## Current status
 
-**Version:** 1.6.0
-**Status:** All v1.0 plan features complete. Post-v1.0 enhancements shipped: advanced audit checks, config management, Homebrew distribution, interactive TUI browser, AI captioning, cumulative stats, media sort, full TUI action suite, browser-based preview for optimize and remove-bg, BiRefNet model support, quick browser image viewer.
+**Version:** 1.15.2
+**Status:** All v1.0 plan features complete. Post-v1.0 enhancements shipped: advanced audit checks, config management, Homebrew distribution, interactive TUI browser, AI captioning, cumulative stats, media sort, full TUI action suite, browser-based preview for optimize and remove-bg, BiRefNet model support, quick browser image viewer, MCP server, time-machine undo, robust replace-in-place with auto-regenerate.
 
 ### What's implemented
 
@@ -90,6 +90,18 @@ You're picking up `localpress` at **v1.6.0**. The full v1.0 implementation plan 
 | v1.4.3 | CI docker compose rewrite (no more services: block), setup-wp.sh consolidation, all 9 integration tests local-reproducible via `act` |
 | v1.5.0 | TUI action suite: optimize/convert/resize settings overlays, open-in-WP (`[W]`), alt-text visibility in rows/sidebar/details; fix remove-bg 401 (GitHub URLs) + FK constraint crash |
 | v1.6.0 | Browser preview for optimize and remove-bg (`--preview`), BiRefNet + ISNet models, quick browser image viewer (`[P]`), preview keybindings (`[O]`/`[R]`), interactive list position persistence, WebSocket heartbeat for browser close detection, schema v2 (preferences table) |
+| v1.7.0 | SSH config in init wizard, explicit SSH `user` field, 25 new unit tests |
+| v1.8.x | `update` + `completions` commands, stats dashboard, SSH IdentitiesOnly, spinner |
+| v1.9.0 | `regenerate` command, replace-in-place 2-3x faster, `--regenerate-thumbnails` opt-in |
+| v1.10.0 | Sharp smart path discovery + auto-install, `doctor` sharp check |
+| v1.11.x | `watch` command, tarball distribution, self-update tarballs |
+| v1.12.0 | Replace-in-place format conversion (PNG→WebP metadata update) |
+| v1.13.0 | `export`/`import` commands, `--profile` flag on optimize, profile selector |
+| v1.13.1 | `caption --all` + `--language` flags, safe-by-default bulk caption ops |
+| v1.14.0 | First-party MCP server (`localpress mcp`), 20 tools + 3 resources |
+| v1.15.0 | Time-machine / undo, `history` + `undo` commands, snapshot storage, schema v4 |
+| v1.15.1 | MCP schema validation fix, silent failure surfacing, caption tool docs |
+| v1.15.2 | Replace-in-place path corruption fix, SCP error handling, auto-regenerate on format change |
 
 ---
 

@@ -81,9 +81,15 @@ export class WpCliAdapter implements WpBackend {
   private async getUploadsDir(): Promise<string> {
     if (this.cachedUploadsDir) return this.cachedUploadsDir;
 
-    const output = await this.wp(
-      `eval 'echo wp_upload_dir()["basedir"];' 2>/dev/null || echo "${this.wpPath}/wp-content/uploads"`,
-    );
+    // Try wp eval first; fall back to conventional path if it fails.
+    // Note: we avoid shell || here because wp() appends --allow-root which
+    // would become part of the echo fallback output.
+    let output: string;
+    try {
+      output = await this.wp(`eval 'echo wp_upload_dir()["basedir"];'`);
+    } catch {
+      output = `${this.wpPath}/wp-content/uploads`;
+    }
     this.cachedUploadsDir = output.trim();
     return this.cachedUploadsDir;
   }
@@ -180,7 +186,12 @@ export class WpCliAdapter implements WpBackend {
     await Bun.write(localTmp, file);
 
     const remoteTmp = `/tmp/localpress-upload-${Date.now()}-${metadata.filename}`;
-    await scpUpload(this.ssh, localTmp, remoteTmp);
+    const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
+    if (scpResult.exitCode !== 0) {
+      throw new Error(
+        `SCP upload failed (exit ${scpResult.exitCode}): ${scpResult.stderr || 'unknown error'}`,
+      );
+    }
 
     // Import via WP-CLI.
     const args = [`media import "${remoteTmp}"`, '--porcelain'];
@@ -235,10 +246,31 @@ export class WpCliAdapter implements WpBackend {
     await Bun.write(localTmp, file);
 
     const remoteTmp = `/tmp/localpress-replace-${Date.now()}`;
-    await scpUpload(this.ssh, localTmp, remoteTmp);
+    const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
+    if (scpResult.exitCode !== 0) {
+      throw new Error(
+        `SCP upload failed (exit ${scpResult.exitCode}): ${scpResult.stderr || 'unknown error'}`,
+      );
+    }
 
-    // Move the file into place and fix permissions.
-    await sshExec(this.ssh, `mv "${remoteTmp}" "${remotePath}" && chmod 644 "${remotePath}"`);
+    // Ensure the target directory exists, then move the file into place.
+    const targetDir = remotePath.substring(0, remotePath.lastIndexOf('/'));
+    const mkdirResult = await sshExec(this.ssh, `mkdir -p "${targetDir}"`);
+    if (mkdirResult.exitCode !== 0) {
+      throw new Error(
+        `Failed to create target directory "${targetDir}": ${mkdirResult.stderr || 'unknown error'}`,
+      );
+    }
+
+    const mvResult = await sshExec(
+      this.ssh,
+      `mv "${remoteTmp}" "${remotePath}" && chmod 644 "${remotePath}"`,
+    );
+    if (mvResult.exitCode !== 0) {
+      throw new Error(
+        `Failed to place file at "${remotePath}": ${mvResult.stderr || 'unknown error'}`,
+      );
+    }
 
     // If the format changed, delete the old file and update WordPress metadata.
     if (options?.newExtension && newFilePath !== currentFile.trim()) {
@@ -257,13 +289,29 @@ export class WpCliAdapter implements WpBackend {
         );
       }
 
-      // Update attachment metadata (file field and filesize).
+      // Update attachment metadata: file field, filesize, and clear stale sizes.
       try {
         const metaJson = await this.wp(`post meta get ${id} _wp_attachment_metadata --format=json`);
         const meta = JSON.parse(metaJson);
         if (meta?.file) {
+          // Delete old thumbnail files from disk before clearing metadata.
+          if (meta.sizes && typeof meta.sizes === 'object') {
+            const dirPath = newFilePath.includes('/')
+              ? `${uploadsDir}/${newFilePath.substring(0, newFilePath.lastIndexOf('/'))}`
+              : uploadsDir;
+            const oldThumbFiles = Object.values(meta.sizes)
+              .map((s) => (s as { file?: string })?.file)
+              .filter(Boolean) as string[];
+            for (const thumbFile of oldThumbFiles) {
+              await sshExec(this.ssh, `rm -f "${dirPath}/${thumbFile}"`).catch(() => {});
+            }
+          }
+
           meta.file = newFilePath;
           meta.filesize = file.length;
+          // Clear the sizes array — old format thumbnails are now invalid.
+          // WordPress will repopulate this on regenerate.
+          meta.sizes = {};
           const updatedMeta = JSON.stringify(meta).replace(/'/g, "\\'");
           await this.wp(
             `post meta update ${id} _wp_attachment_metadata '${updatedMeta}' --format=json`,
@@ -272,10 +320,17 @@ export class WpCliAdapter implements WpBackend {
       } catch {
         // Best effort — metadata update is non-critical.
       }
+
+      // Remove _require_file_renaming flag that WP may have set during the transition.
+      await this.wp(`post meta delete ${id} _require_file_renaming`).catch(() => {});
     }
 
-    // Regenerate thumbnails only if explicitly requested.
-    if (options?.regenerateThumbnails) {
+    // Regenerate thumbnails: always when format changed (old thumbnails are invalid),
+    // or when explicitly requested.
+    if (
+      (options?.newExtension && newFilePath !== currentFile.trim()) ||
+      options?.regenerateThumbnails
+    ) {
       await this.wp(`media regenerate ${id} --yes`);
     }
 

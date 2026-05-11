@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.2] - 2026-05-11
+
+### Fixed
+- **Replace-in-place corrupted uploads on symlinked/mounted uploads directories**:
+  `getUploadsDir()` used a shell `|| echo` fallback that included `--allow-root`
+  in the output path when `wp eval` was suppressed by `2>/dev/null`. This caused
+  files to be placed in a bogus directory (e.g., `uploads --allow-root/2024/12/`)
+  instead of the real uploads path. Refactored to use TypeScript try/catch instead
+  of shell fallback.
+- **Silent SCP/mv failures during replace-in-place**: if the file transfer or
+  placement failed (permissions, disk full, cross-device issues), the code
+  continued updating WordPress metadata anyway — leaving the DB pointing to a
+  non-existent file. Now checks exit codes and throws on failure. Also creates
+  the target directory with `mkdir -p` before `mv`.
+- **Format conversion left stale thumbnails**: converting PNG→WebP (or any format
+  change) updated the main file metadata but left old-format thumbnail files on
+  disk and their references in `_wp_attachment_metadata.sizes`. WordPress then
+  served broken thumbnail URLs. Now deletes old thumbnail files, clears the
+  `sizes` array, removes `_require_file_renaming` flag, and **auto-regenerates
+  thumbnails** whenever the format changes (no longer requires explicit
+  `--regenerate-thumbnails` flag for format conversions).
+- **`convert` command didn't pass format-change options to replace-in-place**:
+  called `replaceInPlace(id, bytes)` with no options, so the MIME type, filename,
+  and extension metadata were never updated on the server. Now passes
+  `newMimeType` and `newExtension` correctly.
+
+### Changed
+- **Thumbnail regeneration is now automatic on format change**: when `optimize`
+  or `convert` changes the file format (e.g., JPEG→WebP), thumbnails are always
+  regenerated. The `--regenerate-thumbnails` flag remains available for same-format
+  optimizations where you want fresh thumbnails.
+
 ## [1.15.1] - 2026-05-11
 
 ### Fixed
@@ -729,9 +761,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `notImplemented()` scaffold helper — all commands now have real implementations.
 
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.12.0...HEAD
-[1.13.1]: https://github.com/gfargo/localpress/compare/v1.13.0...v1.13.1
-[1.13.0]: https://github.com/gfargo/localpress/compare/v1.12.0...v1.13.0
+[Unreleased]: https://github.com/gfargo/localpress/compare/v1.15.2...HEAD
+[1.15.2]: https://github.com/gfargo/localpress/compare/v1.15.1...v1.15.2
+[1.15.1]: https://github.com/gfargo/localpress/compare/v1.15.0...v1.15.1
 [1.12.0]: https://github.com/gfargo/localpress/compare/v1.11.3...v1.12.0
 [1.11.3]: https://github.com/gfargo/localpress/compare/v1.11.2...v1.11.3
 [1.11.2]: https://github.com/gfargo/localpress/compare/v1.11.1...v1.11.2
