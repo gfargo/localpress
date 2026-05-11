@@ -745,6 +745,15 @@ export function registerTools(server: McpServer): void {
         to: z.string().describe('Destination file (.zip) or directory'),
         type: z.string().optional(),
         since: z.string().optional(),
+        largerThan: z.number().int().positive().optional().describe('Minimum size in bytes'),
+        includeSizes: z
+          .boolean()
+          .optional()
+          .describe('Also export generated thumbnail/medium/large variants'),
+        flat: z
+          .boolean()
+          .optional()
+          .describe('Export all files into a single flat directory (no subdirectories)'),
         concurrency: z.number().int().positive().optional().describe('Parallel workers'),
       },
     },
@@ -757,6 +766,9 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--to', a.to);
       opt(argv, '--type', a.type);
       opt(argv, '--since', a.since);
+      opt(argv, '--larger-than', a.largerThan);
+      flag(argv, '--include-sizes', a.includeSizes);
+      flag(argv, '--flat', a.flat);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
@@ -774,7 +786,19 @@ export function registerTools(server: McpServer): void {
           .enum(['webp', 'avif', 'jpeg', 'png'])
           .optional()
           .describe('Target format if --optimize'),
+        quality: z.number().int().min(1).max(100).optional().describe('Optimization quality 1-100'),
         maxWidth: z.number().int().positive().optional(),
+        maxHeight: z.number().int().positive().optional(),
+        stripMetadata: z
+          .boolean()
+          .optional()
+          .describe('Strip EXIF/ICC metadata during optimization'),
+        title: z
+          .string()
+          .optional()
+          .describe('Default title for imported items (overridden by manifest)'),
+        altText: z.string().optional().describe('Default alt text for imported items'),
+        post: z.number().int().positive().optional().describe('Attach all imports to this post'),
         preserveIds: z.boolean().optional(),
         dryRun: z.boolean().optional(),
         concurrency: z.number().int().positive().optional().describe('Parallel uploads'),
@@ -785,7 +809,13 @@ export function registerTools(server: McpServer): void {
       const argv = ['import', a.source as string];
       flag(argv, '--optimize', a.optimize);
       opt(argv, '--to', a.to);
+      opt(argv, '--quality', a.quality);
       opt(argv, '--max-width', a.maxWidth);
+      opt(argv, '--max-height', a.maxHeight);
+      flag(argv, '--strip-metadata', a.stripMetadata);
+      opt(argv, '--title', a.title);
+      opt(argv, '--alt', a.altText);
+      opt(argv, '--post', a.post);
       flag(argv, '--preserve-ids', a.preserveIds);
       flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
