@@ -63,4 +63,16 @@ export function registerResources(server: McpServer): void {
     },
     async (uri) => readAsResource(uri, ['doctor']),
   );
+
+  server.registerResource(
+    'history',
+    'localpress://history',
+    {
+      title: 'Time-machine history',
+      description:
+        'Recent sessions and snapshots for the active site — what can be undone, retention status, storage used.',
+      mimeType: 'application/json',
+    },
+    async (uri) => readAsResource(uri, ['history']),
+  );
 }

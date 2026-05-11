@@ -14,6 +14,13 @@ import { createHash } from 'node:crypto';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import { CapabilityUnavailableError } from '../../adapters/types.ts';
+import {
+  captureSnapshot,
+  closeHistorySession,
+  openHistorySession,
+  openSnapshotStore,
+  resolveHistoryConfig,
+} from '../../engine/history/index.ts';
 import type { ApplyResult, ProcessResult } from '../../engine/preview/server.ts';
 import type { ModelName } from '../../engine/rembg/models.ts';
 import { DEFAULT_MODEL, isModelCached, listAvailableModels } from '../../engine/rembg/models.ts';
@@ -23,7 +30,7 @@ import {
   removeBackgroundWithSystemRembg,
 } from '../../engine/rembg/system-rembg.ts';
 import { SiteDb } from '../../engine/state/db.ts';
-import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 export function registerRemoveBgCommand(program: Command): void {
@@ -284,6 +291,18 @@ export function registerRemoveBgCommand(program: Command): void {
       const db = SiteDb.init(getSiteDbPath(site.name));
       db.ensureSite(site.name, site.url);
 
+      // Time-machine: one session for this remove-bg run.
+      const historyConfig = resolveHistoryConfig(config.history);
+      const snapshotStore = openSnapshotStore(db, getConfigDir());
+      const historySession = historyConfig.enabled
+        ? openHistorySession(snapshotStore, site.name, 'remove-bg', {
+            model: useSystemRembg ? (options.rembgModel ?? 'system-rembg') : modelName,
+            bg: options.bg,
+            trim: options.trim ?? false,
+            keepOriginal: options.keepOriginal ?? false,
+          })
+        : null;
+
       const results: Array<{
         id: number;
         filename: string;
@@ -350,6 +369,29 @@ export function registerRemoveBgCommand(program: Command): void {
           info(
             `    ✓ Background removed (${inferenceMs}ms${useSystemRembg ? ' via system rembg' : ''})`,
           );
+
+          // Capture pre-write snapshot for undo.
+          if (historySession) {
+            captureSnapshot(snapshotStore, {
+              siteName: site.name,
+              sessionId: historySession.id,
+              attachmentId: item.id,
+              operation: 'remove-bg',
+              sourceBytes,
+              beforeHash: sourceHash,
+              beforeMeta: {
+                filename: item.filename,
+                mimeType: item.mimeType,
+                altText: item.altText,
+                title: item.title,
+                caption: item.caption,
+                description: item.description,
+                width: item.width,
+                height: item.height,
+                sizeBytes: sourceBytes.length,
+              },
+            });
+          }
 
           // Upload the result.
           let resultWpId: number | null = null;
@@ -449,6 +491,12 @@ export function registerRemoveBgCommand(program: Command): void {
             errorMessage: message,
           });
         }
+      }
+
+      if (historySession) {
+        closeHistorySession(snapshotStore, historySession, {
+          maxSizeBytes: historyConfig.maxSizeBytes,
+        });
       }
 
       db.close();

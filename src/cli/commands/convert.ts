@@ -9,10 +9,17 @@ import { createHash } from 'node:crypto';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import { CapabilityUnavailableError } from '../../adapters/types.ts';
+import {
+  captureSnapshot,
+  closeHistorySession,
+  openHistorySession,
+  openSnapshotStore,
+  resolveHistoryConfig,
+} from '../../engine/history/index.ts';
 import { optimizeImage } from '../../engine/image/optimize.ts';
 import type { ImageFormat } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
-import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 const VALID_FORMATS = new Set(['webp', 'avif', 'jpeg', 'png']);
@@ -59,6 +66,17 @@ export function registerConvertCommand(program: Command): void {
       const db = SiteDb.init(getSiteDbPath(site.name));
       db.ensureSite(site.name, site.url);
 
+      // Time-machine: one session for this convert run.
+      const historyConfig = resolveHistoryConfig(config.history);
+      const snapshotStore = openSnapshotStore(db, getConfigDir());
+      const historySession = historyConfig.enabled
+        ? openHistorySession(snapshotStore, site.name, 'convert', {
+            to: targetFormat,
+            quality: options.quality,
+            keepOriginal: options.keepOriginal ?? false,
+          })
+        : null;
+
       const results: Array<{
         id: number;
         filename: string;
@@ -89,6 +107,29 @@ export function registerConvertCommand(program: Command): void {
 
           const resultHash = createHash('sha256').update(result.bytes).digest('hex');
           const durationMs = Date.now() - startTime;
+
+          // Capture pre-write snapshot for undo.
+          if (historySession) {
+            captureSnapshot(snapshotStore, {
+              siteName: site.name,
+              sessionId: historySession.id,
+              attachmentId: item.id,
+              operation: 'convert',
+              sourceBytes,
+              beforeHash: sourceHash,
+              beforeMeta: {
+                filename: item.filename,
+                mimeType: item.mimeType,
+                altText: item.altText,
+                title: item.title,
+                caption: item.caption,
+                description: item.description,
+                width: item.width,
+                height: item.height,
+                sizeBytes: sourceBytes.length,
+              },
+            });
+          }
 
           // Upload.
           let resultWpId: number | null = null;
@@ -172,6 +213,12 @@ export function registerConvertCommand(program: Command): void {
           error(`    ✗ #${id}: ${err instanceof Error ? err.message : String(err)}`);
           failures++;
         }
+      }
+
+      if (historySession) {
+        closeHistorySession(snapshotStore, historySession, {
+          maxSizeBytes: historyConfig.maxSizeBytes,
+        });
       }
 
       db.close();

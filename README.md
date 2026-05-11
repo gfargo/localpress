@@ -225,6 +225,8 @@ The CLI talks to WordPress through a **backend adapter** that auto-detects what'
 
 **Background removal models.** Downloads on first use and caches locally. Available models: `u2net` (~176MB, best quality), `u2netp` (~4.7MB, fast), `silueta` (~44MB, balanced). Use `--rembg` to shell out to system Python rembg instead.
 
+**Always undoable.** Every destructive op writes a snapshot of the pre-change state to local storage. Walk it back with `localpress undo` (defaults to the last session, dry-run unless `--apply`), browse with `localpress history -i`, manage retention with `localpress history prune`. Default cap: 2 GB per site. Agents driving via MCP get `undo` as a first-class tool.
+
 ---
 
 ## AI agent integration

@@ -16,10 +16,17 @@ import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { MediaItem } from '../../adapters/types.ts';
 import { CapabilityUnavailableError } from '../../adapters/types.ts';
+import {
+  captureSnapshot,
+  closeHistorySession,
+  openHistorySession,
+  openSnapshotStore,
+  resolveHistoryConfig,
+} from '../../engine/history/index.ts';
 import { optimizeImage } from '../../engine/image/optimize.ts';
 import type { ImageFormat, OptimizeOptions } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
-import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 interface OptimizeResultRecord {
@@ -395,6 +402,18 @@ export function registerOptimizeCommand(program: Command): void {
       const db = SiteDb.init(getSiteDbPath(site.name));
       db.ensureSite(site.name, site.url);
 
+      // Time-machine: open a session for this command so each per-item snapshot
+      // is grouped under one undoable unit.
+      const historyConfig = resolveHistoryConfig(config.history);
+      const snapshotStore = openSnapshotStore(db, getConfigDir());
+      const historySession = historyConfig.enabled
+        ? openHistorySession(snapshotStore, site.name, 'optimize', {
+            profile: options.profile,
+            optimizeOpts,
+            keepOriginal: options.keepOriginal ?? false,
+          })
+        : null;
+
       const results: OptimizeResultRecord[] = [];
       let failures = 0;
 
@@ -436,6 +455,29 @@ export function registerOptimizeCommand(program: Command): void {
               resultWpId: null,
             });
             continue;
+          }
+
+          // 2.5. Capture pre-write snapshot for undo.
+          if (historySession) {
+            captureSnapshot(snapshotStore, {
+              siteName: site.name,
+              sessionId: historySession.id,
+              attachmentId: item.id,
+              operation: 'optimize',
+              sourceBytes,
+              beforeHash: sourceHash,
+              beforeMeta: {
+                filename: item.filename,
+                mimeType: item.mimeType,
+                altText: item.altText,
+                title: item.title,
+                caption: item.caption,
+                description: item.description,
+                width: item.width,
+                height: item.height,
+                sizeBytes: sourceBytes.length,
+              },
+            });
           }
 
           // 3. Upload the result.
@@ -560,6 +602,13 @@ export function registerOptimizeCommand(program: Command): void {
             errorMessage: message,
           });
         }
+      }
+
+      // Close the history session and auto-prune to the retention cap.
+      if (historySession) {
+        closeHistorySession(snapshotStore, historySession, {
+          maxSizeBytes: historyConfig.maxSizeBytes,
+        });
       }
 
       db.close();

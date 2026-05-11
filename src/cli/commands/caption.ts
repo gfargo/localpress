@@ -19,8 +19,15 @@ import {
   isOllamaAvailable,
   listOllamaModels,
 } from '../../engine/caption/ollama.ts';
+import {
+  captureSnapshot,
+  closeHistorySession,
+  openHistorySession,
+  openSnapshotStore,
+  resolveHistoryConfig,
+} from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
-import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 export function registerCaptionCommand(program: Command): void {
@@ -139,6 +146,19 @@ export function registerCaptionCommand(program: Command): void {
       const db = SiteDb.init(getSiteDbPath(site.name));
       db.ensureSite(site.name, site.url);
 
+      // Time-machine: caption snapshots are metadata-only (just the previous
+      // alt text), so they're nearly free. Skip the session entirely in dry-run.
+      const historyConfig = resolveHistoryConfig(config.history);
+      const snapshotStore = openSnapshotStore(db, getConfigDir());
+      const historySession =
+        historyConfig.enabled && !isDryRun
+          ? openHistorySession(snapshotStore, site.name, 'caption', {
+              model: options.model,
+              language: options.language,
+              overwrite: options.overwrite ?? false,
+            })
+          : null;
+
       const results: Array<{
         id: number;
         filename: string;
@@ -191,6 +211,24 @@ export function registerCaptionCommand(program: Command): void {
           info(`    ✓ "${result.caption}" (${result.durationMs}ms)`);
 
           if (!isDryRun) {
+            // Capture metadata-only snapshot (alt-text before-state) for undo.
+            if (historySession) {
+              captureSnapshot(snapshotStore, {
+                siteName: site.name,
+                sessionId: historySession.id,
+                attachmentId: item.id,
+                operation: 'caption',
+                sourceBytes: null,
+                beforeMeta: {
+                  filename: item.filename,
+                  mimeType: item.mimeType,
+                  altText: item.altText,
+                  title: item.title,
+                  caption: item.caption,
+                  description: item.description,
+                },
+              });
+            }
             await updateAdapter.updateMetadata(id, { altText: result.caption });
           }
 
@@ -256,6 +294,12 @@ export function registerCaptionCommand(program: Command): void {
             errorMessage: message,
           });
         }
+      }
+
+      if (historySession) {
+        closeHistorySession(snapshotStore, historySession, {
+          maxSizeBytes: historyConfig.maxSizeBytes,
+        });
       }
 
       db.close();

@@ -44,8 +44,8 @@ describe('exit codes', () => {
 });
 
 describe('schema', () => {
-  test('initial schema version is 3', () => {
-    expect(SCHEMA_VERSION).toBe(3);
+  test('initial schema version is 4', () => {
+    expect(SCHEMA_VERSION).toBe(4);
   });
 });
 
