@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.1] - 2026-05-11
+
+### Fixed
+- **MCP `sites_list` schema validation error**: the MCP protocol requires
+  `structuredContent` to be a record (object), but `localpress sites --json`
+  returns an array. Now wraps array results in `{ items: [...] }`.
+- **MCP silent failures on partial errors**: when caption or other bulk ops
+  fail on individual items, error messages from stderr are now included in
+  the MCP response text (previously only surfaced on non-zero exit codes).
+- **MCP caption tool description**: now mentions that `moondream` is the
+  default model and must be pulled first, or pass `model` param for
+  alternatives like `llava-llama3`.
+
 ## [1.15.0] - 2026-05-11
 
 ### Added
@@ -736,6 +749,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [1.3.0]: https://github.com/gfargo/localpress/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/gfargo/localpress/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/gfargo/localpress/compare/v1.0.0...v1.1.0
+[1.15.1]: https://github.com/gfargo/localpress/compare/v1.15.0...v1.15.1
 [1.0.0]: https://github.com/gfargo/localpress/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/gfargo/localpress/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/gfargo/localpress/compare/v0.2.0...v0.3.0
