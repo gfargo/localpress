@@ -191,6 +191,7 @@ export class RestAdapter implements WpBackend {
     if (metadata.altText !== undefined) body.alt_text = metadata.altText;
     if (metadata.caption !== undefined) body.caption = metadata.caption;
     if (metadata.description !== undefined) body.description = metadata.description;
+    if (metadata.slug !== undefined) body.slug = metadata.slug;
 
     await this.request<WpMediaResponse>(this.apiUrl(`/media/${id}`), {
       method: 'POST',
