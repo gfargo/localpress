@@ -285,6 +285,15 @@ const SETTABLE_KEYS: Record<
       c.defaults.concurrency = n;
     },
   },
+  'defaults.captionModel': {
+    get: (c) => c.defaults?.captionModel,
+    set: (c, v) => {
+      const trimmed = v.trim();
+      if (!trimmed) throw new Error('captionModel must be a non-empty Ollama model name');
+      if (!c.defaults) c.defaults = {};
+      c.defaults.captionModel = trimmed;
+    },
+  },
   'history.enabled': {
     get: (c) => c.history?.enabled ?? true,
     set: (c, v) => {
