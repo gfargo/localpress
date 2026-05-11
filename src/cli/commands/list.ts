@@ -187,6 +187,7 @@ export function registerListCommand(program: Command): void {
               processedIds,
               sortBy: filters.sortBy,
               sortOrder: filters.sortOrder,
+              siteName: site.name,
               profiles: config.profiles
                 ? Object.entries(config.profiles).map(([name, p]) => ({
                     name,
