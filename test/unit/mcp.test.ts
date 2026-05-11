@@ -128,6 +128,30 @@ describe('mcp server', () => {
     }
   }, 30_000);
 
+  test('bulk tools expose concurrency field', async () => {
+    const { client, close } = await connectClient();
+    try {
+      const { tools } = await client.listTools();
+      for (const name of [
+        'optimize',
+        'convert',
+        'resize',
+        'remove_bg',
+        'caption',
+        'export',
+        'import',
+      ]) {
+        const tool = tools.find((t) => t.name === name);
+        const schema = tool?.inputSchema as { properties?: Record<string, unknown> };
+        expect(schema.properties, `tool ${name} should expose concurrency`).toHaveProperty(
+          'concurrency',
+        );
+      }
+    } finally {
+      await close();
+    }
+  }, 30_000);
+
   test('delete tool is registered with ids + force', async () => {
     const { client, close } = await connectClient();
     try {
