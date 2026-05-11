@@ -397,6 +397,9 @@ function applyCommonFilters(params: Record<string, string | number>, filters: Li
   if (filters.since) {
     params.after = filters.since;
   }
+  if (filters.search) {
+    params.search = filters.search;
+  }
 }
 
 function applySizeSort(items: MediaItem[], filters: ListFilters): MediaItem[] {

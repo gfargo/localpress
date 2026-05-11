@@ -25,6 +25,7 @@ export function registerListCommand(program: Command): void {
     )
     .option('--since <date>', 'only items uploaded since this ISO date')
     .option('--larger-than <bytes>', 'minimum size in bytes', (v) => Number.parseInt(v, 10))
+    .option('--search <term>', 'free-text search across filename and title')
     .option('--limit <n>', 'items per page (max 100)', (v) => Number.parseInt(v, 10))
     .option('--page <n>', 'page number (default 1)', (v) => Number.parseInt(v, 10))
     .option('--sort <field>', 'sort by: date (default), name, size, id')
@@ -45,6 +46,7 @@ export function registerListCommand(program: Command): void {
         postId: options.post,
         since: options.since,
         largerThan: options.largerThan,
+        search: options.search,
         perPage: Math.min(options.limit ?? 50, 100),
         page: options.page ?? 1,
         sortBy: VALID_SORT_FIELDS.includes(options.sort) ? (options.sort as SortField) : undefined,

@@ -71,6 +71,8 @@ export interface ListFilters {
   since?: string;
   /** Bytes — only items larger than this. */
   largerThan?: number;
+  /** Free-text search across filename and title. Maps to WP REST `?search=` natively. */
+  search?: string;
   /** Sort field. 'size' is applied client-side; others pass to the REST API. */
   sortBy?: SortField;
   /** Sort direction. */
