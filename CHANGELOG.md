@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-05-11
+
+### Added
+
+Major vision-AI expansion — five new commands and matching MCP tools that
+turn localpress from "alt-text generator" into a full image-metadata
+workstation. Same Ollama plumbing as `caption`; same time-machine safety net.
+
+- **`localpress title`** + `generate_title` MCP tool: 3-7 word noun-phrase
+  title for the WP `post_title` field. `--missing-title` auto-detects
+  machine-generated names (Screenshot-…, IMG_…, DSC_…).
+- **`localpress describe`** + `generate_description` MCP tool: 2-3
+  sentence description for galleries and attachment-page SEO. Writes to
+  the WP description field. `--missing-description` filter.
+- **`localpress rename`** + `rename` MCP tool: rename attachment slugs.
+  `--smart` uses the vision model to generate a sensible name; `--to`
+  takes an explicit string. Both slugify. v1 updates the WP slug
+  (`post_name`) only — does not rename the underlying file on disk
+  (deferred; requires WP-CLI + filesystem ops).
+- **`localpress classify`** + `classify` MCP tool: detect image type
+  (screenshot / photo / illustration / diagram) and cache locally.
+  **`optimize` now consults the cache** to pick smarter format defaults
+  when no explicit `--to` or profile format was given: screenshots /
+  diagrams → PNG, photos / illustrations → WebP.
+- **`localpress tag`** + `tag` MCP tool: 3-6 short tags appended to the
+  caption as a `[tags: …]` block. Universal — doesn't require WP
+  attachment taxonomies to be registered. Preserves existing caption
+  text; idempotent unless `--overwrite`.
+- **`localpress vision`** + `vision` MCP tool: unified workflow.
+  Generates alt + title + description + tags + classify in one pass for
+  one or more attachments. Print-only by default; `--apply` writes
+  everything via a single composed update. `--fields` to subset.
+- **`audit --quality`**: flag blurry / low-contrast / poorly-composed
+  images via Ollama vision (slow, opt-in only).
+- **`audit --ocr-text <term>`**: find images that visually contain the
+  given text (slow, opt-in only).
+
+### Changed
+
+- **Engine refactor (`CaptionOptions.kind`)**: the underlying vision
+  engine now accepts a `kind` discriminator (`alt | title | description
+  | classify | tags`) with per-kind prompt templates and per-kind
+  post-processors. Backward-compatible — `kind` defaults to `alt`.
+- **New shared `runBulkVision`**: per-item bulk loop with FK-safe
+  upserts, time-machine snapshots, and graceful failure handling. Used
+  by `title` and `describe`; the existing `caption` is left unchanged
+  for safety, can be migrated later.
+- **`UpdateMetadata.slug?: string`**: new field forwarded by the REST
+  adapter to WP REST `slug`. Used by `rename`.
+
+### Notes
+
+This release expands the MCP tool surface from 27 to 33. Combined with
+the `--quality` / `--ocr-text` audit additions, an agent driving
+localpress can now generate, edit, classify, search-by-content, and
+quality-flag the entire library — all without touching the WordPress
+admin. Pairs naturally with the time-machine: every AI write is
+undoable.
+
+`--inconsistent` (cross-library style-outlier audit) was on the original
+plan but deferred — it needs proper embedding-based clustering and is a
+separate design conversation.
+
 ## [1.17.1] - 2026-05-11
 
 ### Fixed
