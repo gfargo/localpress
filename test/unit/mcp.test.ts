@@ -128,6 +128,20 @@ describe('mcp server', () => {
     }
   }, 30_000);
 
+  test('delete tool is registered with ids + force', async () => {
+    const { client, close } = await connectClient();
+    try {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === 'delete');
+      expect(tool).toBeDefined();
+      const schema = tool?.inputSchema as { properties?: Record<string, unknown> };
+      expect(schema.properties).toHaveProperty('ids');
+      expect(schema.properties).toHaveProperty('force');
+    } finally {
+      await close();
+    }
+  }, 30_000);
+
   test('update_metadata tool is registered with the expected fields', async () => {
     const { client, close } = await connectClient();
     try {
