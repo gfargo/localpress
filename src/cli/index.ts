@@ -20,6 +20,7 @@ import { registerExportCommand } from './commands/export.ts';
 import { registerImportCommand } from './commands/import.ts';
 import { registerInitCommand } from './commands/init.ts';
 import { registerListCommand } from './commands/list.ts';
+import { registerMcpCommand } from './commands/mcp.ts';
 import { registerOptimizeCommand } from './commands/optimize.ts';
 import { registerPullCommand } from './commands/pull.ts';
 import { registerPushCommand } from './commands/push.ts';
@@ -87,6 +88,7 @@ registerRegenerateCommand(program);
 registerUpdateCommand(program);
 registerWatchCommand(program);
 registerCompletionsCommand(program);
+registerMcpCommand(program);
 
 // Top-level help footer.
 program.addHelpText(

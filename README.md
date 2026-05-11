@@ -229,14 +229,23 @@ The CLI talks to WordPress through a **backend adapter** that auto-detects what'
 
 ## AI agent integration
 
-The `skill/SKILL.md` file is a complete instruction sheet for AI agents (Claude Desktop, Cursor, VS Code with MCP, etc.). It covers:
+Two ways to drive localpress from an agent:
 
-- When to invoke localpress vs. the user's existing WP MCP server
-- Full command reference with `--json` output schemas
-- Composition patterns for mixed WP MCP + localpress workflows
-- Error codes and handling guidance
+**1. MCP server (recommended)** — `localpress mcp` is a stdio Model Context Protocol server that exposes 20 typed tools and 3 resources. Add it to any MCP host (Claude Desktop, Cursor, Claude Code, VS Code) with a one-line config:
 
-Always pass `--json` when running from an agent — the human-readable output is not designed for parsing.
+```jsonc
+{
+  "mcpServers": {
+    "localpress": { "command": "localpress", "args": ["mcp"] }
+  }
+}
+```
+
+The agent gets typed schemas for every operation, structured results, and capability discovery via the `localpress://capabilities` resource. See [`.wiki/MCP-Setup.md`](.wiki/MCP-Setup.md) for full setup instructions per host.
+
+**2. Markdown skill** — `skill/SKILL.md` is a complete instruction sheet for agents that prefer shelling out to the CLI directly. Works in any agent that can run bash.
+
+Always pass `--json` when running the CLI from an agent — the human-readable output is not designed for parsing.
 
 ---
 
