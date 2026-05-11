@@ -259,6 +259,9 @@ localpress optimize --unoptimized --json
 # Execute for real:
 localpress optimize --unoptimized --apply --json
 
+# Use a named optimization profile
+localpress optimize --unoptimized --profile hero --apply --json
+
 # Use jSquash WASM codecs for better PNG compression (OxiPNG)
 localpress optimize 123 --encoder jsquash --json
 
@@ -335,8 +338,15 @@ localpress caption 123 124 --json
 # Bulk-caption all images with no alt text (dry-run by default)
 localpress caption --missing-alt --json
 
+# Caption all images in the library (dry-run by default)
+localpress caption --all --json
+
 # Execute the bulk caption run
 localpress caption --missing-alt --apply --json
+
+# Generate alt text in a specific language
+localpress caption 123 --language Spanish --json
+localpress caption --missing-alt --language French --apply --json
 
 # Use a specific model
 localpress caption 123 --model llava --json
@@ -384,6 +394,66 @@ localpress edit 123 --no-watch
 ```
 
 The `edit` command downloads the attachment, opens it in the editor, and watches for file saves. Each save is automatically uploaded back to WordPress. The user presses Enter to stop watching.
+
+### Migration (export / import)
+
+```bash
+# Export all media as a ZIP with metadata manifest
+localpress export --all --to ./backup.zip --json
+
+# Export unoptimized images to a directory
+localpress export --unoptimized --to ./to-process/ --json
+
+# Export specific attachments
+localpress export 123 456 --to ./selected.zip --json
+
+# Export with filters
+localpress export --all --type image/jpeg --since 2026-01-01 --json
+
+# Import a directory with optimization
+localpress import ./product-photos/ --optimize --to webp --json
+
+# Import a previous export, preserving metadata
+localpress import ./backup.zip --preserve-ids --json
+
+# Import with resize constraints
+localpress import ./raw-photos/ --optimize --max-width 1920 --json
+
+# Dry run
+localpress import ./photos/ --dry-run --json
+```
+
+#### `export --json` output
+
+```json
+{
+  "action": "exported",
+  "destination": "./backup.zip",
+  "format": "zip",
+  "exported": 42,
+  "failures": 0,
+  "totalBytes": 12582912,
+  "items": [
+    { "id": 123, "filename": "hero.jpg", "relativePath": "2026/01/hero.jpg", "sizeBytes": 245760 }
+  ]
+}
+```
+
+#### `import --json` output
+
+```json
+{
+  "action": "imported",
+  "site": "production",
+  "imported": 42,
+  "failures": 1,
+  "totalUploadedBytes": 12582912,
+  "totalOriginalBytes": 25165824,
+  "items": [
+    { "file": "hero.jpg", "attachmentId": 847, "filename": "hero.jpg", "sizeBytes": 142301, "optimized": true, "originalSize": 524288 }
+  ]
+}
+```
 
 ### Low-level
 
@@ -448,4 +518,6 @@ On exit code 6, the message explains which capability is missing and what the us
 
 **Encoder backends.** The `optimize` command uses sharp by default. Pass `--encoder jsquash` to use Squoosh-derived WASM codecs instead — particularly useful for PNG files where OxiPNG produces significantly smaller output than sharp's built-in PNG encoder.
 
-**Browser preview.** Both `optimize` and `remove-bg` support `--preview` to open a local browser UI for adjusting settings visually before committing. The preview server runs on localhost, auto-opens the browser, and shuts down when the tab closes or the user applies/cancels. Note: `--preview` requires exactly one attachment ID (not bulk mode).
+**Named profiles.** Use `localpress config set-profile <name> --quality 75 --format webp --max-width 1920` to create reusable optimization presets. Then pass `--profile <name>` to `optimize` to apply them. Profile values are defaults — explicit CLI flags override them.
+
+**Browser preview.** Both `optimize` and `remove-bg` support `--preview` to open a local browser UI for adjusting settings visually before committing. The preview server runs on localhost, auto-opens the browser, and shuts down when the tab closes or the user applies/cancels. Note: `--preview` requires exactly one attachment ID (not bulk mode). If profiles are configured, a dropdown in the preview sidebar lets the user pre-fill settings from a profile.
