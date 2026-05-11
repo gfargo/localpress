@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-05-11
+
+### Added
+- **`defaults.captionModel` config key**: set the default Ollama vision
+  model once instead of passing `--model` on every call. Resolution
+  order: `--model` (flag) > `config.defaults.captionModel` > `moondream`
+  (built-in). Set via `localpress config set defaults.captionModel
+  llava-llama3:latest`.
+- **`caption` pre-flight model check**: before starting a bulk loop,
+  verify the resolved Ollama model is installed locally. Fails fast with
+  an actionable error listing locally-available vision models and three
+  remediation paths (pull the requested model, use one already installed,
+  set the project default). Catches typos and missing-default cases
+  before a 300-item run fails the same way on every item.
+- **`list -i` shows the active site name in the header**: the TUI now
+  reads `localPress · <site name> — media library` so users managing
+  multiple WP sites can see at a glance which site they're working
+  against.
+
+### Changed
+- **`caption --model` no longer has a hardcoded commander default**: the
+  CLI option default was removed so the resolution chain (flag > config
+  > built-in) can run cleanly. The built-in default is still `moondream`,
+  just no longer baked into the flag itself.
+
 ## [1.16.1] - 2026-05-11
 
 ### Fixed
