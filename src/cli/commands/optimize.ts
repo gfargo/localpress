@@ -28,6 +28,7 @@ import type { ImageFormat, OptimizeOptions } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { getCachedClassification } from './classify.ts';
 
 interface OptimizeResultRecord {
   id: number;
@@ -437,8 +438,27 @@ export function registerOptimizeCommand(program: Command): void {
             continue;
           }
 
+          // Smart format default: if the user didn't pick a format (no --to,
+          // no --profile format) and we have a cached `classify` result for
+          // this attachment, route to a sensible default:
+          //   screenshot / diagram → PNG (preserves crisp text edges)
+          //   photo                → WebP (best photographic compression)
+          //   illustration         → WebP (good for flat-color art too)
+          // Explicit --to / profile values always win.
+          const perItemOpts: OptimizeOptions = { ...optimizeOpts };
+          if (!perItemOpts.toFormat) {
+            const classification = getCachedClassification(db, site.name, item.id);
+            if (classification === 'screenshot' || classification === 'diagram') {
+              perItemOpts.toFormat = 'png';
+              info(`    ↳ Smart default: PNG (classified as ${classification})`);
+            } else if (classification === 'photo' || classification === 'illustration') {
+              perItemOpts.toFormat = 'webp';
+              info(`    ↳ Smart default: WebP (classified as ${classification})`);
+            }
+          }
+
           // 2. Process through the image engine.
-          const result = await optimizeImage(sourceBytes, item.mimeType, optimizeOpts);
+          const result = await optimizeImage(sourceBytes, item.mimeType, perItemOpts);
           const resultHash = createHash('sha256').update(result.bytes).digest('hex');
           const durationMs = Date.now() - startTime;
 
@@ -449,7 +469,7 @@ export function registerOptimizeCommand(program: Command): void {
             );
 
             // Record as success so we don't re-process.
-            recordSuccess(db, site.name, item, sourceHash, sourceHash, optimizeOpts, durationMs, {
+            recordSuccess(db, site.name, item, sourceHash, sourceHash, perItemOpts, durationMs, {
               bytesBefore: sourceBytes.length,
               bytesAfter: sourceBytes.length,
               resultWpId: null,
@@ -538,7 +558,7 @@ export function registerOptimizeCommand(program: Command): void {
           }
 
           // 4. Record in SQLite.
-          recordSuccess(db, site.name, item, sourceHash, resultHash, optimizeOpts, durationMs, {
+          recordSuccess(db, site.name, item, sourceHash, resultHash, perItemOpts, durationMs, {
             bytesBefore: sourceBytes.length,
             bytesAfter: result.bytes.length,
             resultWpId: resultWpId !== item.id ? resultWpId : null,
