@@ -75,12 +75,28 @@ function mapPostDetail(raw: WpPost): PostDetail {
 export function registerPostsCommand(program: Command): void {
   const posts = program.command('posts').description('Manage WordPress posts and pages');
 
+  /**
+   * Map a post type slug to its REST API endpoint path.
+   * WordPress exposes custom post types at /wp-json/wp/v2/<slug> when show_in_rest is true.
+   * Built-in types: 'post' → '/posts', 'page' → '/pages'.
+   * Custom types: 'portfolio' → '/portfolio', 'event' → '/event', etc.
+   */
+  function typeEndpoint(type: string): string {
+    if (type === 'post') return '/posts';
+    if (type === 'page') return '/pages';
+    return `/${type}`;
+  }
+
   // -- posts list -------------------------------------------------------------
   posts
     .command('list')
     .description('List posts or pages with filters')
     .option('--status <status>', 'filter by status (publish, draft, pending, private, trash)')
-    .option('--type <type>', 'post type: post (default) or page', 'post')
+    .option(
+      '--type <type>',
+      'post type slug: post, page, or any custom post type (e.g. portfolio, event)',
+      'post',
+    )
     .option('--author <id>', 'filter by author ID', (v) => Number.parseInt(v, 10))
     .option('--search <query>', 'search posts by keyword')
     .option('--category <id>', 'filter by category ID', (v) => Number.parseInt(v, 10))
@@ -93,7 +109,7 @@ export function registerPostsCommand(program: Command): void {
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
 
-      const endpoint = options.type === 'page' ? '/pages' : '/posts';
+      const endpoint = typeEndpoint(options.type);
       const params = new URLSearchParams();
       params.set('per_page', String(Math.min(options.perPage ?? 20, 100)));
       params.set('page', String(options.page ?? 1));
@@ -149,7 +165,7 @@ export function registerPostsCommand(program: Command): void {
   posts
     .command('show <id>')
     .description('Show full details for a post or page')
-    .option('--type <type>', 'post type: post or page', 'post')
+    .option('--type <type>', 'post type: post, page, or custom (e.g. portfolio)', 'post')
     .action(async (idStr: string, options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -161,7 +177,7 @@ export function registerPostsCommand(program: Command): void {
         process.exit(2);
       }
 
-      const endpoint = options.type === 'page' ? '/pages' : '/posts';
+      const endpoint = typeEndpoint(options.type);
       const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}/${id}?context=edit`;
       const auth = `Basic ${btoa(`${site.username}:${site.appPassword}`)}`;
 
@@ -208,7 +224,7 @@ export function registerPostsCommand(program: Command): void {
     .option('--content <html>', 'post content (HTML or Gutenberg blocks)')
     .option('--content-file <path>', 'read content from a file')
     .option('--status <status>', 'post status: draft (default), publish, pending, private', 'draft')
-    .option('--type <type>', 'post type: post or page', 'post')
+    .option('--type <type>', 'post type: post, page, or custom (e.g. portfolio)', 'post')
     .option('--slug <slug>', 'URL slug')
     .option('--excerpt <text>', 'post excerpt')
     .option('--featured-image <id>', 'featured image attachment ID', (v) => Number.parseInt(v, 10))
@@ -229,7 +245,7 @@ export function registerPostsCommand(program: Command): void {
         }
       }
 
-      const endpoint = options.type === 'page' ? '/pages' : '/posts';
+      const endpoint = typeEndpoint(options.type);
       const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}`;
       const auth = `Basic ${btoa(`${site.username}:${site.appPassword}`)}`;
 
@@ -281,7 +297,7 @@ export function registerPostsCommand(program: Command): void {
     .option('--content <html>', 'new content')
     .option('--content-file <path>', 'read new content from a file')
     .option('--status <status>', 'new status: publish, draft, pending, private, trash')
-    .option('--type <type>', 'post type: post or page', 'post')
+    .option('--type <type>', 'post type: post, page, or custom (e.g. portfolio)', 'post')
     .option('--slug <slug>', 'new URL slug')
     .option('--excerpt <text>', 'new excerpt')
     .option('--featured-image <id>', 'featured image attachment ID', (v) => Number.parseInt(v, 10))
@@ -308,7 +324,7 @@ export function registerPostsCommand(program: Command): void {
         }
       }
 
-      const endpoint = options.type === 'page' ? '/pages' : '/posts';
+      const endpoint = typeEndpoint(options.type);
       const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}/${id}`;
       const auth = `Basic ${btoa(`${site.username}:${site.appPassword}`)}`;
 
@@ -359,7 +375,7 @@ export function registerPostsCommand(program: Command): void {
   posts
     .command('delete <id>')
     .description('Trash or permanently delete a post/page')
-    .option('--type <type>', 'post type: post or page', 'post')
+    .option('--type <type>', 'post type: post, page, or custom (e.g. portfolio)', 'post')
     .option('--force', 'permanently delete (skip trash)')
     .action(async (idStr: string, options) => {
       const parentOpts = program.opts();
@@ -372,7 +388,7 @@ export function registerPostsCommand(program: Command): void {
         process.exit(2);
       }
 
-      const endpoint = options.type === 'page' ? '/pages' : '/posts';
+      const endpoint = typeEndpoint(options.type);
       const params = options.force ? '?force=true' : '';
       const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}/${id}${params}`;
       const auth = `Basic ${btoa(`${site.username}:${site.appPassword}`)}`;

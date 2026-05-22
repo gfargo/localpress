@@ -1219,7 +1219,10 @@ export function registerTools(server: McpServer): void {
           .enum(['publish', 'draft', 'pending', 'private', 'trash', 'any'])
           .optional()
           .describe('Filter by post status'),
-        type: z.enum(['post', 'page']).optional().describe('Post type (default: post)'),
+        type: z
+          .string()
+          .optional()
+          .describe('Post type slug: post, page, or any custom post type (default: post)'),
         author: z.number().int().positive().optional().describe('Filter by author ID'),
         search: z.string().optional().describe('Search posts by keyword'),
         category: z.number().int().positive().optional().describe('Filter by category ID'),
@@ -1253,7 +1256,10 @@ export function registerTools(server: McpServer): void {
       inputSchema: {
         ...commonSiteArg,
         id: z.number().int().positive().describe('Post or page ID'),
-        type: z.enum(['post', 'page']).optional().describe('Post type (default: post)'),
+        type: z
+          .string()
+          .optional()
+          .describe('Post type slug: post, page, or any custom post type (default: post)'),
       },
     },
     async (args) => {
@@ -1274,7 +1280,10 @@ export function registerTools(server: McpServer): void {
         title: z.string().describe('Post title'),
         content: z.string().optional().describe('Post content (HTML or Gutenberg blocks)'),
         status: z.enum(['draft', 'publish', 'pending', 'private']).optional(),
-        type: z.enum(['post', 'page']).optional().describe('Post type (default: post)'),
+        type: z
+          .string()
+          .optional()
+          .describe('Post type slug: post, page, or any custom post type (default: post)'),
         slug: z.string().optional().describe('URL slug'),
         excerpt: z.string().optional().describe('Post excerpt'),
         featuredImage: z
@@ -1314,7 +1323,10 @@ export function registerTools(server: McpServer): void {
         title: z.string().optional().describe('New title'),
         content: z.string().optional().describe('New content (HTML or Gutenberg blocks)'),
         status: z.enum(['publish', 'draft', 'pending', 'private', 'trash']).optional(),
-        type: z.enum(['post', 'page']).optional().describe('Post type (default: post)'),
+        type: z
+          .string()
+          .optional()
+          .describe('Post type slug: post, page, or any custom post type (default: post)'),
         slug: z.string().optional().describe('New URL slug'),
         excerpt: z.string().optional().describe('New excerpt'),
         featuredImage: z
@@ -1351,7 +1363,10 @@ export function registerTools(server: McpServer): void {
       inputSchema: {
         ...commonSiteArg,
         id: z.number().int().positive().describe('Post or page ID'),
-        type: z.enum(['post', 'page']).optional().describe('Post type (default: post)'),
+        type: z
+          .string()
+          .optional()
+          .describe('Post type slug: post, page, or any custom post type (default: post)'),
         force: z.boolean().optional().describe('Permanently delete (skip trash)'),
       },
     },
