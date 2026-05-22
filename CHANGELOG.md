@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-05-22
+
+### Added
+- **`localpress posts` command**: full WordPress post and page CRUD via REST API.
+  Subcommands: `list`, `show`, `create`, `update`, `delete`. Supports custom post
+  types (portfolio, event, product — any type with `show_in_rest`). Includes
+  `--content-file` for reading content from local files, `--featured-image` for
+  setting featured media, and `--category`/`--tag` for taxonomy assignment.
+- **`localpress a11y` command**: WCAG accessibility audit for post/page content.
+  Checks heading hierarchy (skipped levels, multiple h1s), generic link text
+  ("click here", "read more"), missing alt on inline images, and empty links.
+  Supports `--type`, `--status`, `--id`, `--limit`.
+- **`search_by_url` MCP tool**: resolve a WordPress media URL to attachment
+  details in one call. Extracts filename from URL and searches the library.
+- **`health_check` MCP tool**: combined doctor + stats + audit (missing-alt)
+  in one parallel call. Single round-trip for "what's the state of this library?"
+- **`posts_list`, `posts_show`, `posts_create`, `posts_update`, `posts_delete`
+  MCP tools**: full posts/pages CRUD exposed to agents with typed schemas.
+- **`a11y_audit` MCP tool**: accessibility audit exposed to agents.
+- **Custom post type support**: all posts commands accept any post type slug
+  (not just `post`/`page`). Works with portfolio, event, product, testimonial,
+  or any CPT registered with `show_in_rest`.
+
+### Changed
+- localpress is no longer just a media optimization tool — v2.0 marks the
+  expansion into WordPress content management, accessibility auditing, and
+  agent-first site management.
+
 ## [1.18.0] - 2026-05-11
 
 ### Added
