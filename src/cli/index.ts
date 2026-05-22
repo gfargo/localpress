@@ -9,6 +9,7 @@
 import { Command, Option } from 'commander';
 
 import packageJson from '../../package.json' with { type: 'json' };
+import { registerA11yCommand } from './commands/a11y.ts';
 import { registerAuditCommand } from './commands/audit.ts';
 import { registerCaptionCommand } from './commands/caption.ts';
 import { registerClassifyCommand } from './commands/classify.ts';
@@ -27,6 +28,7 @@ import { registerListCommand } from './commands/list.ts';
 import { registerMcpCommand } from './commands/mcp.ts';
 import { registerMetadataCommand } from './commands/metadata.ts';
 import { registerOptimizeCommand } from './commands/optimize.ts';
+import { registerPostsCommand } from './commands/posts.ts';
 import { registerPullCommand } from './commands/pull.ts';
 import { registerPushCommand } from './commands/push.ts';
 import { registerReferencesCommand } from './commands/references.ts';
@@ -92,6 +94,7 @@ registerVisionCommand(program);
 registerMetadataCommand(program);
 registerDeleteCommand(program);
 registerAuditCommand(program);
+registerA11yCommand(program);
 registerOptimizeCommand(program);
 registerConvertCommand(program);
 registerResizeCommand(program);
@@ -110,6 +113,7 @@ registerUpdateCommand(program);
 registerWatchCommand(program);
 registerWatchStatusCommand(program);
 registerCompletionsCommand(program);
+registerPostsCommand(program);
 registerMcpCommand(program);
 
 // Top-level help footer.

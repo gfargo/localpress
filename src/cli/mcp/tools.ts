@@ -1175,4 +1175,269 @@ export function registerTools(server: McpServer): void {
       return runCli(['watch-status'], a.site as string | undefined);
     },
   );
+
+  // ---------------------------------------------------------------------------
+  // Content management (posts/pages)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    'a11y_audit',
+    {
+      title: 'Accessibility audit',
+      description:
+        'Check posts/pages for WCAG accessibility issues: heading hierarchy, generic link text, missing img alt, empty links.',
+      inputSchema: {
+        ...commonSiteArg,
+        type: z
+          .enum(['post', 'page', 'both'])
+          .optional()
+          .describe('Post type to check (default: both)'),
+        status: z.string().optional().describe('Post status (default: publish)'),
+        id: z.number().int().positive().optional().describe('Check a specific post only'),
+        limit: z.number().int().positive().optional().describe('Max posts to check (default: 100)'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['a11y'];
+      opt(argv, '--type', a.type);
+      opt(argv, '--status', a.status);
+      opt(argv, '--id', a.id);
+      opt(argv, '--limit', a.limit);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
+    'posts_list',
+    {
+      title: 'List posts or pages',
+      description: 'List WordPress posts or pages with filters. Returns paginated results.',
+      inputSchema: {
+        ...commonSiteArg,
+        status: z
+          .enum(['publish', 'draft', 'pending', 'private', 'trash', 'any'])
+          .optional()
+          .describe('Filter by post status'),
+        type: z.enum(['post', 'page']).optional().describe('Post type (default: post)'),
+        author: z.number().int().positive().optional().describe('Filter by author ID'),
+        search: z.string().optional().describe('Search posts by keyword'),
+        category: z.number().int().positive().optional().describe('Filter by category ID'),
+        perPage: z.number().int().positive().max(100).optional().describe('Results per page'),
+        page: z.number().int().positive().optional().describe('Page number'),
+        orderby: z.enum(['date', 'title', 'id', 'modified', 'slug']).optional(),
+        order: z.enum(['asc', 'desc']).optional(),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['posts', 'list'];
+      opt(argv, '--status', a.status);
+      opt(argv, '--type', a.type);
+      opt(argv, '--author', a.author);
+      opt(argv, '--search', a.search);
+      opt(argv, '--category', a.category);
+      opt(argv, '--per-page', a.perPage);
+      opt(argv, '--page', a.page);
+      opt(argv, '--orderby', a.orderby);
+      opt(argv, '--order', a.order);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
+    'posts_show',
+    {
+      title: 'Show post details',
+      description: 'Fetch full details for a specific post or page, including content.',
+      inputSchema: {
+        ...commonSiteArg,
+        id: z.number().int().positive().describe('Post or page ID'),
+        type: z.enum(['post', 'page']).optional().describe('Post type (default: post)'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['posts', 'show', String(a.id)];
+      opt(argv, '--type', a.type);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
+    'posts_create',
+    {
+      title: 'Create a post or page',
+      description: 'Create a new WordPress post or page. Returns as draft by default.',
+      inputSchema: {
+        ...commonSiteArg,
+        title: z.string().describe('Post title'),
+        content: z.string().optional().describe('Post content (HTML or Gutenberg blocks)'),
+        status: z.enum(['draft', 'publish', 'pending', 'private']).optional(),
+        type: z.enum(['post', 'page']).optional().describe('Post type (default: post)'),
+        slug: z.string().optional().describe('URL slug'),
+        excerpt: z.string().optional().describe('Post excerpt'),
+        featuredImage: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Featured image attachment ID'),
+        categories: z.string().optional().describe('Comma-separated category IDs'),
+        tags: z.string().optional().describe('Comma-separated tag IDs'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['posts', 'create'];
+      opt(argv, '--title', a.title);
+      opt(argv, '--content', a.content);
+      opt(argv, '--status', a.status);
+      opt(argv, '--type', a.type);
+      opt(argv, '--slug', a.slug);
+      opt(argv, '--excerpt', a.excerpt);
+      opt(argv, '--featured-image', a.featuredImage);
+      opt(argv, '--category', a.categories);
+      opt(argv, '--tag', a.tags);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
+    'posts_update',
+    {
+      title: 'Update a post or page',
+      description: 'Update an existing WordPress post or page. Only provided fields are changed.',
+      inputSchema: {
+        ...commonSiteArg,
+        id: z.number().int().positive().describe('Post or page ID to update'),
+        title: z.string().optional().describe('New title'),
+        content: z.string().optional().describe('New content (HTML or Gutenberg blocks)'),
+        status: z.enum(['publish', 'draft', 'pending', 'private', 'trash']).optional(),
+        type: z.enum(['post', 'page']).optional().describe('Post type (default: post)'),
+        slug: z.string().optional().describe('New URL slug'),
+        excerpt: z.string().optional().describe('New excerpt'),
+        featuredImage: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Featured image attachment ID'),
+        categories: z.string().optional().describe('Comma-separated category IDs'),
+        tags: z.string().optional().describe('Comma-separated tag IDs'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['posts', 'update', String(a.id)];
+      opt(argv, '--title', a.title);
+      opt(argv, '--content', a.content);
+      opt(argv, '--status', a.status);
+      opt(argv, '--type', a.type);
+      opt(argv, '--slug', a.slug);
+      opt(argv, '--excerpt', a.excerpt);
+      opt(argv, '--featured-image', a.featuredImage);
+      opt(argv, '--category', a.categories);
+      opt(argv, '--tag', a.tags);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
+    'posts_delete',
+    {
+      title: 'Delete a post or page',
+      description: 'Move a post/page to trash, or permanently delete with force=true.',
+      inputSchema: {
+        ...commonSiteArg,
+        id: z.number().int().positive().describe('Post or page ID'),
+        type: z.enum(['post', 'page']).optional().describe('Post type (default: post)'),
+        force: z.boolean().optional().describe('Permanently delete (skip trash)'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['posts', 'delete', String(a.id)];
+      opt(argv, '--type', a.type);
+      flag(argv, '--force', a.force);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // Composite / agent-convenience tools
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    'search_by_url',
+    {
+      title: 'Find attachment by URL',
+      description:
+        'Given a WordPress media URL (e.g. from post content), resolve it to the full attachment details. Extracts the filename from the URL and searches the library.',
+      inputSchema: {
+        ...commonSiteArg,
+        url: z.string().describe('The full WordPress media URL to look up'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const url = a.url as string;
+      // Extract filename from URL path (last segment, without query params)
+      let filename: string;
+      try {
+        const parsed = new URL(url);
+        const segments = parsed.pathname.split('/').filter(Boolean);
+        filename = segments[segments.length - 1] ?? '';
+        // Remove file extension for broader matching
+        filename = filename.replace(/\.[^.]+$/, '');
+      } catch {
+        filename =
+          url
+            .split('/')
+            .pop()
+            ?.replace(/\.[^.]+$/, '') ?? url;
+      }
+      if (!filename) {
+        return {
+          isError: true as const,
+          content: [{ type: 'text' as const, text: 'Could not extract filename from URL' }],
+        };
+      }
+      return runCli(['list', '--search', filename, '--limit', '5'], a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
+    'health_check',
+    {
+      title: 'Library health check (combined)',
+      description:
+        'Combined health status: connection check (doctor), processing stats, and missing-alt-text count — all in one call. Useful for agents that want a quick overview without multiple round-trips.',
+      inputSchema: {
+        ...commonSiteArg,
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const site = a.site as string | undefined;
+
+      // Run all three in parallel for speed.
+      const [doctorResult, statsResult, auditResult] = await Promise.all([
+        invokeCli({ args: ['doctor'], site }),
+        invokeCli({ args: ['stats'], site }),
+        invokeCli({ args: ['audit', '--missing-alt'], site }),
+      ]);
+
+      const combined = {
+        doctor: doctorResult.ok ? doctorResult.stdout : { error: doctorResult.stderr },
+        stats: statsResult.ok ? statsResult.stdout : { error: statsResult.stderr },
+        audit: auditResult.ok ? auditResult.stdout : { error: auditResult.stderr },
+      };
+
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(combined, null, 2) }],
+        structuredContent: combined as Record<string, unknown>,
+      };
+    },
+  );
 }
