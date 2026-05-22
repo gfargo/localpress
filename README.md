@@ -13,7 +13,7 @@
 
 > Your laptop, your library.
 
-Local-compute WordPress media optimization CLI. Uses your laptop's CPU and GPU to compress images, remove backgrounds, convert formats, generate alt-text, and round-trip with desktop editors — then syncs results back to your remote WordPress site via the REST API. No recurring credits. No cloud SaaS. No plugin required.
+Local-compute WordPress management CLI. Optimize media, manage posts and pages, audit accessibility, generate AI alt-text, remove backgrounds — all on your hardware. Syncs to your remote WordPress site via the REST API. No recurring credits. No cloud SaaS. No plugin required.
 
 **[Website](https://localpress.griffen.codes)** · **[Docs](https://localpress.griffen.codes/docs)** · **[Wiki](https://github.com/gfargo/localpress/wiki)** · **[Releases](https://github.com/gfargo/localpress/releases)**
 
@@ -96,17 +96,28 @@ localpress metadata 123 --alt "Product photo on white background"
 
 # Watch a directory and auto-push new images
 localpress watch ./assets/images --optimize
+
+# Manage posts and pages (including custom post types)
+localpress posts list --type portfolio
+localpress posts create --title "New Post" --content-file ./draft.html --status draft
+localpress posts update 456 --status publish
+
+# Accessibility audit
+localpress a11y
 ```
 
 ---
 
-## 30 commands
+## 38+ commands
 
 | Category | Commands |
 |----------|----------|
 | **Setup** | `init`, `sites`, `doctor`, `config` |
 | **Discovery** | `list`, `show`, `stats`, `audit`, `references` |
 | **Processing** | `optimize`, `convert`, `resize`, `remove-bg`, `caption`, `metadata` |
+| **AI Vision** | `title`, `describe`, `classify`, `tag`, `vision`, `rename` |
+| **Content** | `posts list/show/create/update/delete` |
+| **Accessibility** | `a11y` |
 | **Migration** | `export`, `import` |
 | **Automation** | `watch` |
 | **Server-side** | `regenerate` |
@@ -121,7 +132,7 @@ All commands accept `--json` for machine-readable output and `--help` for usage 
 
 ## AI agent integration (MCP)
 
-localpress ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server with 32 typed tools. Add it to any MCP host:
+localpress ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server with 40+ typed tools. Add it to any MCP host:
 
 ```jsonc
 // Claude Desktop, Cursor, VS Code, Kiro, etc.
@@ -132,7 +143,9 @@ localpress ships a built-in [Model Context Protocol](https://modelcontextprotoco
 }
 ```
 
-The agent gets typed schemas for every operation — optimize, caption, remove-bg, export/import, delete, undo, and more. Structured JSON results, capability discovery via resources, and concurrency control on all bulk operations.
+The agent gets typed schemas for every operation — optimize, caption, posts CRUD, accessibility audit, remove-bg, export/import, delete, undo, and more.
+
+Structured JSON results, capability discovery via resources, and concurrency control on all bulk operations.
 
 A markdown **skill** (`skill/SKILL.md`) is also available for agents that prefer shelling out to the CLI directly.
 
@@ -147,6 +160,8 @@ A markdown **skill** (`skill/SKILL.md`) is also available for agents that prefer
 - **Replace-in-place** — tries WP-CLI over SSH first, falls back gracefully. `--strict` fails instead of falling back.
 - **Two encoders** — sharp (default, native libvips) or jSquash WASM codecs (`--encoder jsquash`) for OxiPNG-level PNG compression.
 - **Multilingual captions** — `caption --language French` generates alt text in any language the Ollama model supports.
+- **Posts & pages** — full CRUD for posts, pages, and custom post types. Create drafts, publish, update content, manage categories/tags.
+- **Accessibility audit** — `a11y` checks heading hierarchy, generic link text, missing img alt, and empty links across all published content.
 
 ---
 
@@ -154,7 +169,7 @@ A markdown **skill** (`skill/SKILL.md`) is also available for agents that prefer
 
 ```text
 ┌──────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  MCP Server (32  │───▶│  localpress CLI  │───▶│  Remote WP site │
+│  MCP Server (40+ │───▶│  localpress CLI  │───▶│  Remote WP site │
 │  tools) / Skill  │    │  (TS + Bun)      │    │  (REST / SSH)   │
 └──────────────────┘    └──────────────────┘    └─────────────────┘
                                 │
@@ -207,7 +222,7 @@ bun install              # install deps
 bun run dev -- --help    # run CLI from source
 bun run typecheck        # tsc --noEmit
 bun run lint             # biome check
-bun test                 # 167 unit tests + integration
+bun test                 # 191+ unit tests + integration
 bun run build:all        # build tarballs for all 5 platforms
 ```
 
