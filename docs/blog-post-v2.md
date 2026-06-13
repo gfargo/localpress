@@ -217,7 +217,7 @@ The full roadmap has 450+ ideas across 61 domains: [docs/roadmap-ideas.md](https
 
 ```bash
 # New install
-brew install gfargo/localpress/localpress
+brew install gfargo/tap/localpress
 
 # Upgrade existing
 brew upgrade localpress

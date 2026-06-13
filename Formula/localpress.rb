@@ -2,14 +2,14 @@
 # frozen_string_literal: true
 
 # This formula is maintained in the localpress repository.
-# The Homebrew tap lives at https://github.com/gfargo/homebrew-localpress
+# The Homebrew tap lives at https://github.com/gfargo/homebrew-tap
 #
 # To install:
-#   brew tap gfargo/localpress
+#   brew tap gfargo/tap
 #   brew install localpress
 #
 # Or in one step:
-#   brew install gfargo/localpress/localpress
+#   brew install gfargo/tap/localpress
 
 class Localpress < Formula
   desc "Local-compute WordPress media optimization. Your laptop, your library."
