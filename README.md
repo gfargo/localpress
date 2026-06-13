@@ -3,7 +3,7 @@
 # localpress
 
 [![GitHub Release](https://img.shields.io/github/v/release/gfargo/localpress)](https://github.com/gfargo/localpress/releases)
-[![Homebrew](https://img.shields.io/badge/homebrew-gfargo%2Flocalpress-orange)](https://github.com/gfargo/homebrew-localpress)
+[![Homebrew](https://img.shields.io/badge/homebrew-gfargo%2Ftap-orange)](https://github.com/gfargo/homebrew-tap)
 [![License: MIT](https://img.shields.io/github/license/gfargo/localpress)](LICENSE)
 [![GitHub issues](https://img.shields.io/github/issues/gfargo/localpress)](https://github.com/gfargo/localpress/issues)
 [![GitHub pull requests](https://img.shields.io/github/issues-pr/gfargo/localpress)](https://github.com/gfargo/localpress/pulls)
@@ -24,7 +24,7 @@ Local-compute WordPress management CLI. Optimize media, manage posts and pages, 
 ### Homebrew (macOS / Linux)
 
 ```bash
-brew install gfargo/localpress/localpress
+brew install gfargo/tap/localpress
 ```
 
 ### Pre-built binaries

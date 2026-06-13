@@ -5,7 +5,7 @@ name: Release
 #
 # Prerequisites:
 #   - HOMEBREW_TAP_TOKEN secret: a GitHub PAT with `repo` scope on
-#     the homebrew-localpress tap repository (gfargo/homebrew-localpress).
+#     the shared gfargo Homebrew tap (gfargo/homebrew-tap).
 
 on:
   push:
@@ -134,7 +134,7 @@ jobs:
             echo "HOMEBREW_TAP_TOKEN not set — skipping tap push. Add it to repo secrets to enable."
             exit 0
           fi
-          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/gfargo/homebrew-localpress.git /tmp/tap
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/gfargo/homebrew-tap.git /tmp/tap
           cp Formula/localpress.rb /tmp/tap/Formula/localpress.rb
           cd /tmp/tap
           git config user.name  "github-actions[bot]"
