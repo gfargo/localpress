@@ -60,5 +60,10 @@ scratch/
 models/
 *.onnx
 
+# Screenshot pipeline raw output (regenerated, not committed)
+bin/screenshot/out/
+bin/screenshot/tapes/
+!bin/screenshot/out/.gitkeep
+
 # Local config (per-developer test sites)
 .localpress/
