@@ -111,7 +111,6 @@ export async function optimizeImage(
  * Apply transforms (resize, auto-rotate, strip metadata) and encode at a
  * specific quality value.  Called once per binary-search iteration.
  */
-// biome-ignore lint/suspicious/noExplicitAny: sharp pipeline is untyped
 async function encodeImage(
   // biome-ignore lint/suspicious/noExplicitAny: sharp pipeline is untyped
   sharp: any,
@@ -208,7 +207,6 @@ async function encodeImage(
  *   - If mid-quality fits → record as best, try higher (lo = mid + 1)
  *   - If mid-quality is too large → try lower (hi = mid - 1)
  */
-// biome-ignore lint/suspicious/noExplicitAny: sharp pipeline is untyped
 async function binarySearchQuality(
   // biome-ignore lint/suspicious/noExplicitAny: sharp pipeline is untyped
   sharp: any,

@@ -562,8 +562,7 @@ export function registerOptimizeCommand(program: Command): void {
             }
           }
 
-          const qualityNote =
-            result.finalQuality !== undefined ? `, q=${result.finalQuality}` : '';
+          const qualityNote = result.finalQuality !== undefined ? `, q=${result.finalQuality}` : '';
           info(
             `    ✓ ${formatBytes(result.before.sizeBytes)} → ${formatBytes(result.after.sizeBytes)} ` +
               `(${(result.savedRatio * 100).toFixed(1)}% reduction, ${durationMs}ms${qualityNote})`,
@@ -755,7 +754,7 @@ function parseTargetSize(value: string): number {
       `Invalid --target-size "${value}". Use a number with optional unit, e.g. 100kb, 1.5mb, 500b.`,
     );
   }
-  const num = parseFloat(match[1]);
+  const num = Number.parseFloat(match[1]);
   const unit = (match[2] ?? 'b').toLowerCase();
   switch (unit) {
     case 'kb':
