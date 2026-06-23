@@ -33,6 +33,12 @@ export interface OptimizeOptions {
   maxHeight?: number;
   /** Encoder backend: 'sharp' (default) or 'jsquash' (WASM codecs). */
   encoder?: 'sharp' | 'jsquash';
+  /**
+   * Target output size in bytes. When set for a lossy format (jpeg/webp/avif),
+   * binary-searches the quality parameter to produce a file ≤ this size.
+   * Ignored for PNG and GIF (no quality knob).
+   */
+  targetSizeBytes?: number;
 }
 
 export interface OptimizeResult {
@@ -47,4 +53,6 @@ export interface OptimizeResult {
   savedRatio: number;
   /** Codec/transforms applied, for debugging. */
   appliedSteps: string[];
+  /** Quality value used for encoding. Set for jpeg/webp/avif; undefined for png/gif. */
+  finalQuality?: number;
 }
