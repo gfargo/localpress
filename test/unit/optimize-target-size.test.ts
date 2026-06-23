@@ -11,12 +11,19 @@ import { optimizeImage } from '../../src/engine/image/optimize.ts';
 
 describe('optimizeImage — targetSizeBytes binary search', () => {
   test('result fits within target size for jpeg', async () => {
-    // Use a larger JPEG so there is room to compress.
-    // Generate a 200×200 solid-colour JPEG (≈ a few KB) via sharp.
+    // Use a high-entropy image so the JPEG encoder has real content to compress.
+    // Solid-colour images are already near the minimum JPEG file size even at q=1
+    // (mostly headers), leaving no headroom for the binary search to hit 50%.
     const sharp = (await import('sharp')).default;
-    const sourceBytes = await sharp({
-      create: { width: 200, height: 200, channels: 3, background: { r: 100, g: 150, b: 200 } },
-    })
+    const width = 200;
+    const height = 200;
+    const channels = 3;
+    const rawBuffer = Buffer.alloc(width * height * channels);
+    for (let i = 0; i < rawBuffer.length; i++) {
+      // Deterministic pseudo-random pattern — high spatial frequency = large JPEG.
+      rawBuffer[i] = (i * 127 + (i >> 3) * 31) & 0xff;
+    }
+    const sourceBytes = await sharp(rawBuffer, { raw: { width, height, channels } })
       .jpeg({ quality: 95 })
       .toBuffer();
 
