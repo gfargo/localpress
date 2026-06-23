@@ -5,27 +5,9 @@
  * output so we can verify the binary search actually converges.
  */
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
 import { optimizeImage } from '../../src/engine/image/optimize.ts';
-
-// Minimal 10×10 JPEG fixture encoded inline to avoid filesystem fixtures.
-// Created with: sharp({ create: { width: 10, height: 10, channels: 3, background: {r:100,g:150,b:200} } }).jpeg({quality:80}).toBuffer()
-// Stored as a base64 string so the test file is self-contained.
-const TINY_JPEG_B64 =
-  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRof' +
-  'Hh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwh' +
-  'MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAAR' +
-  'CAAKAAoDASIAAhEBAxEB/8QAFgABAQEAAAAAAAAAAAAAAAAABgUE/8QAIxAAAQQCAgMBAAAAAA' +
-  'AAAAAAAQIDBAUGESERITH/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAA' +
-  'AAAAA/9oADAMBAAIRAxEAPwCw3nku1ZjZ7ZmMGvF1BdFaMQRDlFmGWqNRCCGsjlMgYBvGwAA' +
-  'AAAAAAAAAAAAAAf/2Q==';
-
-function tinyJpegBuffer(): Buffer {
-  return Buffer.from(TINY_JPEG_B64, 'base64');
-}
 
 describe('optimizeImage — targetSizeBytes binary search', () => {
   test('result fits within target size for jpeg', async () => {
