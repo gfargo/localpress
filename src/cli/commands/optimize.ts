@@ -40,6 +40,7 @@ interface OptimizeResultRecord {
   resultWpId: number | null;
   durationMs: number;
   appliedSteps: string[];
+  finalQuality?: number;
 }
 
 export function registerOptimizeCommand(program: Command): void {
@@ -63,6 +64,11 @@ export function registerOptimizeCommand(program: Command): void {
       'compression mode: lossy or lossless (default: lossy for jpeg/webp/avif, lossless for png)',
     )
     .option('--quality <n>', '0-100 quality value (codec-specific)', (v) => Number.parseInt(v, 10))
+    .option(
+      '--target-size <size>',
+      'binary-search quality to hit this output size (e.g. 100kb, 1mb). Applies to jpeg/webp/avif.',
+      (v) => parseTargetSize(v),
+    )
     .option(
       '--no-replace-in-place',
       'always upload as a new attachment, never attempt true replacement',
@@ -387,6 +393,12 @@ export function registerOptimizeCommand(program: Command): void {
         return;
       }
 
+      // Validate --target-size / --quality mutual exclusivity.
+      if (options.targetSize && options.quality) {
+        error('--target-size and --quality are mutually exclusive. Use one or the other.');
+        process.exit(2);
+      }
+
       // Build optimization options.
       // Priority: explicit CLI flags > profile values > built-in defaults.
       const optimizeOpts: OptimizeOptions = {
@@ -397,6 +409,7 @@ export function registerOptimizeCommand(program: Command): void {
         maxHeight: profileMaxHeight,
         stripMetadata: profileStripMetadata ?? true,
         encoder: options.encoder === 'jsquash' ? 'jsquash' : (profileEncoder ?? 'sharp'),
+        targetSizeBytes: options.targetSize,
       };
 
       // Open the site DB for recording processing history.
@@ -549,12 +562,19 @@ export function registerOptimizeCommand(program: Command): void {
             }
           }
 
+          const qualityNote = result.finalQuality !== undefined ? `, q=${result.finalQuality}` : '';
           info(
             `    ✓ ${formatBytes(result.before.sizeBytes)} → ${formatBytes(result.after.sizeBytes)} ` +
-              `(${(result.savedRatio * 100).toFixed(1)}% reduction, ${durationMs}ms)`,
+              `(${(result.savedRatio * 100).toFixed(1)}% reduction, ${durationMs}ms${qualityNote})`,
           );
           if (result.appliedSteps.length > 0) {
             info(`      Steps: ${result.appliedSteps.join(' → ')}`);
+          }
+          if (options.targetSize && result.after.sizeBytes > options.targetSize) {
+            warn(
+              `    ⚠ Could not reach target size ${formatBytes(options.targetSize)}; ` +
+                `smallest achievable is ${formatBytes(result.after.sizeBytes)} at q=1.`,
+            );
           }
 
           // 4. Record in SQLite.
@@ -588,6 +608,7 @@ export function registerOptimizeCommand(program: Command): void {
             resultWpId,
             durationMs,
             appliedSteps: result.appliedSteps,
+            finalQuality: result.finalQuality,
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -720,4 +741,29 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Parse a human-readable size string (e.g. "100kb", "1.5mb", "500b") into bytes.
+ * Throws if the value is not recognised — Commander will surface the error.
+ */
+function parseTargetSize(value: string): number {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/i);
+  if (!match) {
+    throw new Error(
+      `Invalid --target-size "${value}". Use a number with optional unit, e.g. 100kb, 1.5mb, 500b.`,
+    );
+  }
+  const num = Number.parseFloat(match[1]);
+  const unit = (match[2] ?? 'b').toLowerCase();
+  switch (unit) {
+    case 'kb':
+      return Math.round(num * 1024);
+    case 'mb':
+      return Math.round(num * 1024 * 1024);
+    case 'gb':
+      return Math.round(num * 1024 * 1024 * 1024);
+    default:
+      return Math.round(num);
+  }
 }
