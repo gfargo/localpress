@@ -10,8 +10,77 @@
 
 import { rmSync } from 'node:fs';
 import type { Command } from 'commander';
+import { invokeCli } from '../mcp/invoke.ts';
 import { getSiteDbPath, loadConfig, saveConfig } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { ExitCode } from '../../types.ts';
+
+/**
+ * Tokenize a command string into an argv array, respecting single and double
+ * quoted segments. Escaped quotes within the same quote style are not supported.
+ */
+export function tokenizeCommand(input: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let inQuote: '"' | "'" | null = null;
+
+  for (const ch of input) {
+    if (inQuote) {
+      if (ch === inQuote) { inQuote = null; }
+      else { current += ch; }
+    } else if (ch === '"' || ch === "'") {
+      inQuote = ch;
+    } else if (ch === ' ') {
+      if (current.length) { tokens.push(current); current = ''; }
+    } else {
+      current += ch;
+    }
+  }
+  if (current.length) tokens.push(current);
+  return tokens;
+}
+
+/** Returns 0 if all results are ok, 1 otherwise. */
+export function aggregateExitCode(results: { ok: boolean }[]): 0 | 1 {
+  return results.every((r) => r.ok) ? 0 : 1;
+}
+
+/** Validate and resolve the target site names from command options. */
+export function resolveSiteNames(
+  options: { allSites?: boolean; sites?: string },
+  configSiteKeys: string[],
+): { names: string[] } | { error: string; exitCode: number } {
+  if (options.allSites && options.sites) {
+    return {
+      error: 'Use either --all-sites or --sites, not both.',
+      exitCode: ExitCode.InvalidUsage,
+    };
+  }
+  if (!options.allSites && !options.sites) {
+    return { error: 'Specify --all-sites or --sites <list>.', exitCode: ExitCode.InvalidUsage };
+  }
+  if (options.allSites) {
+    if (configSiteKeys.length === 0) {
+      return {
+        error: 'No sites configured. Run `localpress init` to add one.',
+        exitCode: ExitCode.ConfigError,
+      };
+    }
+    return { names: configSiteKeys };
+  }
+  const requested = (options.sites as string).split(',').map((s) => s.trim()).filter(Boolean);
+  const unknown = requested.filter((n) => !configSiteKeys.includes(n));
+  if (unknown.length) {
+    return {
+      error: `Unknown site(s): ${unknown.join(', ')}. Known sites: ${configSiteKeys.join(', ')}`,
+      exitCode: ExitCode.ConfigError,
+    };
+  }
+  if (requested.length === 0) {
+    return { error: '--sites list is empty.', exitCode: ExitCode.InvalidUsage };
+  }
+  return { names: requested };
+}
 
 export function registerSitesCommand(program: Command): void {
   const sites = program
@@ -148,5 +217,82 @@ export function registerSitesCommand(program: Command): void {
           warn(`Could not delete database at ${dbPath}. You may want to remove it manually.`);
         }
       }
+    });
+
+  sites
+    .command('run <command>')
+    .description('Run a localpress command across multiple sites')
+    .option('--all-sites', 'run against every configured site')
+    .option('--sites <list>', 'comma-separated list of site names')
+    .action(async (commandStr: string, options) => {
+      const parentOpts = program.opts();
+      const config = await loadConfig();
+
+      const resolution = resolveSiteNames(options, Object.keys(config.sites));
+      if ('error' in resolution) {
+        error(resolution.error);
+        process.exit(resolution.exitCode);
+      }
+      const { names } = resolution;
+
+      const args = tokenizeCommand(commandStr);
+      if (args.length === 0) {
+        error('Command string is empty.');
+        process.exit(ExitCode.InvalidUsage);
+      }
+      if (args[0] === 'sites') {
+        error('Cannot nest `sites run` inside itself.');
+        process.exit(ExitCode.InvalidUsage);
+      }
+
+      const results: {
+        site: string;
+        exitCode: number;
+        ok: boolean;
+        stdout: unknown;
+        stderr: string;
+      }[] = [];
+
+      for (const site of names) {
+        if (!parentOpts.json) info(`\n── ${site} ──`);
+        const result = await invokeCli({ site, concurrency: parentOpts.concurrency, args });
+        results.push({
+          site,
+          exitCode: result.exitCode,
+          ok: result.ok,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        });
+        if (!parentOpts.json) {
+          if (result.stdout) {
+            info(
+              typeof result.stdout === 'string'
+                ? result.stdout
+                : JSON.stringify(result.stdout, null, 2),
+            );
+          }
+          if (!result.ok && result.stderr) warn(result.stderr);
+        }
+      }
+
+      const failed = results.filter((r) => !r.ok);
+      if (parentOpts.json) {
+        printJson({
+          command: args.join(' '),
+          total: results.length,
+          succeeded: results.length - failed.length,
+          failed: failed.length,
+          results,
+        });
+      } else {
+        const ok = results.length - failed.length;
+        const summary =
+          `\n${ok}/${results.length} sites succeeded` +
+          (failed.length ? `, ${failed.length} failed: ${failed.map((r) => r.site).join(', ')}` : '');
+        if (failed.length) warn(summary);
+        else info(summary);
+      }
+
+      process.exit(aggregateExitCode(results));
     });
 }
