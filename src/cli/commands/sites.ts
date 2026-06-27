@@ -295,8 +295,7 @@ export function registerSitesCommand(program: Command): void {
         });
       } else {
         const ok = results.length - failed.length;
-        const summary =
-          `\n${ok}/${results.length} sites succeeded${failed.length ? `, ${failed.length} failed: ${failed.map((r) => r.site).join(', ')}` : ''}`;
+        const summary = `\n${ok}/${results.length} sites succeeded${failed.length ? `, ${failed.length} failed: ${failed.map((r) => r.site).join(', ')}` : ''}`;
         if (failed.length) warn(summary);
         else info(summary);
       }
