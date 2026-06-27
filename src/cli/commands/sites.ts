@@ -10,10 +10,10 @@
 
 import { rmSync } from 'node:fs';
 import type { Command } from 'commander';
+import { ExitCode } from '../../types.ts';
 import { invokeCli } from '../mcp/invoke.ts';
 import { getSiteDbPath, loadConfig, saveConfig } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { ExitCode } from '../../types.ts';
 
 /**
  * Tokenize a command string into an argv array, respecting single and double
@@ -26,12 +26,18 @@ export function tokenizeCommand(input: string): string[] {
 
   for (const ch of input) {
     if (inQuote) {
-      if (ch === inQuote) { inQuote = null; }
-      else { current += ch; }
+      if (ch === inQuote) {
+        inQuote = null;
+      } else {
+        current += ch;
+      }
     } else if (ch === '"' || ch === "'") {
       inQuote = ch;
     } else if (ch === ' ') {
-      if (current.length) { tokens.push(current); current = ''; }
+      if (current.length) {
+        tokens.push(current);
+        current = '';
+      }
     } else {
       current += ch;
     }
@@ -68,7 +74,10 @@ export function resolveSiteNames(
     }
     return { names: configSiteKeys };
   }
-  const requested = (options.sites as string).split(',').map((s) => s.trim()).filter(Boolean);
+  const requested = (options.sites as string)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   const unknown = requested.filter((n) => !configSiteKeys.includes(n));
   if (unknown.length) {
     return {
@@ -287,8 +296,7 @@ export function registerSitesCommand(program: Command): void {
       } else {
         const ok = results.length - failed.length;
         const summary =
-          `\n${ok}/${results.length} sites succeeded` +
-          (failed.length ? `, ${failed.length} failed: ${failed.map((r) => r.site).join(', ')}` : '');
+          `\n${ok}/${results.length} sites succeeded${failed.length ? `, ${failed.length} failed: ${failed.map((r) => r.site).join(', ')}` : ''}`;
         if (failed.length) warn(summary);
         else info(summary);
       }

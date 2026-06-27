@@ -4,9 +4,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import {
-  tokenizeCommand,
   aggregateExitCode,
   resolveSiteNames,
+  tokenizeCommand,
 } from '../../src/cli/commands/sites.ts';
 import { ExitCode } from '../../src/types.ts';
 
