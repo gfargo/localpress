@@ -460,6 +460,8 @@ localpress rename 123 --to "summer-sale-hero" --json
 
 #### `title` / `describe` `--json` output
 
+The generated text (whether a title or a description) is always under `generated` — there is no `title`/`description` key on each result item. `previous` is omitted when the field had no prior value.
+
 ```json
 {
   "dryRun": false,
@@ -467,7 +469,7 @@ localpress rename 123 --to "summer-sale-hero" --json
   "skipped": 0,
   "failures": 0,
   "results": [
-    { "id": 123, "filename": "IMG_4821.jpg", "title": "Terminal command output", "skipped": false }
+    { "id": 123, "filename": "IMG_4821.jpg", "generated": "Terminal command output", "skipped": false, "durationMs": 3400 }
   ]
 }
 ```
