@@ -24,7 +24,7 @@ import { AdapterResolver as AdapterResolverImpl } from '../../adapters/resolver.
 import type { ReplaceOptions, WpBackend } from '../../adapters/types.ts';
 import { CapabilityUnavailableError } from '../../adapters/types.ts';
 import { openSnapshotStore } from '../../engine/history/index.ts';
-import type { SnapshotRecord } from '../../engine/history/index.ts';
+import type { SnapshotRecord, SnapshotStore } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
@@ -164,7 +164,7 @@ export function registerUndoCommand(program: Command): void {
       for (const snap of snapshots) {
         info(`  Restoring snapshot #${snap.id} (attachment #${snap.wpId}, ${snap.operation})...`);
         try {
-          await restoreSnapshot(snap, resolver, parentOpts.strict);
+          await restoreSnapshot(snap, resolver, store, parentOpts.strict);
           store.markRestored(snap.id);
           // The restored bytes no longer match what processing_history recorded
           // as this operation's output, so exclude that row from future stats
@@ -208,6 +208,7 @@ export function registerUndoCommand(program: Command): void {
 export async function restoreSnapshot(
   snap: SnapshotRecord,
   resolver: ResolverLike,
+  store: SnapshotStore,
   strict: boolean,
 ): Promise<void> {
   if (snap.kind === 'metadata-only') {
@@ -222,17 +223,9 @@ export async function restoreSnapshot(
     return;
   }
 
-  // Binary snapshot: load blob bytes and replace-in-place.
-  const { SnapshotStore } = await import('../../engine/history/store.ts');
-  // We need the underlying store to read the blob. The resolver doesn't own it,
-  // but we passed it indirectly via the path on the snapshot record. Reuse via
-  // a fresh SnapshotStore is overkill — read the blob directly.
-  void SnapshotStore;
-  const { readFileSync } = await import('node:fs');
-  if (!snap.blobPath) {
-    throw new Error('Binary snapshot is missing its blob path');
-  }
-  const bytes = readFileSync(snap.blobPath);
+  // Binary snapshot: load blob bytes (existence/size/hash verified by readBlob)
+  // and replace-in-place.
+  const bytes = store.readBlob(snap);
 
   const replaceAdapter = resolver.tryResolve('replace-in-place');
   if (replaceAdapter) {

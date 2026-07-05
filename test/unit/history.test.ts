@@ -6,7 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SnapshotStore } from '../../src/engine/history/store.ts';
@@ -340,6 +340,81 @@ describe('SnapshotStore', () => {
     if (id === null) throw new Error('capture returned null unexpectedly');
     const snap = store.getSnapshot(id);
     if (snap === null) throw new Error('snapshot not found');
+    const bytes = store.readBlob(snap);
+    expect(bytes.toString()).toBe('captured-content');
+  });
+
+  test('readBlob throws when the blob file is missing on disk', () => {
+    const session = store.openSession('testsite', 'optimize');
+    const id = store.capture({
+      siteName: 'testsite',
+      sessionId: session.id,
+      attachmentId: 1,
+      operation: 'optimize',
+      sourceBytes: Buffer.from('captured-content'),
+      beforeMeta: { filename: 'x.jpg', mimeType: 'image/jpeg' },
+    });
+    if (id === null) throw new Error('capture returned null unexpectedly');
+    const snap = store.getSnapshot(id);
+    if (snap === null) throw new Error('snapshot not found');
+
+    rmSync(snap.blobPath as string, { force: true });
+
+    expect(() => store.readBlob(snap)).toThrow(/blob is missing on disk/);
+  });
+
+  test('readBlob throws when the blob file is truncated', () => {
+    const session = store.openSession('testsite', 'optimize');
+    const id = store.capture({
+      siteName: 'testsite',
+      sessionId: session.id,
+      attachmentId: 1,
+      operation: 'optimize',
+      sourceBytes: Buffer.from('captured-content'),
+      beforeMeta: { filename: 'x.jpg', mimeType: 'image/jpeg' },
+    });
+    if (id === null) throw new Error('capture returned null unexpectedly');
+    const snap = store.getSnapshot(id);
+    if (snap === null) throw new Error('snapshot not found');
+
+    writeFileSync(snap.blobPath as string, Buffer.from('short'));
+
+    expect(() => store.readBlob(snap)).toThrow(/blob is truncated/);
+  });
+
+  test('readBlob throws when the blob content hash does not match beforeHash', () => {
+    const session = store.openSession('testsite', 'optimize');
+    const id = store.capture({
+      siteName: 'testsite',
+      sessionId: session.id,
+      attachmentId: 1,
+      operation: 'optimize',
+      sourceBytes: Buffer.from('captured-content'),
+      beforeMeta: { filename: 'x.jpg', mimeType: 'image/jpeg' },
+      beforeHash: 'deadbeef'.repeat(8),
+    });
+    if (id === null) throw new Error('capture returned null unexpectedly');
+    const snap = store.getSnapshot(id);
+    if (snap === null) throw new Error('snapshot not found');
+
+    expect(() => store.readBlob(snap)).toThrow(/content hash mismatch/);
+  });
+
+  test('readBlob succeeds without hash verification when beforeHash was not recorded', () => {
+    const session = store.openSession('testsite', 'optimize');
+    const id = store.capture({
+      siteName: 'testsite',
+      sessionId: session.id,
+      attachmentId: 1,
+      operation: 'optimize',
+      sourceBytes: Buffer.from('captured-content'),
+      beforeMeta: { filename: 'x.jpg', mimeType: 'image/jpeg' },
+    });
+    if (id === null) throw new Error('capture returned null unexpectedly');
+    const snap = store.getSnapshot(id);
+    if (snap === null) throw new Error('snapshot not found');
+    expect(snap.beforeHash).toBeNull();
+
     const bytes = store.readBlob(snap);
     expect(bytes.toString()).toBe('captured-content');
   });

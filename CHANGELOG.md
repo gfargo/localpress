@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — data safety
+- **`undo` verifies a binary snapshot's blob before restoring it** (#92).
+  `SnapshotStore.readBlob` now checks the blob file exists, that its size
+  matches the recorded `blob_size`, and (when `beforeHash` was captured) that
+  its SHA-256 matches, refusing with a clear error instead of restoring
+  missing/truncated/corrupted bytes over a live attachment. Snapshots written
+  by pre-2.1.0 versions (before the fire-and-forget write bug was fixed) may
+  now correctly fail this check if their blob was never fully flushed to disk.
 ### Fixed
 - **`optimize` idempotency is correct in both directions** (#97): re-running
   `optimize` after a successful replace-in-place now compares the live file's

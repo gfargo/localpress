@@ -9,6 +9,7 @@ import { describe, expect, test } from 'bun:test';
 import type { AdapterResolver } from '../../src/adapters/resolver.ts';
 import type { UpdateMetadata, WpBackend } from '../../src/adapters/types.ts';
 import { restoreSnapshot } from '../../src/cli/commands/undo.ts';
+import type { SnapshotStore } from '../../src/engine/history/store.ts';
 import type { SnapshotRecord } from '../../src/engine/history/types.ts';
 
 function makeSnapshot(overrides: Partial<SnapshotRecord>): SnapshotRecord {
@@ -54,7 +55,7 @@ describe('restoreSnapshot', () => {
       beforeMeta: { filename: 'photo.jpg', mimeType: 'image/jpeg', slug: 'old-slug' },
     });
 
-    await restoreSnapshot(snap, resolver, false);
+    await restoreSnapshot(snap, resolver, {} as SnapshotStore, false);
 
     expect(received).not.toBeNull();
     const meta = received as unknown as UpdateMetadata;
@@ -72,7 +73,7 @@ describe('restoreSnapshot', () => {
       beforeMeta: { filename: 'photo.jpg', mimeType: 'image/jpeg', altText: 'old alt' },
     });
 
-    await restoreSnapshot(snap, resolver, false);
+    await restoreSnapshot(snap, resolver, {} as SnapshotStore, false);
 
     expect(received).not.toBeNull();
     const meta = received as unknown as UpdateMetadata;

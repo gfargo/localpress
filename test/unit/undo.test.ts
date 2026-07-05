@@ -135,7 +135,7 @@ describe('restoreSnapshot', () => {
     const writeSpy = spyOn(process.stderr, 'write').mockImplementation(() => true);
     let warnedLines: string[];
     try {
-      await restoreSnapshot(snap, resolver, false);
+      await restoreSnapshot(snap, resolver, store, false);
     } finally {
       // Capture calls BEFORE mockRestore() — it clears the recorded call history.
       warnedLines = writeSpy.mock.calls.map((c) => String(c[0]));
@@ -200,7 +200,7 @@ describe('restoreSnapshot', () => {
     const writeSpy = spyOn(process.stderr, 'write').mockImplementation(() => true);
     let warnedLines: string[];
     try {
-      await restoreSnapshot(snap, resolver, false);
+      await restoreSnapshot(snap, resolver, store, false);
     } finally {
       warnedLines = writeSpy.mock.calls.map((c) => String(c[0]));
       writeSpy.mockRestore();
