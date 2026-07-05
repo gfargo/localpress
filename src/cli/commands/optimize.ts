@@ -279,7 +279,8 @@ export function registerOptimizeCommand(program: Command): void {
 
             if (resultWpId === null) {
               const uploadAdapter = resolver.resolve('upload');
-              const newFilename = item.filename.replace(/\.[^.]+$/, '-optimized.webp');
+              const ext = mimeToExtension(resultMimeType ?? item.mimeType) ?? '.jpg';
+              const newFilename = item.filename.replace(/\.[^.]+$/, `-optimized${ext}`);
               const uploaded = await uploadAdapter.upload(resultBytes, {
                 filename: newFilename,
                 title: item.title,
@@ -710,7 +711,7 @@ export function registerOptimizeCommand(program: Command): void {
 
 // -- Helpers ------------------------------------------------------------------
 
-function mimeToExtension(mimeType: string): string | undefined {
+export function mimeToExtension(mimeType: string): string | undefined {
   const map: Record<string, string> = {
     'image/webp': '.webp',
     'image/avif': '.avif',

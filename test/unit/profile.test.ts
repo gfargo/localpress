@@ -260,6 +260,7 @@ describe('import command registration', () => {
     expect(optionNames).toContain('--title');
     expect(optionNames).toContain('--alt');
     expect(optionNames).toContain('--post');
+    expect(optionNames).toContain('--preserve-metadata');
     expect(optionNames).toContain('--preserve-ids');
     expect(optionNames).toContain('--strip-metadata');
   });
