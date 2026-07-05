@@ -6,10 +6,12 @@
  * thumbnail regeneration, orphan pruning, full content scans.
  */
 
+import { randomUUID } from 'node:crypto';
+import { unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SiteConfig, SshConfig } from '../types.ts';
-import { scpUpload, sshExec } from './ssh.ts';
+import { scpUpload, shellQuote, sshExec } from './ssh.ts';
 import type {
   Capability,
   ListFilters,
@@ -53,7 +55,7 @@ export class WpCliAdapter implements WpBackend {
   // -- Internal WP-CLI execution ----------------------------------------------
 
   private async wp(command: string): Promise<string> {
-    const fullCommand = `cd ${this.wpPath} && wp ${command} --allow-root`;
+    const fullCommand = `cd ${shellQuote(this.wpPath)} && wp ${command} --allow-root`;
     const result = await sshExec(this.ssh, fullCommand);
 
     if (result.exitCode !== 0) {
@@ -187,44 +189,53 @@ export class WpCliAdapter implements WpBackend {
 
   async upload(file: Buffer, metadata: UploadMetadata): Promise<MediaItem> {
     // Write the file to a local temp path, then SCP to remote.
-    const localTmp = join(tmpdir(), `localpress-upload-${Date.now()}-${metadata.filename}`);
-    await Bun.write(localTmp, file);
+    const uid = randomUUID();
+    const localTmp = join(tmpdir(), `localpress-upload-${uid}-${metadata.filename}`);
+    const remoteTmp = `/tmp/localpress-upload-${uid}-${metadata.filename}`;
 
-    const remoteTmp = `/tmp/localpress-upload-${Date.now()}-${metadata.filename}`;
-    const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
-    if (scpResult.exitCode !== 0) {
-      throw new Error(
-        `SCP upload failed (exit ${scpResult.exitCode}): ${scpResult.stderr || 'unknown error'}`,
-      );
-    }
-
-    // Import via WP-CLI.
-    const args = [`media import "${remoteTmp}"`, '--porcelain'];
-    if (metadata.title) args.push(`--title="${metadata.title}"`);
-    if (metadata.altText) args.push(`--alt="${metadata.altText}"`);
-    if (metadata.caption) args.push(`--caption="${metadata.caption}"`);
-    if (metadata.description) args.push(`--description="${metadata.description}"`);
-    if (metadata.postId) args.push(`--post_id=${metadata.postId}`);
-
-    const output = await this.wp(args.join(' '));
-    const newId = Number.parseInt(output.trim(), 10);
-
-    if (Number.isNaN(newId)) {
-      throw new Error(`WP-CLI media import did not return a valid ID: ${output}`);
-    }
-
-    // Clean up remote temp file.
-    await sshExec(this.ssh, `rm -f "${remoteTmp}"`).catch(() => {});
-
-    // Clean up local temp file.
     try {
-      const { unlinkSync } = await import('node:fs');
-      unlinkSync(localTmp);
-    } catch {
-      // Best effort.
-    }
+      await Bun.write(localTmp, file);
 
-    return this.getMedia(newId);
+      const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
+      if (scpResult.exitCode !== 0) {
+        throw new Error(
+          `SCP upload failed (exit ${scpResult.exitCode}): ${scpResult.stderr || 'unknown error'}`,
+        );
+      }
+
+      // Import via WP-CLI.
+      const args = [`media import ${shellQuote(remoteTmp)}`, '--porcelain'];
+      if (metadata.title) args.push(`--title=${shellQuote(metadata.title)}`);
+      if (metadata.altText) args.push(`--alt=${shellQuote(metadata.altText)}`);
+      if (metadata.caption) args.push(`--caption=${shellQuote(metadata.caption)}`);
+      if (metadata.description) args.push(`--description=${shellQuote(metadata.description)}`);
+      if (metadata.postId) args.push(`--post_id=${metadata.postId}`);
+
+      let output: string;
+      try {
+        output = await this.wp(args.join(' '));
+      } catch (err) {
+        await sshExec(this.ssh, `rm -f ${shellQuote(remoteTmp)}`).catch(() => {});
+        throw err;
+      }
+      const newId = Number.parseInt(output.trim(), 10);
+
+      if (Number.isNaN(newId)) {
+        await sshExec(this.ssh, `rm -f ${shellQuote(remoteTmp)}`).catch(() => {});
+        throw new Error(`WP-CLI media import did not return a valid ID: ${output}`);
+      }
+
+      // Clean up remote temp file.
+      await sshExec(this.ssh, `rm -f ${shellQuote(remoteTmp)}`).catch(() => {});
+
+      return this.getMedia(newId);
+    } finally {
+      try {
+        unlinkSync(localTmp);
+      } catch {
+        // Best effort.
+      }
+    }
   }
 
   async replaceInPlace(
@@ -247,57 +258,67 @@ export class WpCliAdapter implements WpBackend {
     }
 
     // Write to local temp, SCP to remote, place at the (possibly new) path.
-    const localTmp = join(tmpdir(), `localpress-replace-${Date.now()}`);
-    await Bun.write(localTmp, file);
+    const uid = randomUUID();
+    const localTmp = join(tmpdir(), `localpress-replace-${uid}`);
+    const remoteTmp = `/tmp/localpress-replace-${uid}`;
 
-    const remoteTmp = `/tmp/localpress-replace-${Date.now()}`;
-    const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
-    if (scpResult.exitCode !== 0) {
-      throw new Error(
-        `SCP upload failed (exit ${scpResult.exitCode}): ${scpResult.stderr || 'unknown error'}`,
-      );
-    }
+    try {
+      await Bun.write(localTmp, file);
 
-    // Ensure the target directory exists, then move the file into place.
-    const targetDir = remotePath.substring(0, remotePath.lastIndexOf('/'));
-    const mkdirResult = await sshExec(this.ssh, `mkdir -p "${targetDir}"`);
-    if (mkdirResult.exitCode !== 0) {
-      throw new Error(
-        `Failed to create target directory "${targetDir}": ${mkdirResult.stderr || 'unknown error'}`,
-      );
-    }
-
-    const mvResult = await sshExec(
-      this.ssh,
-      `mv "${remoteTmp}" "${remotePath}" && chmod 644 "${remotePath}"`,
-    );
-    if (mvResult.exitCode !== 0) {
-      throw new Error(
-        `Failed to place file at "${remotePath}": ${mvResult.stderr || 'unknown error'}`,
-      );
-    }
-
-    // If the format changed, delete the old file and update WordPress metadata.
-    if (options?.newExtension && newFilePath !== currentFile.trim()) {
-      const oldRemotePath = `${uploadsDir}/${currentFile.trim()}`;
-      // Delete the old file (it's now at a different path).
-      await sshExec(this.ssh, `rm -f "${oldRemotePath}"`).catch(() => {});
-
-      // Update _wp_attached_file meta to the new path.
-      await this.wp(`post meta update ${id} _wp_attached_file "${newFilePath}"`);
-
-      // Update the post MIME type via wp post update (handles quoting correctly).
-      if (options.newMimeType) {
-        await sshExec(
-          this.ssh,
-          `cd ${this.wpPath} && wp post update ${id} --post_mime_type="${options.newMimeType}" --allow-root`,
+      const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
+      if (scpResult.exitCode !== 0) {
+        throw new Error(
+          `SCP upload failed (exit ${scpResult.exitCode}): ${scpResult.stderr || 'unknown error'}`,
         );
       }
 
-      // Update attachment metadata: file field, filesize, and clear stale sizes.
-      try {
+      // Ensure the target directory exists, then move the file into place.
+      const targetDir = remotePath.substring(0, remotePath.lastIndexOf('/'));
+      const mkdirResult = await sshExec(this.ssh, `mkdir -p ${shellQuote(targetDir)}`);
+      if (mkdirResult.exitCode !== 0) {
+        await sshExec(this.ssh, `rm -f ${shellQuote(remoteTmp)}`).catch(() => {});
+        throw new Error(
+          `Failed to create target directory "${targetDir}": ${mkdirResult.stderr || 'unknown error'}`,
+        );
+      }
+
+      const mvResult = await sshExec(
+        this.ssh,
+        `mv ${shellQuote(remoteTmp)} ${shellQuote(remotePath)} && chmod 644 ${shellQuote(remotePath)}`,
+      );
+      if (mvResult.exitCode !== 0) {
+        await sshExec(this.ssh, `rm -f ${shellQuote(remoteTmp)}`).catch(() => {});
+        throw new Error(
+          `Failed to place file at "${remotePath}": ${mvResult.stderr || 'unknown error'}`,
+        );
+      }
+
+      // If the format changed, delete the old file and update WordPress metadata.
+      if (options?.newExtension && newFilePath !== currentFile.trim()) {
+        const oldRemotePath = `${uploadsDir}/${currentFile.trim()}`;
+        // Delete the old file (it's now at a different path).
+        await sshExec(this.ssh, `rm -f ${shellQuote(oldRemotePath)}`).catch(() => {});
+
+        // Update _wp_attached_file meta to the new path.
+        await this.wp(`post meta update ${id} _wp_attached_file ${shellQuote(newFilePath)}`);
+
+        // Update the post MIME type via wp post update (handles quoting correctly).
+        if (options.newMimeType) {
+          await sshExec(
+            this.ssh,
+            `cd ${shellQuote(this.wpPath)} && wp post update ${id} --post_mime_type=${shellQuote(options.newMimeType)} --allow-root`,
+          );
+        }
+
+        // Update attachment metadata: file field, filesize, and clear stale sizes.
         const metaJson = await this.wp(`post meta get ${id} _wp_attachment_metadata --format=json`);
-        const meta = JSON.parse(metaJson);
+        let meta: { file?: string; sizes?: Record<string, { file?: string }> } | undefined;
+        try {
+          meta = JSON.parse(metaJson);
+        } catch {
+          // No existing metadata to update — not fatal.
+          meta = undefined;
+        }
         if (meta?.file) {
           // Delete old thumbnail files from disk before clearing metadata.
           if (meta.sizes && typeof meta.sizes === 'object') {
@@ -305,63 +326,62 @@ export class WpCliAdapter implements WpBackend {
               ? `${uploadsDir}/${newFilePath.substring(0, newFilePath.lastIndexOf('/'))}`
               : uploadsDir;
             const oldThumbFiles = Object.values(meta.sizes)
-              .map((s) => (s as { file?: string })?.file)
+              .map((s) => s?.file)
               .filter(Boolean) as string[];
             for (const thumbFile of oldThumbFiles) {
-              await sshExec(this.ssh, `rm -f "${dirPath}/${thumbFile}"`).catch(() => {});
+              await sshExec(this.ssh, `rm -f ${shellQuote(`${dirPath}/${thumbFile}`)}`).catch(
+                () => {},
+              );
             }
           }
 
           meta.file = newFilePath;
-          meta.filesize = file.length;
+          (meta as Record<string, unknown>).filesize = file.length;
           // Clear the sizes array — old format thumbnails are now invalid.
           // WordPress will repopulate this on regenerate.
           meta.sizes = {};
-          const updatedMeta = JSON.stringify(meta).replace(/'/g, "\\'");
           await this.wp(
-            `post meta update ${id} _wp_attachment_metadata '${updatedMeta}' --format=json`,
+            `post meta update ${id} _wp_attachment_metadata ${shellQuote(JSON.stringify(meta))} --format=json`,
           );
         }
-      } catch {
-        // Best effort — metadata update is non-critical.
+
+        // Remove _require_file_renaming flag that WP may have set during the transition.
+        await this.wp(`post meta delete ${id} _require_file_renaming`).catch(() => {});
       }
 
-      // Remove _require_file_renaming flag that WP may have set during the transition.
-      await this.wp(`post meta delete ${id} _require_file_renaming`).catch(() => {});
-    }
+      // Regenerate thumbnails: always when format changed (old thumbnails are invalid),
+      // or when explicitly requested.
+      if (
+        (options?.newExtension && newFilePath !== currentFile.trim()) ||
+        options?.regenerateThumbnails
+      ) {
+        await this.wp(`media regenerate ${id} --yes`);
+      }
 
-    // Regenerate thumbnails: always when format changed (old thumbnails are invalid),
-    // or when explicitly requested.
-    if (
-      (options?.newExtension && newFilePath !== currentFile.trim()) ||
-      options?.regenerateThumbnails
-    ) {
-      await this.wp(`media regenerate ${id} --yes`);
+      return this.getMedia(id);
+    } finally {
+      try {
+        unlinkSync(localTmp);
+      } catch {
+        // Best effort.
+      }
     }
-
-    // Clean up local temp.
-    try {
-      const { unlinkSync } = await import('node:fs');
-      unlinkSync(localTmp);
-    } catch {
-      // Best effort.
-    }
-
-    return this.getMedia(id);
   }
 
   async updateMetadata(id: number, metadata: UpdateMetadata): Promise<void> {
     if (metadata.title !== undefined) {
-      await this.wp(`post update ${id} --post_title="${metadata.title}"`);
+      await this.wp(`post update ${id} --post_title=${shellQuote(metadata.title)}`);
     }
     if (metadata.altText !== undefined) {
-      await this.wp(`post meta update ${id} _wp_attachment_image_alt "${metadata.altText}"`);
+      await this.wp(
+        `post meta update ${id} _wp_attachment_image_alt ${shellQuote(metadata.altText)}`,
+      );
     }
     if (metadata.caption !== undefined) {
-      await this.wp(`post update ${id} --post_excerpt="${metadata.caption}"`);
+      await this.wp(`post update ${id} --post_excerpt=${shellQuote(metadata.caption)}`);
     }
     if (metadata.description !== undefined) {
-      await this.wp(`post update ${id} --post_content="${metadata.description}"`);
+      await this.wp(`post update ${id} --post_content=${shellQuote(metadata.description)}`);
     }
   }
 
@@ -380,10 +400,12 @@ export class WpCliAdapter implements WpBackend {
     // Get the uploads directory.
     const uploadsDir = await this.wp(`eval 'echo wp_upload_dir()["basedir"];'`);
 
-    // List all files in uploads.
+    // List all files in uploads. The extension alternation must be grouped so
+    // `-type f` applies to every `-o -name` branch — otherwise a directory
+    // named e.g. `2023.webp` is misreported as an orphan file.
     const filesOutput = await sshExec(
       this.ssh,
-      `find "${uploadsDir.trim()}" -type f -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" -o -name "*.gif" -o -name "*.webp" -o -name "*.avif" | sort`,
+      `find ${shellQuote(uploadsDir.trim())} -type f \\( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.gif' -o -name '*.webp' -o -name '*.avif' \\) | sort`,
     );
     const allFiles = filesOutput.stdout.split('\n').filter(Boolean);
 
@@ -427,7 +449,10 @@ export class WpCliAdapter implements WpBackend {
       if (!registeredFiles.has(file)) {
         orphanFiles.push(file);
         // Get file size.
-        const sizeResult = await sshExec(this.ssh, `stat -c%s "${file}" 2>/dev/null || echo "0"`);
+        const sizeResult = await sshExec(
+          this.ssh,
+          `stat -c%s ${shellQuote(file)} 2>/dev/null || echo "0"`,
+        );
         reclaimableBytes += Number.parseInt(sizeResult.stdout.trim(), 10) || 0;
       }
     }
@@ -445,7 +470,7 @@ export class WpCliAdapter implements WpBackend {
         const fullPath = `${uploadsDir.trim()}/${filePath.trim()}`;
         const existsResult = await sshExec(
           this.ssh,
-          `test -f "${fullPath}" && echo "yes" || echo "no"`,
+          `test -f ${shellQuote(fullPath)} && echo "yes" || echo "no"`,
         );
         if (existsResult.stdout.trim() === 'no') {
           missingFiles.push(att.ID);
