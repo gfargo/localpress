@@ -35,8 +35,17 @@ export interface InvokeOptions {
   args: string[];
   /** Working directory for the child process. */
   cwd?: string;
-  /** Timeout in ms; child is killed if exceeded. Default: 5 minutes. */
+  /**
+   * Timeout in ms; child is killed if exceeded. Default: 5 minutes. Pass 0 to
+   * disable the timeout entirely (bulk cross-site runs can exceed any bound).
+   */
   timeoutMs?: number;
+  /**
+   * Extra top-level flags to forward before the subcommand (e.g. `--apply`,
+   * `--dry-run`, `--strict`). Used by `sites run` so per-site children honor the
+   * run mode the user set on the parent.
+   */
+  passthroughFlags?: string[];
 }
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -56,6 +65,9 @@ export async function invokeCli(opts: InvokeOptions): Promise<CliResult> {
   if (opts.site) topLevelFlags.push('--site', opts.site);
   if (typeof opts.concurrency === 'number') {
     topLevelFlags.push('--concurrency', String(opts.concurrency));
+  }
+  for (const flag of opts.passthroughFlags ?? []) {
+    if (!baseArgs.includes(flag)) topLevelFlags.push(flag);
   }
   const argsWithSite = [...topLevelFlags, ...baseArgs];
 
@@ -77,10 +89,23 @@ export async function invokeCli(opts: InvokeOptions): Promise<CliResult> {
     let stderrBuf = '';
     let timedOut = false;
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-    }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    const effectiveTimeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
+    // effectiveTimeout === 0 disables the timeout (unbounded bulk runs).
+    const timer =
+      effectiveTimeout > 0
+        ? setTimeout(() => {
+            timedOut = true;
+            child.kill('SIGTERM');
+            // Escalate to SIGKILL if the child ignores SIGTERM, so a stuck
+            // child can never hang the parent forever.
+            killTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+          }, effectiveTimeout)
+        : null;
+    const clearTimers = () => {
+      if (timer) clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+    };
 
     child.stdout.on('data', (chunk) => {
       stdoutBuf += chunk.toString('utf8');
@@ -90,7 +115,7 @@ export async function invokeCli(opts: InvokeOptions): Promise<CliResult> {
     });
 
     child.on('error', (err) => {
-      clearTimeout(timer);
+      clearTimers();
       resolve({
         exitCode: -1,
         stdout: null,
@@ -100,7 +125,7 @@ export async function invokeCli(opts: InvokeOptions): Promise<CliResult> {
     });
 
     child.on('close', (code) => {
-      clearTimeout(timer);
+      clearTimers();
       const exitCode = code ?? -1;
       let parsed: unknown = stdoutBuf;
 
@@ -127,9 +152,7 @@ export async function invokeCli(opts: InvokeOptions): Promise<CliResult> {
       resolve({
         exitCode,
         stdout: parsed,
-        stderr: timedOut
-          ? `${stderrBuf}\n[timed out after ${opts.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms]`
-          : stderrBuf,
+        stderr: timedOut ? `${stderrBuf}\n[timed out after ${effectiveTimeout}ms]` : stderrBuf,
         ok: exitCode === 0,
       });
     });

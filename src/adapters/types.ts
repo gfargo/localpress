@@ -47,6 +47,11 @@ export interface MediaItem {
   uploadedAt: string;
   /** WordPress's auto-generated thumbnail/medium/large variants. */
   sizes?: Record<string, MediaSize>;
+  /**
+   * Parent post ID this attachment is "attached" to (WP `post` field). 0 means
+   * unattached. Undefined if the backend didn't provide it.
+   */
+  parentPost?: number;
 }
 
 export interface MediaSize {

@@ -42,6 +42,28 @@ describe('tokenizeCommand', () => {
   test('trims extra spaces between tokens', () => {
     expect(tokenizeCommand('audit  --json')).toEqual(['audit', '--json']);
   });
+
+  test('preserves an explicitly empty quoted argument (#104)', () => {
+    // Without this, `--alt-text ""` drops the empty token and the following
+    // flag is consumed as its value.
+    expect(tokenizeCommand('metadata 42 --alt-text "" --title Cat')).toEqual([
+      'metadata',
+      '42',
+      '--alt-text',
+      '',
+      '--title',
+      'Cat',
+    ]);
+  });
+
+  test('empty single-quoted argument is preserved too', () => {
+    expect(tokenizeCommand("metadata 42 --caption ''")).toEqual([
+      'metadata',
+      '42',
+      '--caption',
+      '',
+    ]);
+  });
 });
 
 // -- aggregateExitCode --------------------------------------------------------

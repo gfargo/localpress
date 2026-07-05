@@ -23,6 +23,19 @@ export function tokenizeCommand(input: string): string[] {
   const tokens: string[] = [];
   let current = '';
   let inQuote: '"' | "'" | null = null;
+  // Track whether the current token contained a quote, so an explicitly empty
+  // quoted argument (e.g. `--alt-text ""`) is preserved as an empty token
+  // instead of being dropped — which would make the next flag be consumed as
+  // its value.
+  let sawQuote = false;
+
+  const flush = () => {
+    if (current.length || sawQuote) {
+      tokens.push(current);
+      current = '';
+      sawQuote = false;
+    }
+  };
 
   for (const ch of input) {
     if (inQuote) {
@@ -33,16 +46,14 @@ export function tokenizeCommand(input: string): string[] {
       }
     } else if (ch === '"' || ch === "'") {
       inQuote = ch;
+      sawQuote = true;
     } else if (ch === ' ') {
-      if (current.length) {
-        tokens.push(current);
-        current = '';
-      }
+      flush();
     } else {
       current += ch;
     }
   }
-  if (current.length) tokens.push(current);
+  flush();
   return tokens;
 }
 
@@ -240,6 +251,11 @@ export function registerSitesCommand(program: Command): void {
     .description('Run a localpress command across multiple sites')
     .option('--all-sites', 'run against every configured site')
     .option('--sites <list>', 'comma-separated list of site names')
+    .option(
+      '--timeout <seconds>',
+      'per-site timeout in seconds (0 = no limit; default 3600)',
+      (v) => Number.parseInt(v, 10),
+    )
     .action(async (commandStr: string, options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -261,6 +277,20 @@ export function registerSitesCommand(program: Command): void {
         process.exit(ExitCode.InvalidUsage);
       }
 
+      // Forward the run-mode the user set on the parent so per-site children
+      // don't silently fall back to dry-run (which would report success while
+      // writing nothing). These are top-level global flags.
+      const passthroughFlags: string[] = [];
+      if (parentOpts.apply) passthroughFlags.push('--apply');
+      if (parentOpts.dryRun) passthroughFlags.push('--dry-run');
+      if (parentOpts.strict) passthroughFlags.push('--strict');
+      if (parentOpts.yes) passthroughFlags.push('--yes');
+
+      // Bulk cross-site runs routinely exceed the 5-minute MCP default; use a
+      // generous default (1h) and let --timeout override (0 disables).
+      const timeoutMs =
+        typeof options.timeout === 'number' ? options.timeout * 1000 : 60 * 60 * 1000;
+
       const results: {
         site: string;
         exitCode: number;
@@ -271,7 +301,13 @@ export function registerSitesCommand(program: Command): void {
 
       for (const site of names) {
         if (!parentOpts.json) info(`\n── ${site} ──`);
-        const result = await invokeCli({ site, concurrency: parentOpts.concurrency, args });
+        const result = await invokeCli({
+          site,
+          concurrency: parentOpts.concurrency,
+          args,
+          passthroughFlags,
+          timeoutMs,
+        });
         results.push({
           site,
           exitCode: result.exitCode,

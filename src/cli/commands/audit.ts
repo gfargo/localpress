@@ -6,12 +6,12 @@
  *   - --large: images larger than --threshold
  *   - --missing-alt: images without alt text
  *   - --display-size: images significantly larger than their largest registered WP size
- *   - --duplicates: perceptual duplicates (pHash via sharp)
- *   - --broken-refs: attachment URLs referenced in content that 404
+ *   - --duplicates: perceptual duplicates (dHash via sharp; opt-in, downloads bytes)
+ *   - --broken-refs: attachments whose source file returns 404/410 (missing on disk)
+ *   - --unattached: attachments with no parent post (WP post parent = 0)
  *
  * WP-CLI checks:
  *   - --orphans: uploads-dir files with no DB record
- *   - --unattached: full reference scan for truly unattached media
  */
 
 import type { Command } from 'commander';
@@ -66,7 +66,10 @@ export function registerAuditCommand(program: Command): void {
       'flag images significantly larger than their largest registered WP thumbnail size',
     )
     .option('--duplicates', 'flag perceptually identical or near-identical images (requires sharp)')
-    .option('--broken-refs', 'flag attachment URLs referenced in post content that return 404')
+    .option(
+      '--broken-refs',
+      'flag attachments whose source file returns HTTP 404/410 (missing on disk)',
+    )
     .option(
       '--quality',
       'flag blurry / low-contrast / poorly-composed images via Ollama vision (slow; ~10s per image)',
@@ -149,7 +152,12 @@ export function registerAuditCommand(program: Command): void {
           if (batch.length < 100) break;
           page++;
         } catch (err) {
-          error(err instanceof Error ? err.message : String(err));
+          // A library whose size is an exact multiple of 100 asks for one page
+          // past the end; WordPress answers 400 rest_post_invalid_page_number.
+          // That just means "no more pages", not a real error.
+          const message = err instanceof Error ? err.message : String(err);
+          if (page > 1 && /invalid_page_number|\b400\b/.test(message)) break;
+          error(message);
           process.exit(4);
           return;
         }
@@ -203,6 +211,18 @@ export function registerAuditCommand(program: Command): void {
           });
         }
 
+        // --unattached: attachment not attached to any parent post (WP post=0).
+        // Not in runAll — inserted-into-content images are legitimately
+        // unattached, so this is an opt-in signal, not a default finding.
+        if (options.unattached && item.parentPost === 0) {
+          findings.push({
+            type: 'unattached',
+            attachmentId: item.id,
+            filename: item.filename,
+            detail: 'Not attached to any post (post parent = 0)',
+          });
+        }
+
         // --display-size: compare source dimensions against largest registered WP size
         if ((runAll || options.displaySize) && item.width && item.height && item.sizes) {
           const largestSize = findLargestRegisteredSize(item.sizes);
@@ -230,16 +250,18 @@ export function registerAuditCommand(program: Command): void {
         }
       }
 
-      // -- Duplicate detection (pHash via sharp) --------------------------------
-      if (options.duplicates || runAll) {
+      // -- Duplicate detection (dHash via sharp) --------------------------------
+      // Excluded from the default runAll: it downloads every image's full bytes
+      // to hash them, which is far too heavy for a bare `audit`. Opt in.
+      if (options.duplicates) {
         const dupeFindings = await detectDuplicates(allItems);
         findings.push(...dupeFindings);
       }
 
-      // -- Broken reference detection ------------------------------------------
+      // -- Missing source file detection ---------------------------------------
       if (options.brokenRefs) {
-        info('Checking for broken attachment references in post content...');
-        const brokenFindings = await detectBrokenRefs(allItems, site.url);
+        info('Checking that each attachment source file resolves...');
+        const brokenFindings = await detectBrokenRefs(allItems);
         findings.push(...brokenFindings);
       }
 
@@ -465,37 +487,39 @@ function hammingDistance(a: bigint, b: bigint): number {
 
 // -- Broken reference detection -----------------------------------------------
 
-async function detectBrokenRefs(items: MediaItem[], _siteUrl: string): Promise<AuditFinding[]> {
-  // Build a set of known attachment URLs for fast lookup.
-  const knownUrls = new Set(items.map((i) => i.url));
+async function detectBrokenRefs(items: MediaItem[]): Promise<AuditFinding[]> {
   const findings: AuditFinding[] = [];
 
-  // Check each attachment URL with a HEAD request.
-  // We're looking for attachments that are registered in WP but whose
-  // underlying file returns a non-200 response.
+  // HEAD each attachment's source URL and flag only DEFINITIVE misses (404/410)
+  // — the file is registered in WP but gone from disk. Transient failures
+  // (network blip, timeout, 5xx) are inconclusive and must NOT be reported as
+  // broken, so we retry once and then skip rather than emit a false positive.
   const CONCURRENCY = 10;
   const chunks = chunkArray(items, CONCURRENCY);
+
+  const isMissing = async (url: string): Promise<number | null> => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await fetch(url, { method: 'HEAD' });
+        if (response.status === 404 || response.status === 410) return response.status;
+        return null; // reachable (or a non-404 error) → not a missing file
+      } catch {
+        // network error — retry once, then treat as inconclusive
+      }
+    }
+    return null;
+  };
 
   for (const chunk of chunks) {
     await Promise.all(
       chunk.map(async (item) => {
-        if (!knownUrls.has(item.url)) return;
-        try {
-          const response = await fetch(item.url, { method: 'HEAD' });
-          if (response.status === 404 || response.status === 410) {
-            findings.push({
-              type: 'broken-ref',
-              attachmentId: item.id,
-              filename: item.filename,
-              detail: `URL returns HTTP ${response.status}: ${item.url}`,
-            });
-          }
-        } catch {
+        const status = await isMissing(item.url);
+        if (status !== null) {
           findings.push({
             type: 'broken-ref',
             attachmentId: item.id,
             filename: item.filename,
-            detail: `URL unreachable: ${item.url}`,
+            detail: `Source file returns HTTP ${status}: ${item.url}`,
           });
         }
       }),

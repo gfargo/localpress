@@ -368,6 +368,8 @@ interface WpMediaResponse {
   description?: { rendered: string; raw?: string };
   date: string;
   slug: string;
+  /** Parent post the attachment is attached to; 0 when unattached. */
+  post?: number | null;
 }
 
 interface WpPostResponse {
@@ -445,6 +447,7 @@ function mapWpMediaToItem(raw: WpMediaResponse): MediaItem {
     description: raw.description?.raw ?? stripHtml(raw.description?.rendered),
     uploadedAt: raw.date,
     sizes: Object.keys(sizes).length > 0 ? sizes : undefined,
+    parentPost: raw.post ?? undefined,
   };
 }
 

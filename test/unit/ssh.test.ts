@@ -11,9 +11,35 @@
 import { describe, expect, test } from 'bun:test';
 
 import { AdapterResolver } from '../../src/adapters/resolver.ts';
-import { buildSshArgs, sshDestination } from '../../src/adapters/ssh.ts';
+import { buildSshArgs, shellQuote, sshDestination } from '../../src/adapters/ssh.ts';
 import { isWpCliAvailableForSite } from '../../src/adapters/wp-cli.ts';
 import type { SiteConfig, SshConfig } from '../../src/types.ts';
+
+// -- shellQuote ---------------------------------------------------------------
+
+describe('shellQuote', () => {
+  test('wraps a plain value in single quotes', () => {
+    expect(shellQuote('hello')).toBe("'hello'");
+  });
+
+  test('neutralizes shell metacharacters (no unquoted injection)', () => {
+    for (const dangerous of ['a; rm -rf ~', '$(whoami)', '`id`', 'a && b', 'a | b', 'a > f']) {
+      const quoted = shellQuote(dangerous);
+      // Everything stays inside one single-quoted string → inert to the shell.
+      expect(quoted.startsWith("'")).toBe(true);
+      expect(quoted.endsWith("'")).toBe(true);
+    }
+  });
+
+  test("escapes embedded single quotes via the '\\'' idiom", () => {
+    // O'Brien → 'O'\''Brien'
+    expect(shellQuote("O'Brien")).toBe("'O'\\''Brien'");
+  });
+
+  test('a title with a double quote does not break the argument', () => {
+    expect(shellQuote('A "wide" shot')).toBe('\'A "wide" shot\'');
+  });
+});
 
 // -- Test fixtures ------------------------------------------------------------
 

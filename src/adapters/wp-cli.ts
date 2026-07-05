@@ -6,10 +6,11 @@
  * thumbnail regeneration, orphan pruning, full content scans.
  */
 
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SiteConfig, SshConfig } from '../types.ts';
-import { scpUpload, sshExec } from './ssh.ts';
+import { scpUpload, shellQuote, sshExec } from './ssh.ts';
 import type {
   Capability,
   ListFilters,
@@ -53,7 +54,7 @@ export class WpCliAdapter implements WpBackend {
   // -- Internal WP-CLI execution ----------------------------------------------
 
   private async wp(command: string): Promise<string> {
-    const fullCommand = `cd ${this.wpPath} && wp ${command} --allow-root`;
+    const fullCommand = `cd ${shellQuote(this.wpPath)} && wp ${command} --allow-root`;
     const result = await sshExec(this.ssh, fullCommand);
 
     if (result.exitCode !== 0) {
@@ -186,11 +187,14 @@ export class WpCliAdapter implements WpBackend {
   // Mutation ------------------------------------------------------------------
 
   async upload(file: Buffer, metadata: UploadMetadata): Promise<MediaItem> {
-    // Write the file to a local temp path, then SCP to remote.
-    const localTmp = join(tmpdir(), `localpress-upload-${Date.now()}-${metadata.filename}`);
+    // Write the file to a local temp path, then SCP to remote. A UUID keeps the
+    // temp name unique under concurrency while preserving the original filename
+    // (WP derives the attachment name from the imported file's basename).
+    const unique = `${Date.now()}-${randomUUID()}`;
+    const localTmp = join(tmpdir(), `localpress-upload-${unique}-${metadata.filename}`);
     await Bun.write(localTmp, file);
 
-    const remoteTmp = `/tmp/localpress-upload-${Date.now()}-${metadata.filename}`;
+    const remoteTmp = `/tmp/localpress-upload-${unique}-${metadata.filename}`;
     const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
     if (scpResult.exitCode !== 0) {
       throw new Error(
@@ -198,12 +202,14 @@ export class WpCliAdapter implements WpBackend {
       );
     }
 
-    // Import via WP-CLI.
-    const args = [`media import "${remoteTmp}"`, '--porcelain'];
-    if (metadata.title) args.push(`--title="${metadata.title}"`);
-    if (metadata.altText) args.push(`--alt="${metadata.altText}"`);
-    if (metadata.caption) args.push(`--caption="${metadata.caption}"`);
-    if (metadata.description) args.push(`--description="${metadata.description}"`);
+    // Import via WP-CLI. Every interpolated value is shell-escaped — titles /
+    // alt text / captions are arbitrary editor- or AI-generated content and
+    // must never be able to break the command or inject shell execution.
+    const args = [`media import ${shellQuote(remoteTmp)}`, '--porcelain'];
+    if (metadata.title) args.push(`--title=${shellQuote(metadata.title)}`);
+    if (metadata.altText) args.push(`--alt=${shellQuote(metadata.altText)}`);
+    if (metadata.caption) args.push(`--caption=${shellQuote(metadata.caption)}`);
+    if (metadata.description) args.push(`--description=${shellQuote(metadata.description)}`);
     if (metadata.postId) args.push(`--post_id=${metadata.postId}`);
 
     const output = await this.wp(args.join(' '));
@@ -214,7 +220,7 @@ export class WpCliAdapter implements WpBackend {
     }
 
     // Clean up remote temp file.
-    await sshExec(this.ssh, `rm -f "${remoteTmp}"`).catch(() => {});
+    await sshExec(this.ssh, `rm -f ${shellQuote(remoteTmp)}`).catch(() => {});
 
     // Clean up local temp file.
     try {
@@ -247,10 +253,12 @@ export class WpCliAdapter implements WpBackend {
     }
 
     // Write to local temp, SCP to remote, place at the (possibly new) path.
-    const localTmp = join(tmpdir(), `localpress-replace-${Date.now()}`);
+    // A UUID avoids collisions between concurrent replace operations.
+    const unique = `${Date.now()}-${randomUUID()}`;
+    const localTmp = join(tmpdir(), `localpress-replace-${unique}`);
     await Bun.write(localTmp, file);
 
-    const remoteTmp = `/tmp/localpress-replace-${Date.now()}`;
+    const remoteTmp = `/tmp/localpress-replace-${unique}`;
     const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
     if (scpResult.exitCode !== 0) {
       throw new Error(
@@ -260,7 +268,7 @@ export class WpCliAdapter implements WpBackend {
 
     // Ensure the target directory exists, then move the file into place.
     const targetDir = remotePath.substring(0, remotePath.lastIndexOf('/'));
-    const mkdirResult = await sshExec(this.ssh, `mkdir -p "${targetDir}"`);
+    const mkdirResult = await sshExec(this.ssh, `mkdir -p ${shellQuote(targetDir)}`);
     if (mkdirResult.exitCode !== 0) {
       throw new Error(
         `Failed to create target directory "${targetDir}": ${mkdirResult.stderr || 'unknown error'}`,
@@ -269,7 +277,7 @@ export class WpCliAdapter implements WpBackend {
 
     const mvResult = await sshExec(
       this.ssh,
-      `mv "${remoteTmp}" "${remotePath}" && chmod 644 "${remotePath}"`,
+      `mv ${shellQuote(remoteTmp)} ${shellQuote(remotePath)} && chmod 644 ${shellQuote(remotePath)}`,
     );
     if (mvResult.exitCode !== 0) {
       throw new Error(
@@ -281,17 +289,14 @@ export class WpCliAdapter implements WpBackend {
     if (options?.newExtension && newFilePath !== currentFile.trim()) {
       const oldRemotePath = `${uploadsDir}/${currentFile.trim()}`;
       // Delete the old file (it's now at a different path).
-      await sshExec(this.ssh, `rm -f "${oldRemotePath}"`).catch(() => {});
+      await sshExec(this.ssh, `rm -f ${shellQuote(oldRemotePath)}`).catch(() => {});
 
       // Update _wp_attached_file meta to the new path.
-      await this.wp(`post meta update ${id} _wp_attached_file "${newFilePath}"`);
+      await this.wp(`post meta update ${id} _wp_attached_file ${shellQuote(newFilePath)}`);
 
-      // Update the post MIME type via wp post update (handles quoting correctly).
+      // Update the post MIME type.
       if (options.newMimeType) {
-        await sshExec(
-          this.ssh,
-          `cd ${this.wpPath} && wp post update ${id} --post_mime_type="${options.newMimeType}" --allow-root`,
-        );
+        await this.wp(`post update ${id} --post_mime_type=${shellQuote(options.newMimeType)}`);
       }
 
       // Update attachment metadata: file field, filesize, and clear stale sizes.
@@ -308,7 +313,9 @@ export class WpCliAdapter implements WpBackend {
               .map((s) => (s as { file?: string })?.file)
               .filter(Boolean) as string[];
             for (const thumbFile of oldThumbFiles) {
-              await sshExec(this.ssh, `rm -f "${dirPath}/${thumbFile}"`).catch(() => {});
+              await sshExec(this.ssh, `rm -f ${shellQuote(`${dirPath}/${thumbFile}`)}`).catch(
+                () => {},
+              );
             }
           }
 
@@ -317,9 +324,12 @@ export class WpCliAdapter implements WpBackend {
           // Clear the sizes array — old format thumbnails are now invalid.
           // WordPress will repopulate this on regenerate.
           meta.sizes = {};
-          const updatedMeta = JSON.stringify(meta).replace(/'/g, "\\'");
+          // Properly single-quote the JSON for the shell. The previous
+          // `.replace(/'/g, "\\'")` produced `\'`, which POSIX shells do NOT
+          // honor inside single quotes — any apostrophe (e.g. in image_meta
+          // credit/caption) broke the command and silently left stale metadata.
           await this.wp(
-            `post meta update ${id} _wp_attachment_metadata '${updatedMeta}' --format=json`,
+            `post meta update ${id} _wp_attachment_metadata ${shellQuote(JSON.stringify(meta))} --format=json`,
           );
         }
       } catch {
@@ -352,16 +362,18 @@ export class WpCliAdapter implements WpBackend {
 
   async updateMetadata(id: number, metadata: UpdateMetadata): Promise<void> {
     if (metadata.title !== undefined) {
-      await this.wp(`post update ${id} --post_title="${metadata.title}"`);
+      await this.wp(`post update ${id} --post_title=${shellQuote(metadata.title)}`);
     }
     if (metadata.altText !== undefined) {
-      await this.wp(`post meta update ${id} _wp_attachment_image_alt "${metadata.altText}"`);
+      await this.wp(
+        `post meta update ${id} _wp_attachment_image_alt ${shellQuote(metadata.altText)}`,
+      );
     }
     if (metadata.caption !== undefined) {
-      await this.wp(`post update ${id} --post_excerpt="${metadata.caption}"`);
+      await this.wp(`post update ${id} --post_excerpt=${shellQuote(metadata.caption)}`);
     }
     if (metadata.description !== undefined) {
-      await this.wp(`post update ${id} --post_content="${metadata.description}"`);
+      await this.wp(`post update ${id} --post_content=${shellQuote(metadata.description)}`);
     }
   }
 
@@ -380,10 +392,13 @@ export class WpCliAdapter implements WpBackend {
     // Get the uploads directory.
     const uploadsDir = await this.wp(`eval 'echo wp_upload_dir()["basedir"];'`);
 
-    // List all files in uploads.
+    // List all image files in uploads. The extension alternation is grouped so
+    // `-type f` applies to ALL of it — otherwise the precedence is
+    // `(-type f AND *.jpg) OR *.jpeg OR ...`, which matches directories named
+    // e.g. `2023.webp` and reports them as reclaimable orphan "files".
     const filesOutput = await sshExec(
       this.ssh,
-      `find "${uploadsDir.trim()}" -type f -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" -o -name "*.gif" -o -name "*.webp" -o -name "*.avif" | sort`,
+      `find ${shellQuote(uploadsDir.trim())} -type f \\( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.gif' -o -name '*.webp' -o -name '*.avif' \\) | sort`,
     );
     const allFiles = filesOutput.stdout.split('\n').filter(Boolean);
 

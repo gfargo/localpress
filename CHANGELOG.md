@@ -43,6 +43,30 @@ optimize idempotency, and preview-server hardening.
   same Host check.
 - Browser launch is now best-effort and never throws in headless environments.
 
+### Fixed — correctness & security (medium)
+- **WP-CLI command construction is fully shell-hardened** (#112). All interpolated
+  values — titles, alt text, captions, descriptions, paths, and the
+  `_wp_attachment_metadata` JSON — are single-quote escaped via a shared
+  `shellQuote` helper, so content containing quotes/`$`/backticks/`;` can't break
+  the command or inject execution. Fixes the broken `\'`-in-single-quotes JSON
+  escaping that silently corrupted metadata on apostrophes, groups the
+  `pruneOrphans` `find` predicate so directories aren't reported as orphan files,
+  and makes temp filenames collision-proof under concurrency.
+- **`audit` correctness** (#111): no longer crashes on a library whose size is an
+  exact multiple of 100 (treats the resulting 400 as "no more pages");
+  `--unattached` is now implemented (attachments with parent post 0) instead of
+  silently returning nothing; `--broken-refs` is re-documented and rewritten as
+  an honest missing-source-file probe (404/410) that retries once and never
+  reports transient network errors as broken; and duplicate detection is excluded
+  from a bare `audit` (it downloaded every image's full bytes).
+- **`sites run` forwards run mode and bounds child time** (#104): `--apply`,
+  `--dry-run`, `--strict`, and `--yes` set on the parent are passed through to
+  each per-site child (previously a cross-site `optimize --apply` silently ran as
+  a dry-run while reporting success); the per-child timeout defaults to 1 hour
+  with a `--timeout` override (`0` disables), and a SIGTERM is escalated to
+  SIGKILL so a stuck child can't hang the run. The command tokenizer now
+  preserves an explicitly empty quoted argument (`--alt-text ""`).
+
 ## [2.1.0] - 2026-07-05
 
 Trust & correctness release — hardens the safety primitives (dry-run, undo,
