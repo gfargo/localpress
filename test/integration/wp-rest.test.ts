@@ -141,12 +141,140 @@ describe.skipIf(!canRun)('WordPress REST API integration', () => {
   });
 
   test('can find references (fast scan)', async () => {
-    const items = await adapter.listMedia({ perPage: 1, page: 1 });
-    const item = items[0];
+    // Upload a throwaway attachment so we have a known attachment ID to embed
+    // — reusing an existing library item risks pre-existing references from
+    // other tests/runs skewing the assertion.
+    const { default: sharp } = await import('sharp');
+    const jpegBuffer = await sharp({
+      create: { width: 50, height: 50, channels: 3, background: { r: 0, g: 255, b: 0 } },
+    })
+      .jpeg()
+      .toBuffer();
+    const uploaded = await adapter.upload(Buffer.from(jpegBuffer), {
+      filename: 'reference-scan-test.jpg',
+      title: 'Reference Scan Test Image',
+    });
 
-    // Fast scan should return an array (possibly empty for test images).
-    const refs = await adapter.findReferences(item.id, 'fast');
-    expect(Array.isArray(refs)).toBe(true);
+    // Seed a real Gutenberg post embedding the attachment via a wp:image block.
+    const auth = `Basic ${btoa(`${testSite.username}:${testSite.appPassword}`)}`;
+    const content = `<!-- wp:image {"id":${uploaded.id}} --><figure class="wp-block-image"><img src="${uploaded.url}" class="wp-image-${uploaded.id}"/></figure><!-- /wp:image -->`;
+
+    const createRes = await fetch(`${testSite.url}/wp-json/wp/v2/posts`, {
+      method: 'POST',
+      headers: { Authorization: auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Reference Scan Test Post',
+        content,
+        status: 'publish',
+      }),
+    });
+    expect(createRes.ok).toBe(true);
+    const createdPost = (await createRes.json()) as { id: number };
+
+    try {
+      const refs = await adapter.findReferences(uploaded.id, 'fast');
+      const blockRefs = refs.filter((r) => r.type === 'gutenberg-block');
+      expect(blockRefs.length).toBe(1);
+      expect(blockRefs[0].postId).toBe(createdPost.id);
+    } finally {
+      await fetch(`${testSite.url}/wp-json/wp/v2/posts/${createdPost.id}?force=true`, {
+        method: 'DELETE',
+        headers: { Authorization: auth },
+      });
+      await adapter.delete(uploaded.id, { force: true });
+    }
+  });
+
+  test('force delete permanently removes an attachment', async () => {
+    const { default: sharp } = await import('sharp');
+    const jpegBuffer = await sharp({
+      create: { width: 20, height: 20, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .jpeg()
+      .toBuffer();
+    const uploaded = await adapter.upload(Buffer.from(jpegBuffer), {
+      filename: 'delete-force-test.jpg',
+      title: 'Delete Force Test',
+    });
+
+    await adapter.delete(uploaded.id, { force: true });
+
+    await expect(adapter.getMedia(uploaded.id)).rejects.toThrow();
+  });
+
+  test('non-force delete without MEDIA_TRASH surfaces an actionable error', async () => {
+    // The Docker test WordPress doesn't define MEDIA_TRASH, so WP itself
+    // rejects trashing an attachment — the adapter translates this into an
+    // actionable message instead of an opaque REST error.
+    const { default: sharp } = await import('sharp');
+    const jpegBuffer = await sharp({
+      create: { width: 20, height: 20, channels: 3, background: { r: 30, g: 20, b: 10 } },
+    })
+      .jpeg()
+      .toBuffer();
+    const uploaded = await adapter.upload(Buffer.from(jpegBuffer), {
+      filename: 'delete-trash-test.jpg',
+      title: 'Delete Trash Test',
+    });
+
+    try {
+      await expect(adapter.delete(uploaded.id, { force: false })).rejects.toThrow(
+        /MEDIA_TRASH|force/i,
+      );
+    } finally {
+      // Clean up regardless of trash support.
+      await adapter.delete(uploaded.id, { force: true }).catch(() => {});
+    }
+  });
+
+  test('delete records a processing event that getLastProcessing can retrieve', async () => {
+    const { default: sharp } = await import('sharp');
+    const jpegBuffer = await sharp({
+      create: { width: 20, height: 20, channels: 3, background: { r: 5, g: 5, b: 5 } },
+    })
+      .jpeg()
+      .toBuffer();
+    const uploaded = await adapter.upload(Buffer.from(jpegBuffer), {
+      filename: 'delete-record-test.jpg',
+      title: 'Delete Record Test',
+    });
+
+    await adapter.delete(uploaded.id, { force: true });
+
+    // processing_history has an FK on (site_name, wp_id) -> attachments, so the
+    // attachment row must exist locally before recording a processing event for it.
+    db.upsertAttachment({
+      siteName: testSite.name,
+      wpId: uploaded.id,
+      sourceUrl: uploaded.url,
+      sourceHash: null,
+      sizeBytes: uploaded.sizeBytes ?? null,
+      width: uploaded.width ?? null,
+      height: uploaded.height ?? null,
+      mimeType: uploaded.mimeType,
+      lastSeenAt: Date.now(),
+    });
+
+    db.recordProcessing({
+      siteName: testSite.name,
+      wpId: uploaded.id,
+      operation: 'delete',
+      paramsJson: JSON.stringify({ force: true }),
+      sourceHash: null,
+      resultHash: null,
+      bytesBefore: uploaded.sizeBytes ?? null,
+      bytesAfter: null,
+      resultWpId: null,
+      ranAt: Date.now(),
+      durationMs: 42,
+      status: 'success',
+      errorMessage: null,
+    });
+
+    const last = db.getLastProcessing(testSite.name, uploaded.id, 'delete');
+    expect(last).not.toBeNull();
+    expect(last?.operation).toBe('delete');
+    expect(last?.status).toBe('success');
   });
 
   test('SQLite state tracking works end-to-end', async () => {

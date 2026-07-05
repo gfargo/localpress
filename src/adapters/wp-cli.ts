@@ -551,6 +551,11 @@ export class WpCliAdapter implements WpBackend {
 
   // Reference finding ---------------------------------------------------------
 
+  // The block/content queries below intentionally scope to post_status='publish',
+  // matching the REST adapter: WP's REST /posts and /pages endpoints default to
+  // `status=publish` even for authenticated requests, so this is parity, not an
+  // arbitrary restriction. Widen it only if unpublished references need to be
+  // surfaced too — that's a user-visible behavior change, not a bug fix.
   async findReferences(id: number, scope: ReferenceScope): Promise<Reference[]> {
     const references: Reference[] = [];
 
@@ -582,15 +587,20 @@ export class WpCliAdapter implements WpBackend {
       }
     }
 
-    // Gutenberg block references.
-    const blockPattern = `wp:image {"id":${id}`;
+    // Gutenberg block references. The LIKE clause is a cheap pre-filter only
+    // (it would match id:123 inside id:1234 too) — the real match is the
+    // anchored regex applied to post_content below, same as REST's
+    // countBlockReferences() in rest.ts.
+    const blockPattern = `"id":${id}`;
     const blockOutput = await this.wp(
       `db query "SELECT ID, post_title, post_type, post_content FROM wp_posts WHERE post_status='publish' AND post_content LIKE '%${blockPattern}%'" --skip-column-names`,
     );
     for (const line of blockOutput.split('\n').filter(Boolean)) {
       const parts = line.split('\t');
-      if (parts.length >= 3) {
+      if (parts.length >= 4) {
         const postId = Number.parseInt(parts[0], 10);
+        const content = parts.slice(3).join('\t');
+        if (!matchesBlockId(content, id)) continue;
         // Avoid duplicating featured-image refs.
         if (!references.some((r) => r.postId === postId && r.type === 'featured-image')) {
           references.push({
@@ -668,6 +678,18 @@ export class WpCliAdapter implements WpBackend {
 
     return references;
   }
+}
+
+/**
+ * Returns true if `content` contains a Gutenberg block reference to
+ * `attachmentId` that is ID-boundary safe (so id:123 does not match id:1234).
+ * Mirrors countBlockReferences() in rest.ts.
+ */
+export function matchesBlockId(content: string, attachmentId: number): boolean {
+  const pattern = new RegExp(
+    `wp:(?:image|gallery|cover|media-text)[^}]*"id"\\s*:\\s*${attachmentId}\\b`,
+  );
+  return pattern.test(content);
 }
 
 // -- WP-CLI response types ----------------------------------------------------
