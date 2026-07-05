@@ -188,3 +188,14 @@ export class CapabilityUnavailableError extends Error {
     this.name = 'CapabilityUnavailableError';
   }
 }
+
+/** Thrown when a WordPress REST API request fails with an HTTP error status. */
+export class WpApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'WpApiError';
+  }
+}

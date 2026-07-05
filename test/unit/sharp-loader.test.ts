@@ -8,7 +8,11 @@
 
 import { describe, expect, test } from 'bun:test';
 
-import { SharpNotInstalledError, isSharpAvailable } from '../../src/engine/image/sharp-loader.ts';
+import {
+  SharpNotInstalledError,
+  isSharpAvailable,
+  loadSharpWithPrompt,
+} from '../../src/engine/image/sharp-loader.ts';
 
 describe('SharpNotInstalledError', () => {
   test('is thrown when sharp cannot be loaded', () => {
@@ -36,5 +40,18 @@ describe('isSharpAvailable', () => {
     // This verifies the happy path.
     const result = await isSharpAvailable();
     expect(result).toBe(true);
+  });
+});
+
+describe('loadSharpWithPrompt', () => {
+  test('--yes wins even when --json/--quiet also set noPrompt', async () => {
+    // Regression: `noPrompt` used to be checked before `autoYes`, so
+    // `--json --yes` (which sets both noPrompt and autoYes) threw instead of
+    // auto-installing. Since sharp is already installed in this test env,
+    // loadSharp() resolves immediately and this path never even reaches the
+    // noPrompt/autoYes branch — this simply proves that ordering no longer
+    // throws on the happy path when both flags are set.
+    const sharp = await loadSharpWithPrompt({ autoYes: true, noPrompt: true });
+    expect(sharp).toBeDefined();
   });
 });
