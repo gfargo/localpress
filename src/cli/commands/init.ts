@@ -13,7 +13,7 @@
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { SiteConfig } from '../../types.ts';
-import { loadConfig, saveConfig } from '../utils/config.ts';
+import { isValidSiteName, loadConfig, saveConfig } from '../utils/config.ts';
 import { error, info, warn } from '../utils/output.ts';
 
 export function registerInitCommand(program: Command): void {
@@ -75,6 +75,13 @@ export function registerInitCommand(program: Command): void {
 
       if (!siteName) {
         siteName = new URL(siteUrl).hostname;
+      }
+
+      if (!isValidSiteName(siteName)) {
+        error(
+          `Invalid site name '${siteName}'. Use only letters, numbers, '.', '_' and '-' (pass --name to override the hostname-derived default).`,
+        );
+        process.exit(2);
       }
 
       // Test the connection.
