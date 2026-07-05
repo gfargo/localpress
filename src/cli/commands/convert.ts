@@ -81,6 +81,7 @@ export function registerConvertCommand(program: Command): void {
         from: string;
         to: string;
         savedBytes: number;
+        rewrittenUrls?: number;
       }> = [];
       let failures = 0;
 
@@ -137,15 +138,27 @@ export function registerConvertCommand(program: Command): void {
           const formatChanged = targetMime !== item.mimeType;
           const newExtension = formatChanged ? mimeToExtension(targetMime) : undefined;
 
+          let rewrittenUrls: number | undefined;
+
           if (!options.keepOriginal) {
             const replaceAdapter = resolver.tryResolve('replace-in-place');
             if (replaceAdapter) {
               try {
-                await replaceAdapter.replaceInPlace(id, result.bytes, {
+                const replaced = await replaceAdapter.replaceInPlace(id, result.bytes, {
                   newMimeType: formatChanged ? targetMime : undefined,
                   newExtension,
                 });
                 resultWpId = id;
+
+                const rewrite = replaced.formatChangeRewrite;
+                if (rewrite) {
+                  rewrittenUrls = rewrite.rewrittenUrls;
+                  if (rewrite.warning) {
+                    warn(`    ⚠ ${rewrite.warning}`);
+                  } else if (rewrite.rewrittenUrls > 0) {
+                    info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
+                  }
+                }
               } catch (err) {
                 if (err instanceof CapabilityUnavailableError && !parentOpts.strict) {
                   // Fall through.
@@ -214,6 +227,7 @@ export function registerConvertCommand(program: Command): void {
             from: item.mimeType,
             to: `image/${targetFormat}`,
             savedBytes: saved,
+            rewrittenUrls,
           });
         } catch (err) {
           error(`    ✗ #${id}: ${err instanceof Error ? err.message : String(err)}`);
