@@ -60,6 +60,12 @@ jobs:
           echo "WP_TEST_URL=http://localhost:8880" >> $GITHUB_ENV
           echo "WP_TEST_USER=admin" >> $GITHUB_ENV
 
+      - name: Verify integration test env vars are set
+        run: |
+          test -n "$WP_TEST_APP_PASSWORD" || { echo "::error::WP_TEST_APP_PASSWORD is not set — integration tests would silently skip. Check the GITHUB_ENV export step above."; exit 1; }
+          test -n "$WP_TEST_URL" || { echo "::error::WP_TEST_URL is not set"; exit 1; }
+          test -n "$WP_TEST_USER" || { echo "::error::WP_TEST_USER is not set"; exit 1; }
+
       - name: Verify WordPress REST API
         run: |
           source /tmp/wp-test-env
