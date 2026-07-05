@@ -23,7 +23,7 @@ import { Box, Text, useApp, useInput } from 'ink';
 import { useEffect, useState } from 'react';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { SiteConfig, SshConfig } from '../../types.ts';
-import { loadConfig, saveConfig } from '../utils/config.ts';
+import { isValidSiteName, loadConfig, mergeSiteConfig, saveConfig } from '../utils/config.ts';
 
 type WizardStep =
   | 'url'
@@ -60,13 +60,14 @@ export function InitWizard({
 }: InitWizardProps) {
   const { exit } = useApp();
 
-  const [step, setStep] = useState<WizardStep>(initialUrl ? 'name' : 'url');
+  const [step, setStep] = useState<WizardStep>('url');
   const [url, setUrl] = useState(initialUrl ?? '');
   const [siteName, setSiteName] = useState(initialName ?? '');
   const [username, setUsername] = useState(initialUsername ?? '');
   const [password, setPassword] = useState(initialPassword ?? '');
   const [inputValue, setInputValue] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [nameError, setNameError] = useState('');
   const [authenticatedAs, setAuthenticatedAs] = useState('');
   const [capabilities, setCapabilities] = useState<Array<{ name: string; available: boolean }>>([]);
 
@@ -79,25 +80,40 @@ export function InitWizard({
   const [sshErrorMessage, setSshErrorMessage] = useState('');
   const [, setSshConfigured] = useState(false);
 
-  // Skip steps that already have values. Runs once on mount — deps intentionally empty.
+  // Skip steps that already have values, cascading url -> name -> username ->
+  // password and stopping at the first one that's missing. Runs once on
+  // mount — deps intentionally empty.
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only effect
   useEffect(() => {
-    if (step === 'url' && initialUrl) {
-      setUrl(normalizeUrl(initialUrl));
-      setStep(initialName ? 'username' : 'name');
+    if (initialName && !isValidSiteName(initialName)) {
+      setErrorMessage(
+        `Invalid site name '${initialName}'. Use only letters, numbers, '.', '_' and '-'.`,
+      );
+      setStep('error');
+      return;
     }
-    if (step === 'name' && initialName) {
-      setSiteName(initialName);
-      setStep(initialUsername ? 'password' : 'username');
+    if (!initialUrl) return;
+    setUrl(normalizeUrl(initialUrl));
+
+    if (!initialName) {
+      setStep('name');
+      return;
     }
-    if (step === 'username' && initialUsername) {
-      setUsername(initialUsername);
-      setStep(initialPassword ? 'testing' : 'password');
+    setSiteName(initialName);
+
+    if (!initialUsername) {
+      setStep('username');
+      return;
     }
-    if (step === 'password' && initialPassword) {
-      setPassword(initialPassword);
-      setStep('testing');
+    setUsername(initialUsername);
+
+    if (!initialPassword) {
+      setStep('password');
+      return;
     }
+    setPassword(initialPassword);
+
+    setStep('testing');
   }, []);
 
   // Run connection test when we reach the testing step.
@@ -128,15 +144,27 @@ export function InitWizard({
         const user = (await response.json()) as { name?: string; slug?: string };
         setAuthenticatedAs(user.name ?? user.slug ?? username);
 
-        // Build capability report (REST-only at this point).
-        const siteConfig: SiteConfig = {
-          name: siteName || new URL(normalizedUrl).hostname,
+        // Merge into any existing site config so re-running init (e.g. to
+        // rotate credentials) doesn't drop a previously-configured `ssh`.
+        const resolvedName = siteName || new URL(normalizedUrl).hostname;
+        const config = await loadConfig();
+        const existing = config.sites[resolvedName];
+        const siteConfig: SiteConfig = mergeSiteConfig(existing, {
+          name: resolvedName,
           url: normalizedUrl,
           username,
           appPassword: password,
-          createdAt: new Date().toISOString(),
-        };
+        });
 
+        if (!isValidSiteName(siteConfig.name)) {
+          setErrorMessage(
+            `Invalid site name '${siteConfig.name}'. Use only letters, numbers, '.', '_' and '-'.`,
+          );
+          setStep('error');
+          return;
+        }
+
+        // Capability report reflects any preserved SSH config.
         const resolver = new AdapterResolver(siteConfig);
         const report = resolver.capabilityReport();
         setCapabilities(
@@ -146,8 +174,6 @@ export function InitWizard({
           })),
         );
 
-        // Save config (without SSH for now).
-        const config = await loadConfig();
         config.sites[siteConfig.name] = siteConfig;
         if (!config.activeSite) {
           config.activeSite = siteConfig.name;
@@ -327,6 +353,11 @@ export function InitWizard({
       case 'name': {
         const defaultName = getHostname(url);
         const value = inputValue.trim() || defaultName;
+        if (!isValidSiteName(value)) {
+          setNameError(`Invalid name '${value}'. Use only letters, numbers, '.', '_' and '-'.`);
+          return;
+        }
+        setNameError('');
         setSiteName(value);
         setInputValue('');
         setStep('username');
@@ -414,10 +445,13 @@ export function InitWizard({
 
       {/* Step 2: Name */}
       {step === 'name' ? (
-        <Box>
-          <Text>Site name [{getHostname(url)}]: </Text>
-          <Text color="green">{inputValue}</Text>
-          <Text color="gray">▌</Text>
+        <Box flexDirection="column">
+          <Box>
+            <Text>Site name [{getHostname(url)}]: </Text>
+            <Text color="green">{inputValue}</Text>
+            <Text color="gray">▌</Text>
+          </Box>
+          {nameError ? <Text color="red">{nameError}</Text> : null}
         </Box>
       ) : siteName ? (
         <Box>
