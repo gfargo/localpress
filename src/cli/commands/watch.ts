@@ -13,6 +13,12 @@
  *
  * File→attachment mappings are persisted in the site's SQLite database so
  * re-running watch after a restart picks up where it left off.
+ *
+ * `--delete` always force-deletes (skips WP trash): retrying a non-force
+ * delete on every debounced file-removal event isn't practical (stock
+ * WordPress needs MEDIA_TRASH defined, which most sites don't set — see
+ * `localpress delete --help`). A local undo snapshot is captured first via
+ * the time-machine, so `localpress undo --apply` can restore the file.
  */
 
 import { createHash } from 'node:crypto';
@@ -22,10 +28,17 @@ import { watch } from 'chokidar';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { CapabilityUnavailableError } from '../../adapters/types.ts';
+import {
+  captureSnapshot,
+  closeHistorySession,
+  openHistorySession,
+  openSnapshotStore,
+  resolveHistoryConfig,
+} from '../../engine/history/index.ts';
 import { optimizeImage } from '../../engine/image/optimize.ts';
 import type { ImageFormat } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
-import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 /** Image extensions we watch for. */
@@ -73,7 +86,10 @@ export function registerWatchCommand(program: Command): void {
     .option('--to <format>', 'convert to format before uploading (webp, avif, jpeg, png)')
     .option('--max-width <n>', 'max width in pixels', (v) => Number.parseInt(v, 10))
     .option('--max-height <n>', 'max height in pixels', (v) => Number.parseInt(v, 10))
-    .option('--delete', 'delete from WordPress when local file is removed')
+    .option(
+      '--delete',
+      'permanently delete from WordPress when local file is removed (force-deletes, skips trash; captures an undo snapshot first)',
+    )
     .option('--debounce <ms>', 'debounce interval in ms (default: 800)', (v) =>
       Number.parseInt(v, 10),
     )
@@ -94,6 +110,15 @@ export function registerWatchCommand(program: Command): void {
       const dbPath = getSiteDbPath(site.name);
       const db = SiteDb.init(dbPath);
       db.ensureSite(site.name, site.url);
+
+      // Time-machine: one session for the whole watch run (deletes are
+      // force-deletes, see handleDelete below). Closed on graceful shutdown.
+      const historyConfig = resolveHistoryConfig(config.history);
+      const snapshotStore = openSnapshotStore(db, getConfigDir());
+      const historySession =
+        options.delete && historyConfig.enabled
+          ? openHistorySession(snapshotStore, site.name, 'watch-delete', {})
+          : null;
 
       const debounceMs = options.debounce ?? DEBOUNCE_MS;
 
@@ -256,14 +281,58 @@ export function registerWatchCommand(program: Command): void {
 
         if (options.delete) {
           try {
+            // Best-effort snapshot before the permanent delete, so
+            // `localpress undo --apply` can re-upload the file.
+            if (historySession) {
+              try {
+                const getAdapter = resolver.resolve('get');
+                const item = await getAdapter.getMedia(mapping.wpId);
+                const response = await fetch(item.url);
+                if (response.ok) {
+                  const sourceBytes = Buffer.from(await response.arrayBuffer());
+                  const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+                  captureSnapshot(snapshotStore, {
+                    siteName: site.name,
+                    sessionId: historySession.id,
+                    attachmentId: item.id,
+                    operation: 'delete',
+                    sourceBytes,
+                    beforeHash: sourceHash,
+                    beforeMeta: {
+                      filename: item.filename,
+                      mimeType: item.mimeType,
+                      altText: item.altText,
+                      title: item.title,
+                      caption: item.caption,
+                      description: item.description,
+                      width: item.width,
+                      height: item.height,
+                      sizeBytes: sourceBytes.length,
+                    },
+                  });
+                } else {
+                  warn(
+                    `  ⚠ Couldn't capture file bytes for #${mapping.wpId} (HTTP ${response.status}); undo will not restore the file.`,
+                  );
+                }
+              } catch (snapshotErr) {
+                warn(
+                  `  ⚠ Couldn't capture file bytes for #${mapping.wpId} (${snapshotErr instanceof Error ? snapshotErr.message : String(snapshotErr)}); undo will not restore the file.`,
+                );
+              }
+            }
+
+            // `watch --delete` always force-deletes: stock WordPress needs
+            // MEDIA_TRASH defined to support trashing, and retrying a
+            // non-force delete on every debounced removal isn't practical.
             const deleteAdapter = resolver.resolve('delete');
-            await deleteAdapter.delete(mapping.wpId);
+            await deleteAdapter.delete(mapping.wpId, { force: true });
             db.removeWatchMapping(site.name, watchDir, relPath);
 
             if (parentOpts.json) {
               printJson({ event: 'deleted', file: relPath, attachmentId: mapping.wpId });
             } else {
-              info(`- ${relPath} → deleted #${mapping.wpId} from WordPress`);
+              info(`- ${relPath} → permanently deleted #${mapping.wpId} from WordPress`);
             }
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -338,6 +407,11 @@ export function registerWatchCommand(program: Command): void {
           clearTimeout(timer);
         }
         await watcher.close();
+        if (historySession) {
+          closeHistorySession(snapshotStore, historySession, {
+            maxSizeBytes: historyConfig.maxSizeBytes,
+          });
+        }
         db.close();
         process.exit(0);
       };

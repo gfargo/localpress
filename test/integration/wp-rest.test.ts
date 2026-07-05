@@ -101,6 +101,31 @@ describe.skipIf(!canRun)('WordPress REST API integration', () => {
     await adapter.delete(uploaded.id, { force: true });
   });
 
+  test('delete without --force throws actionable error when MEDIA_TRASH is unset', async () => {
+    // The Docker test WP does not define MEDIA_TRASH, so a non-force delete
+    // hits WP core's 501 rest_trash_not_supported. We translate that into an
+    // actionable message rather than surfacing the raw REST error.
+    const { default: sharp } = await import('sharp');
+    const jpegBuffer = await sharp({
+      create: { width: 100, height: 100, channels: 3, background: { r: 0, g: 255, b: 0 } },
+    })
+      .jpeg()
+      .toBuffer();
+
+    const uploaded = await adapter.upload(Buffer.from(jpegBuffer), {
+      filename: 'integration-test-trash-delete.jpg',
+      title: 'Integration Test Trash Delete',
+    });
+
+    try {
+      await expect(adapter.delete(uploaded.id)).rejects.toThrow(/MEDIA_TRASH|--force/);
+    } finally {
+      // The non-force delete above failed (nothing to trash), so force-delete
+      // to avoid leaking media between test runs.
+      await adapter.delete(uploaded.id, { force: true });
+    }
+  });
+
   test('can update metadata on an attachment', async () => {
     const items = await adapter.listMedia({ perPage: 1, page: 1 });
     const item = items[0];
