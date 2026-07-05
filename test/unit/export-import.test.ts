@@ -6,9 +6,25 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  ZIP32_MAX_ENTRIES,
+  ZIP32_MAX_SIZE,
+  ZipLimitExceededError,
+  ZipStreamWriter,
+  estimateEntryCount,
+  estimateTotalBytes,
+} from '../../src/cli/commands/export.ts';
 
 /**
  * Minimal ZIP builder — extracted from export.ts for testing.
@@ -349,5 +365,109 @@ describe('export manifest structure', () => {
     expect(parsed.version).toBe(1);
     expect(parsed.site).toBe('test');
     expect(parsed.items).toEqual([]);
+  });
+});
+
+function fakeItem(
+  id: number,
+  sizeBytes?: number,
+): Parameters<typeof estimateEntryCount>[0][number] {
+  return {
+    id,
+    title: `item-${id}`,
+    filename: `item-${id}.jpg`,
+    url: `https://example.com/wp-content/uploads/2026/01/item-${id}.jpg`,
+    mimeType: 'image/jpeg',
+    sizeBytes,
+    uploadedAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+describe('ZIP32 limit preflight estimates', () => {
+  test('estimateEntryCount counts items + manifest.json', () => {
+    const items = [fakeItem(1), fakeItem(2), fakeItem(3)];
+    expect(estimateEntryCount(items, {})).toBe(4); // 3 items + manifest
+  });
+
+  test('estimateEntryCount includes variant sizes when --include-sizes is set', () => {
+    const items = [
+      {
+        ...fakeItem(1),
+        sizes: {
+          thumbnail: { width: 150, height: 150, url: 'https://x/t.jpg', filename: 't.jpg' },
+          medium: { width: 300, height: 300, url: 'https://x/m.jpg', filename: 'm.jpg' },
+        },
+      },
+    ];
+    expect(estimateEntryCount(items, { includeSizes: true })).toBe(4); // 1 item + 2 sizes + manifest
+    expect(estimateEntryCount(items, { includeSizes: false })).toBe(2); // 1 item + manifest
+  });
+
+  test('estimateEntryCount flags an archive that would exceed the 65,535 entry ZIP32 limit', () => {
+    // Don't materialize 65k+ objects — just prove the math the real call site uses.
+    const itemCount = ZIP32_MAX_ENTRIES + 10;
+    const items = Array.from({ length: itemCount }, (_, i) => fakeItem(i));
+    const entryCount = estimateEntryCount(items, {});
+    expect(entryCount).toBeGreaterThan(ZIP32_MAX_ENTRIES);
+  });
+
+  test('estimateTotalBytes sums known sizeBytes metadata', () => {
+    const items = [fakeItem(1, 1000), fakeItem(2, 2000), fakeItem(3, undefined)];
+    expect(estimateTotalBytes(items, {})).toBe(3000);
+  });
+
+  test('estimateTotalBytes flags an archive that would exceed the 4 GiB ZIP32 size limit', () => {
+    const items = [fakeItem(1, ZIP32_MAX_SIZE), fakeItem(2, 1)];
+    expect(estimateTotalBytes(items, {})).toBeGreaterThan(ZIP32_MAX_SIZE);
+  });
+});
+
+describe('ZipStreamWriter', () => {
+  test('streams entries to disk and produces a ZIP parseable by the existing reader', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'localpress-zip-write-'));
+    const destPath = join(tempDir, 'export.zip');
+
+    try {
+      const writer = new ZipStreamWriter(destPath);
+      await writer.writeEntry('2026/01/hero.jpg', Buffer.from('fake-jpeg-bytes'));
+      await writer.writeEntry('2026/05/logo.png', Buffer.from('fake-png-bytes'));
+      await writer.writeEntry('manifest.json', Buffer.from('{"version":1}'));
+      await writer.finalize();
+
+      expect(existsSync(destPath)).toBe(true);
+      expect(existsSync(`${destPath}.tmp`)).toBe(false);
+
+      const parsed = parseZip(readFileSync(destPath));
+      expect(parsed).toHaveLength(3);
+      expect(parsed[0].path).toBe('2026/01/hero.jpg');
+      expect(parsed[0].data.toString()).toBe('fake-jpeg-bytes');
+      expect(parsed[1].path).toBe('2026/05/logo.png');
+      expect(parsed[2].path).toBe('manifest.json');
+      expect(parsed[2].data.toString()).toBe('{"version":1}');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('aborts and removes the .tmp file when an entry would exceed the 4 GiB per-file limit', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'localpress-zip-abort-'));
+    const destPath = join(tempDir, 'export.zip');
+
+    try {
+      const writer = new ZipStreamWriter(destPath);
+      // Simulate an oversized entry without actually allocating 4 GiB.
+      const oversized = { length: ZIP32_MAX_SIZE + 1 } as unknown as Buffer;
+
+      await expect(writer.writeEntry('huge-file.jpg', oversized)).rejects.toThrow(
+        ZipLimitExceededError,
+      );
+
+      writer.abort();
+
+      expect(existsSync(`${destPath}.tmp`)).toBe(false);
+      expect(existsSync(destPath)).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
