@@ -44,7 +44,9 @@ export function registerA11yCommand(program: Command): void {
     .option('--type <type>', 'post type to check: post, page, or both (default: both)')
     .option('--status <status>', 'post status to check (default: publish)', 'publish')
     .option('--id <id>', 'check a specific post/page only', (v) => Number.parseInt(v, 10))
-    .option('--limit <n>', 'max posts to check (default: 100)', (v) => Number.parseInt(v, 10))
+    .option('--limit <n>', 'max posts to check per post type (default: 100)', (v) =>
+      Number.parseInt(v, 10),
+    )
     .action(async (options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -90,10 +92,11 @@ export function registerA11yCommand(program: Command): void {
           continue;
         }
 
-        // Paginate through posts.
+        // Paginate through posts. Each post type gets its own `--limit` budget.
         let page = 1;
-        while (postsChecked < limit) {
-          const perPage = Math.min(20, limit - postsChecked);
+        let typeChecked = 0;
+        while (typeChecked < limit) {
+          const perPage = Math.min(20, limit - typeChecked);
           const params = new URLSearchParams({
             per_page: String(perPage),
             page: String(page),
@@ -115,6 +118,7 @@ export function registerA11yCommand(program: Command): void {
 
             for (const post of posts) {
               postsChecked++;
+              typeChecked++;
               const title = post.title.rendered.replace(/<[^>]*>/g, '');
               analyzePost(post.id, title, post.content.rendered, findings);
             }
