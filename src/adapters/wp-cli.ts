@@ -75,6 +75,25 @@ export class WpCliAdapter implements WpBackend {
   }
 
   /**
+   * Fetch all values stored under a post meta key, distinguishing "key
+   * absent" (empty array, exit 0) from a real WP-CLI failure (which `wp()`
+   * already throws on). Avoids the `|| echo` shell fallback that masked
+   * command failures as empty values.
+   */
+  private async getMetaRows(id: number, key: string): Promise<unknown[]> {
+    const output = await this.wp(
+      `post meta list ${id} --keys=${key} --fields=meta_value --format=json`,
+    );
+    try {
+      return (JSON.parse(output) as Array<{ meta_value: unknown }>).map((row) => row.meta_value);
+    } catch {
+      throw new Error(
+        `Failed to parse WP-CLI meta output for post ${id} key ${key}: ${output.slice(0, 200)}`,
+      );
+    }
+  }
+
+  /**
    * Get the WordPress uploads base directory + base URL, cached after first
    * retrieval. Saves an SSH round-trip on subsequent replace-in-place operations.
    */
@@ -160,25 +179,17 @@ export class WpCliAdapter implements WpBackend {
   }
 
   async getMedia(id: number): Promise<MediaItem> {
-    const output = await this.wp(
-      `post meta get ${id} _wp_attachment_metadata --format=json 2>/dev/null || echo "null"`,
-    );
-
     const postOutput = await this.wp(
       `post get ${id} --fields=ID,post_title,post_name,post_mime_type,post_date,guid --format=json`,
     );
     const post = JSON.parse(postOutput) as WpCliPostDetail;
 
-    let metadata: WpCliAttachmentMeta | null = null;
-    try {
-      metadata = JSON.parse(output) as WpCliAttachmentMeta;
-    } catch {
-      // No metadata available.
-    }
+    const metadataRows = await this.getMetaRows(id, '_wp_attachment_metadata');
+    const metadata = (metadataRows[0] as WpCliAttachmentMeta | undefined) ?? null;
 
-    const altText = await this.wp(
-      `post meta get ${id} _wp_attachment_image_alt 2>/dev/null || echo ""`,
-    );
+    const altRows = await this.getMetaRows(id, '_wp_attachment_image_alt');
+    const altValue = altRows[0];
+    const altText = typeof altValue === 'string' && altValue.trim() ? altValue.trim() : undefined;
 
     return {
       id: post.ID,
@@ -190,7 +201,7 @@ export class WpCliAdapter implements WpBackend {
       width: metadata?.width,
       height: metadata?.height,
       sizeBytes: metadata?.filesize,
-      altText: altText.trim() || undefined,
+      altText,
       uploadedAt: post.post_date,
     };
   }
