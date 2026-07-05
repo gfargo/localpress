@@ -3,10 +3,16 @@
  * Uses :memory: databases for speed and isolation.
  */
 
+import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { SiteDb } from '../../src/engine/state/db.ts';
 import { SCHEMA_VERSION } from '../../src/engine/state/schema.ts';
+
+const DB_MODULE_PATH = new URL('../../src/engine/state/db.ts', import.meta.url).pathname;
 
 function createTestDb(): SiteDb {
   const db = SiteDb.init(':memory:');
@@ -870,4 +876,128 @@ describe('failure recording FK-safety (regression for #96)', () => {
 
     db.close();
   });
+});
+
+describe('concurrent access (localpress#114)', () => {
+  test('busy_timeout pragma is set to 5000ms', () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'localpress-busy-test-'));
+    const db = SiteDb.init(join(tmpRoot, 'site.db'));
+    try {
+      const row = db.raw().query('PRAGMA busy_timeout').get() as { timeout: number };
+      expect(row.timeout).toBe(5000);
+    } finally {
+      db.close();
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('re-opening at the same schema version does not rewrite schema_version', () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'localpress-busy-test-'));
+    const dbPath = join(tmpRoot, 'site.db');
+    try {
+      const db1 = SiteDb.init(dbPath);
+      db1.close();
+
+      const readVersionRows = () => {
+        const conn = new Database(dbPath, { readonly: true });
+        try {
+          return conn.query('SELECT version, rowid FROM schema_version').all();
+        } finally {
+          conn.close();
+        }
+      };
+
+      const before = readVersionRows();
+      // Same SCHEMA_VERSION as the first init — should not touch the table.
+      const db2 = SiteDb.init(dbPath);
+      db2.close();
+      const after = readVersionRows();
+
+      expect(after).toEqual(before);
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * A second connection can't literally block-then-succeed on the same thread
+   * (nothing would run to release the first connection's lock), so this
+   * spawns a real child process to hold the write lock while the parent
+   * attempts a concurrent write.
+   */
+  async function spawnLockHolder(dbPath: string, holdMs: number): Promise<Bun.Subprocess> {
+    const scriptPath = join(
+      tmpdir(),
+      `localpress-lock-holder-${Date.now()}-${Math.random().toString(36).slice(2)}.ts`,
+    );
+    writeFileSync(
+      scriptPath,
+      `
+      import { SiteDb } from ${JSON.stringify(DB_MODULE_PATH)};
+      const db = SiteDb.init(${JSON.stringify(dbPath)});
+      db.raw().exec('BEGIN IMMEDIATE');
+      await Bun.sleep(${holdMs});
+      db.raw().exec('COMMIT');
+      db.close();
+      `,
+    );
+    const proc = Bun.spawn([process.execPath, 'run', scriptPath], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    // Cheap handshake: give the child time to open the db and BEGIN IMMEDIATE
+    // before the parent attempts its own write.
+    await Bun.sleep(100);
+    return proc;
+  }
+
+  test('a second connection waits for the write lock instead of throwing', async () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'localpress-busy-test-'));
+    const dbPath = join(tmpRoot, 'site.db');
+    try {
+      // Create the schema/WAL files up front so the two connections aren't
+      // racing the initial migration.
+      SiteDb.init(dbPath).close();
+
+      const holdMs = 300;
+      const proc = await spawnLockHolder(dbPath, holdMs);
+
+      const db2 = SiteDb.init(dbPath);
+      const start = performance.now();
+      expect(() => db2.ensureSite('waiter-site', 'https://example.test')).not.toThrow();
+      const elapsed = performance.now() - start;
+      db2.close();
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      // It should have actually waited on the lock (not returned instantly),
+      // but well within the 5000ms busy_timeout ceiling.
+      expect(elapsed).toBeGreaterThan(50);
+      expect(elapsed).toBeLessThan(5000);
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  test('negative control: disabling busy_timeout throws "database is locked" under the same contention', async () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'localpress-busy-test-'));
+    const dbPath = join(tmpRoot, 'site.db');
+    try {
+      SiteDb.init(dbPath).close();
+
+      const holdMs = 300;
+      const proc = await spawnLockHolder(dbPath, holdMs);
+
+      const db2 = SiteDb.init(dbPath);
+      db2.raw().exec('PRAGMA busy_timeout = 0');
+      expect(() => db2.ensureSite('waiter-site', 'https://example.test')).toThrow(/locked|busy/i);
+      db2.close();
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  }, 10_000);
 });
