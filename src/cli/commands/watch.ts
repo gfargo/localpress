@@ -32,6 +32,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { isOptimizableMime } from './optimize.ts';
 
 /** Image extensions we watch for. */
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.avif', '.gif', '.svg']);
@@ -149,7 +150,16 @@ export function registerWatchCommand(program: Command): void {
 
           // Optimize if requested.
           let optimizeInfo = '';
-          if (options.optimize || options.to) {
+          if ((options.optimize || options.to) && !isOptimizableMime(mime)) {
+            optimizeInfo = ' (unsupported format, uploaded as-is)';
+            if (parentOpts.json) {
+              printJson({ event: 'optimize-skipped', file: relPath, mimeType: mime });
+            } else {
+              warn(
+                `  ⚠ ${relPath}: unsupported format for optimization (${mime}). Uploading as-is.`,
+              );
+            }
+          } else if (options.optimize || options.to) {
             const optimizeOpts = {
               quality: options.quality,
               toFormat: options.to as ImageFormat | undefined,
