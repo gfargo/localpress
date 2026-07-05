@@ -115,6 +115,23 @@ describe.skipIf(!canRun)('WordPress REST API integration', () => {
     expect(updated.altText).toBe('Updated by integration test');
   });
 
+  test('rename then undo restores the original slug (rename/undo round trip)', async () => {
+    const items = await adapter.listMedia({ perPage: 1, page: 1 });
+    const item = await adapter.getMedia(items[0].id);
+    const originalSlug = item.slug;
+    expect(originalSlug).toBeTruthy();
+
+    // Simulate `rename`: change the slug.
+    await adapter.updateMetadata(item.id, { slug: 'integration-test-renamed-slug' });
+    const renamed = await adapter.getMedia(item.id);
+    expect(renamed.slug).toBe('integration-test-renamed-slug');
+
+    // Simulate the fixed `undo` path: restore the captured pre-rename slug.
+    await adapter.updateMetadata(item.id, { slug: originalSlug });
+    const restored = await adapter.getMedia(item.id);
+    expect(restored.slug).toBe(originalSlug);
+  });
+
   test('replaceInPlace throws CapabilityUnavailableError', async () => {
     const items = await adapter.listMedia({ perPage: 1, page: 1 });
     const item = items[0];

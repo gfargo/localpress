@@ -184,6 +184,7 @@ export function registerRenameCommand(program: Command): void {
                   title: item.title,
                   caption: item.caption,
                   description: item.description,
+                  slug: item.slug ?? previousSlug,
                 },
               });
             }

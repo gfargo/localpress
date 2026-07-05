@@ -217,6 +217,7 @@ export async function restoreSnapshot(
       title: snap.beforeMeta.title,
       caption: snap.beforeMeta.caption,
       description: snap.beforeMeta.description,
+      ...(snap.beforeMeta.slug !== undefined ? { slug: snap.beforeMeta.slug } : {}),
     });
     return;
   }
@@ -272,6 +273,7 @@ export async function restoreSnapshot(
           title: snap.beforeMeta.title,
           caption: snap.beforeMeta.caption,
           description: snap.beforeMeta.description,
+          ...(snap.beforeMeta.slug !== undefined ? { slug: snap.beforeMeta.slug } : {}),
         });
       }
       return;

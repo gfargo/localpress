@@ -440,6 +440,7 @@ function mapWpMediaToItem(raw: WpMediaResponse): MediaItem {
     id: raw.id,
     title: raw.title.raw ?? raw.title.rendered,
     filename: raw.media_details?.file ?? raw.slug,
+    slug: raw.slug,
     url: raw.source_url,
     mimeType: raw.mime_type,
     width: raw.media_details?.width,

@@ -184,6 +184,7 @@ export class WpCliAdapter implements WpBackend {
       id: post.ID,
       title: post.post_title,
       filename: metadata?.file ?? post.post_name,
+      slug: post.post_name,
       url: post.guid,
       mimeType: post.post_mime_type,
       width: metadata?.width,

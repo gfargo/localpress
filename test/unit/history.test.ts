@@ -264,6 +264,22 @@ describe('SnapshotStore', () => {
     expect(stats.oldestSnapshotAt).not.toBeNull();
   });
 
+  test('metadata-only snapshot round-trips a captured slug', () => {
+    const session = store.openSession('testsite', 'rename');
+    store.capture({
+      siteName: 'testsite',
+      sessionId: session.id,
+      attachmentId: 55,
+      operation: 'rename',
+      sourceBytes: null,
+      beforeMeta: { filename: 'photo.jpg', mimeType: 'image/jpeg', slug: 'old-slug' },
+    });
+    store.closeSession(session.id);
+
+    const snap = store.listSnapshots('testsite').find((s) => s.wpId === 55);
+    expect(snap?.beforeMeta.slug).toBe('old-slug');
+  });
+
   test('getLastSession finds an interrupted session that never closed', () => {
     // Simulate an older, properly closed session (e.g. yesterday's caption run).
     const older = store.openSession('testsite', 'caption');
