@@ -23,7 +23,7 @@ import { Box, Text, useApp, useInput } from 'ink';
 import { useEffect, useState } from 'react';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { SiteConfig, SshConfig } from '../../types.ts';
-import { loadConfig, mergeSiteConfig, saveConfig } from '../utils/config.ts';
+import { isValidSiteName, loadConfig, mergeSiteConfig, saveConfig } from '../utils/config.ts';
 
 type WizardStep =
   | 'url'
@@ -67,6 +67,7 @@ export function InitWizard({
   const [password, setPassword] = useState(initialPassword ?? '');
   const [inputValue, setInputValue] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [nameError, setNameError] = useState('');
   const [authenticatedAs, setAuthenticatedAs] = useState('');
   const [capabilities, setCapabilities] = useState<Array<{ name: string; available: boolean }>>([]);
 
@@ -84,6 +85,13 @@ export function InitWizard({
   // mount — deps intentionally empty.
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only effect
   useEffect(() => {
+    if (initialName && !isValidSiteName(initialName)) {
+      setErrorMessage(
+        `Invalid site name '${initialName}'. Use only letters, numbers, '.', '_' and '-'.`,
+      );
+      setStep('error');
+      return;
+    }
     if (!initialUrl) return;
     setUrl(normalizeUrl(initialUrl));
 
@@ -147,6 +155,14 @@ export function InitWizard({
           username,
           appPassword: password,
         });
+
+        if (!isValidSiteName(siteConfig.name)) {
+          setErrorMessage(
+            `Invalid site name '${siteConfig.name}'. Use only letters, numbers, '.', '_' and '-'.`,
+          );
+          setStep('error');
+          return;
+        }
 
         // Capability report reflects any preserved SSH config.
         const resolver = new AdapterResolver(siteConfig);
@@ -337,6 +353,11 @@ export function InitWizard({
       case 'name': {
         const defaultName = getHostname(url);
         const value = inputValue.trim() || defaultName;
+        if (!isValidSiteName(value)) {
+          setNameError(`Invalid name '${value}'. Use only letters, numbers, '.', '_' and '-'.`);
+          return;
+        }
+        setNameError('');
         setSiteName(value);
         setInputValue('');
         setStep('username');
@@ -424,10 +445,13 @@ export function InitWizard({
 
       {/* Step 2: Name */}
       {step === 'name' ? (
-        <Box>
-          <Text>Site name [{getHostname(url)}]: </Text>
-          <Text color="green">{inputValue}</Text>
-          <Text color="gray">▌</Text>
+        <Box flexDirection="column">
+          <Box>
+            <Text>Site name [{getHostname(url)}]: </Text>
+            <Text color="green">{inputValue}</Text>
+            <Text color="gray">▌</Text>
+          </Box>
+          {nameError ? <Text color="red">{nameError}</Text> : null}
         </Box>
       ) : siteName ? (
         <Box>
