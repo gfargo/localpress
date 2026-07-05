@@ -9,6 +9,14 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
+import { deflateRawSync } from 'node:zlib';
+import {
+  type ExportManifest,
+  buildManifestIndex,
+  collectImageFiles,
+  parseZip as parseZipReal,
+  resolveManifestItem,
+} from '../../src/cli/commands/import.ts';
 
 /**
  * Minimal ZIP builder — extracted from export.ts for testing.
@@ -439,5 +447,194 @@ describe('export manifest structure', () => {
     expect(parsed.version).toBe(1);
     expect(parsed.site).toBe('test');
     expect(parsed.items).toEqual([]);
+  });
+});
+
+describe('collectImageFiles (real, from import.ts)', () => {
+  test('returns distinct relativePaths for same-basename files in different subdirectories', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'localpress-collect-'));
+
+    try {
+      mkdirSync(join(tempDir, '2026', '01'), { recursive: true });
+      mkdirSync(join(tempDir, '2026', '05'), { recursive: true });
+      writeFileSync(join(tempDir, '2026', '01', 'photo.jpg'), 'jan');
+      writeFileSync(join(tempDir, '2026', '05', 'photo.jpg'), 'may');
+
+      const files = collectImageFiles(tempDir);
+
+      expect(files).toHaveLength(2);
+      const relativePaths = files.map((f) => f.relativePath).sort();
+      expect(relativePaths).toEqual(['2026/01/photo.jpg', '2026/05/photo.jpg']);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+function makeManifest(items: ExportManifest['items']): ExportManifest {
+  return {
+    version: 1,
+    site: 'test',
+    siteUrl: 'https://test.com',
+    exportedAt: '2026-01-01T00:00:00.000Z',
+    items,
+    totalBytes: 0,
+  };
+}
+
+describe('manifest metadata matching (real, from import.ts)', () => {
+  test('resolves colliding basenames by relativePath instead of the last-indexed item', () => {
+    const manifest = makeManifest([
+      {
+        id: 1,
+        filename: 'photo.jpg',
+        relativePath: '2026/01/photo.jpg',
+        url: 'https://example.com/wp-content/uploads/2026/01/photo.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 1,
+        title: 'January',
+        uploadedAt: '2026-01-01T00:00:00.000Z',
+        sha256: 'a',
+      },
+      {
+        id: 2,
+        filename: 'photo.jpg',
+        relativePath: '2026/05/photo.jpg',
+        url: 'https://example.com/wp-content/uploads/2026/05/photo.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 1,
+        title: 'May',
+        uploadedAt: '2026-05-01T00:00:00.000Z',
+        sha256: 'b',
+      },
+    ]);
+    const index = buildManifestIndex(manifest);
+
+    const jan = resolveManifestItem(index, {
+      path: '/tmp/x/photo.jpg',
+      relativePath: '2026/01/photo.jpg',
+    });
+    const may = resolveManifestItem(index, {
+      path: '/tmp/x/photo.jpg',
+      relativePath: '2026/05/photo.jpg',
+    });
+
+    expect(jan.item?.id).toBe(1);
+    expect(jan.item?.title).toBe('January');
+    expect(may.item?.id).toBe(2);
+    expect(may.item?.title).toBe('May');
+  });
+
+  test('ambiguous basename with no relativePath match returns undefined, not the wrong item', () => {
+    const manifest = makeManifest([
+      {
+        id: 1,
+        filename: 'photo.jpg',
+        relativePath: '2026/01/photo.jpg',
+        url: 'https://example.com/wp-content/uploads/2026/01/photo.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 1,
+        title: 'January',
+        uploadedAt: '2026-01-01T00:00:00.000Z',
+        sha256: 'a',
+      },
+      {
+        id: 2,
+        filename: 'photo.jpg',
+        relativePath: '2026/05/photo.jpg',
+        url: 'https://example.com/wp-content/uploads/2026/05/photo.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 1,
+        title: 'May',
+        uploadedAt: '2026-05-01T00:00:00.000Z',
+        sha256: 'b',
+      },
+    ]);
+    const index = buildManifestIndex(manifest);
+
+    const resolution = resolveManifestItem(index, { path: '/tmp/x/photo.jpg', relativePath: null });
+
+    expect(resolution.item).toBeUndefined();
+    expect(resolution.ambiguous).toBe(true);
+  });
+
+  test('unique basename still resolves when relativePath is unavailable', () => {
+    const manifest = makeManifest([
+      {
+        id: 3,
+        filename: 'logo.png',
+        relativePath: '2026/02/logo.png',
+        url: 'https://example.com/wp-content/uploads/2026/02/logo.png',
+        mimeType: 'image/png',
+        sizeBytes: 1,
+        title: 'Logo',
+        uploadedAt: '2026-02-01T00:00:00.000Z',
+        sha256: 'c',
+      },
+    ]);
+    const index = buildManifestIndex(manifest);
+
+    const resolution = resolveManifestItem(index, { path: '/tmp/x/logo.png', relativePath: null });
+
+    expect(resolution.item?.id).toBe(3);
+    expect(resolution.ambiguous).toBe(false);
+  });
+});
+
+function buildLocalFileHeaderEntry(
+  path: string,
+  data: Buffer,
+  compression: number,
+  flags = 0,
+): Buffer {
+  const pathBuf = Buffer.from(path, 'utf-8');
+  const header = Buffer.alloc(30 + pathBuf.length);
+  header.writeUInt32LE(0x04034b50, 0);
+  header.writeUInt16LE(20, 4);
+  header.writeUInt16LE(flags, 6);
+  header.writeUInt16LE(compression, 8);
+  header.writeUInt16LE(0, 10);
+  header.writeUInt16LE(0, 12);
+  header.writeUInt32LE(0, 14);
+  header.writeUInt32LE(data.length, 18);
+  header.writeUInt32LE(data.length, 22);
+  header.writeUInt16LE(pathBuf.length, 26);
+  header.writeUInt16LE(0, 28);
+  pathBuf.copy(header, 30);
+  return Buffer.concat([header, data]);
+}
+
+describe('parseZip (real, from import.ts)', () => {
+  test('STORE entries still round-trip', () => {
+    const zip = buildZipSync([{ path: '2026/01/hero.jpg', data: Buffer.from('fake-jpeg-data') }]);
+    const parsed = parseZipReal(zip);
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].path).toBe('2026/01/hero.jpg');
+    expect(parsed[0].data.toString()).toBe('fake-jpeg-data');
+  });
+
+  test('DEFLATE-compressed entries decode correctly', () => {
+    const original = Buffer.from('Hello from a standard zip tool!');
+    const compressed = deflateRawSync(original);
+    const zip = buildLocalFileHeaderEntry('photo.txt', compressed, 8);
+
+    const parsed = parseZipReal(zip);
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].path).toBe('photo.txt');
+    expect(parsed[0].data.toString()).toBe('Hello from a standard zip tool!');
+  });
+
+  test('throws an explicit error for an unsupported compression method', () => {
+    const zip = buildLocalFileHeaderEntry('file.bin', Buffer.from('data'), 99);
+
+    expect(() => parseZipReal(zip)).toThrow(/unsupported ZIP compression/i);
+  });
+
+  test('throws an explicit error for a data-descriptor streamed entry', () => {
+    const zip = buildLocalFileHeaderEntry('file.bin', Buffer.from('data'), 8, 0x0008);
+
+    expect(() => parseZipReal(zip)).toThrow(/data descriptor/i);
   });
 });
