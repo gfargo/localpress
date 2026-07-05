@@ -20,8 +20,8 @@
  */
 
 import type { Database } from 'bun:sqlite';
-import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type {
   HistoryStats,
@@ -274,12 +274,39 @@ export class SnapshotStore {
     return row ? mapSnapshotRow(row) : null;
   }
 
-  /** Read blob bytes for a binary snapshot. Throws if not a binary snapshot. */
+  /**
+   * Read blob bytes for a binary snapshot. Throws if not a binary snapshot, if
+   * the blob is missing/truncated, or if its content hash doesn't match the
+   * recorded `beforeHash` — never hand back bytes that might silently corrupt
+   * a live attachment on restore.
+   */
   readBlob(snapshot: SnapshotRecord): Buffer {
     if (snapshot.kind !== 'binary' || !snapshot.blobPath) {
       throw new Error(`Snapshot #${snapshot.id} is not a binary snapshot`);
     }
-    return readFileSync(snapshot.blobPath);
+    if (!existsSync(snapshot.blobPath)) {
+      throw new Error(
+        `Snapshot #${snapshot.id} blob is missing on disk (${snapshot.blobPath}) — cannot safely restore attachment #${snapshot.wpId}.`,
+      );
+    }
+
+    const bytes = readFileSync(snapshot.blobPath);
+    if (bytes.length !== snapshot.blobSize) {
+      throw new Error(
+        `Snapshot #${snapshot.id} blob is truncated (expected ${snapshot.blobSize} bytes, found ${bytes.length}) — refusing to restore a partial file.`,
+      );
+    }
+
+    if (snapshot.beforeHash) {
+      const actualHash = createHash('sha256').update(bytes).digest('hex');
+      if (actualHash !== snapshot.beforeHash) {
+        throw new Error(
+          `Snapshot #${snapshot.id} blob content hash mismatch — refusing to restore a corrupted file.`,
+        );
+      }
+    }
+
+    return bytes;
   }
 
   // Stats & retention --------------------------------------------------------

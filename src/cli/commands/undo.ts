@@ -23,7 +23,7 @@ import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { WpBackend } from '../../adapters/types.ts';
 import { CapabilityUnavailableError } from '../../adapters/types.ts';
 import { openSnapshotStore } from '../../engine/history/index.ts';
-import type { SnapshotRecord } from '../../engine/history/index.ts';
+import type { SnapshotRecord, SnapshotStore } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -149,7 +149,7 @@ export function registerUndoCommand(program: Command): void {
       for (const snap of snapshots) {
         info(`  Restoring snapshot #${snap.id} (attachment #${snap.wpId}, ${snap.operation})...`);
         try {
-          await restoreSnapshot(snap, resolver, parentOpts.strict);
+          await restoreSnapshot(snap, resolver, store, parentOpts.strict);
           store.markRestored(snap.id);
           results.push({
             snapshotId: snap.id,
@@ -189,6 +189,7 @@ export function registerUndoCommand(program: Command): void {
 async function restoreSnapshot(
   snap: SnapshotRecord,
   resolver: AdapterResolver,
+  store: SnapshotStore,
   strict: boolean,
 ): Promise<void> {
   if (snap.kind === 'metadata-only') {
@@ -202,17 +203,9 @@ async function restoreSnapshot(
     return;
   }
 
-  // Binary snapshot: load blob bytes and replace-in-place.
-  const { SnapshotStore } = await import('../../engine/history/store.ts');
-  // We need the underlying store to read the blob. The resolver doesn't own it,
-  // but we passed it indirectly via the path on the snapshot record. Reuse via
-  // a fresh SnapshotStore is overkill — read the blob directly.
-  void SnapshotStore;
-  const { readFileSync } = await import('node:fs');
-  if (!snap.blobPath) {
-    throw new Error('Binary snapshot is missing its blob path');
-  }
-  const bytes = readFileSync(snap.blobPath);
+  // Binary snapshot: load blob bytes (existence/size/hash verified by readBlob)
+  // and replace-in-place.
+  const bytes = store.readBlob(snap);
 
   const replaceAdapter = resolver.tryResolve('replace-in-place');
   if (replaceAdapter) {
