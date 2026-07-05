@@ -213,4 +213,78 @@ describe('restoreSnapshot', () => {
 
     expect(warnedLines.some((line) => line.includes('--scope full'))).toBe(false);
   });
+
+  test('in-place restore reports status "restored"', async () => {
+    const snap = captureBinarySnapshot('photo.jpg', 'image/jpeg', Buffer.from('bytes'));
+    const backend = makeFakeBackend({
+      getMedia: async (id): Promise<MediaItem> => ({
+        id,
+        title: 'photo',
+        filename: 'photo.jpg',
+        url: 'https://example.test/photo.jpg',
+        mimeType: 'image/jpeg',
+        uploadedAt: '2024-01-01',
+      }),
+      replaceInPlace: async (id): Promise<MediaItem> => ({
+        id,
+        title: 'photo',
+        filename: 'photo.jpg',
+        url: 'https://example.test/photo.jpg',
+        mimeType: 'image/jpeg',
+        uploadedAt: '2024-01-01',
+      }),
+    });
+    const resolver: ResolverLike = {
+      resolve: (c) => {
+        if (c === 'get' || c === 'update-meta') return backend;
+        throw new Error(`unexpected resolve('${c}')`);
+      },
+      tryResolve: (c) => (c === 'replace-in-place' || c === 'update-meta' ? backend : null),
+    };
+
+    const outcome = await restoreSnapshot(snap, resolver, store, false);
+    expect(outcome.status).toBe('restored');
+    expect(outcome.newAttachmentId).toBeUndefined();
+  });
+
+  test('REST-only fallback reports status "partial" with the new attachment ID (regression #119)', async () => {
+    const snap = captureBinarySnapshot('photo.jpg', 'image/jpeg', Buffer.from('original bytes'));
+
+    let uploadedBytes: Buffer | undefined;
+    const uploadBackend = makeFakeBackend({
+      name: 'rest',
+      upload: async (bytes): Promise<MediaItem> => {
+        uploadedBytes = bytes;
+        return {
+          id: 999,
+          title: 'photo',
+          filename: 'photo.jpg',
+          url: 'https://example.test/photo-999.jpg',
+          mimeType: 'image/jpeg',
+          uploadedAt: '2024-01-01',
+        };
+      },
+    });
+
+    // REST-only: no replace-in-place capability → upload-as-new fallback.
+    const resolver: ResolverLike = {
+      resolve: (c) => {
+        if (c === 'upload') return uploadBackend;
+        throw new Error(`unexpected resolve('${c}')`);
+      },
+      tryResolve: () => null,
+    };
+
+    const writeSpy = spyOn(process.stderr, 'write').mockImplementation(() => true);
+    let outcome: Awaited<ReturnType<typeof restoreSnapshot>>;
+    try {
+      outcome = await restoreSnapshot(snap, resolver, store, false);
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    expect(outcome.status).toBe('partial');
+    expect(outcome.newAttachmentId).toBe(999);
+    expect(uploadedBytes?.toString()).toBe('original bytes');
+  });
 });

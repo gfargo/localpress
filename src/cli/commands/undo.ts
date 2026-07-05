@@ -48,8 +48,22 @@ interface UndoResult {
   attachmentId: number;
   operation: string;
   kind: 'binary' | 'metadata-only';
-  status: 'restored' | 'failed' | 'skipped';
+  status: 'restored' | 'partial' | 'failed' | 'skipped';
   reason?: string;
+  /** For 'partial': the new attachment ID created by the upload-as-new fallback. */
+  newAttachmentId?: number;
+}
+
+/**
+ * Result of applying one snapshot.
+ *   - 'restored': the live attachment now holds the original bytes/metadata.
+ *   - 'partial':  replace-in-place was unavailable, so the original was uploaded
+ *     as a NEW attachment. The target attachment is unchanged and references
+ *     still point at it — so the snapshot must stay un-restored for a later retry.
+ */
+export interface RestoreOutcome {
+  status: 'restored' | 'partial';
+  newAttachmentId?: number;
 }
 
 export function registerUndoCommand(program: Command): void {
@@ -164,7 +178,26 @@ export function registerUndoCommand(program: Command): void {
       for (const snap of snapshots) {
         info(`  Restoring snapshot #${snap.id} (attachment #${snap.wpId}, ${snap.operation})...`);
         try {
-          await restoreSnapshot(snap, resolver, store, parentOpts.strict);
+          const outcome = await restoreSnapshot(snap, resolver, store, parentOpts.strict);
+
+          if (outcome.status === 'partial') {
+            // Upload-as-new fallback (REST-only): the target attachment is
+            // unchanged, so DON'T consume the snapshot — leave it un-restored so
+            // the user can retry after adding a replace-in-place capability
+            // (SSH/WP-CLI). References still point at the original ID.
+            results.push({
+              snapshotId: snap.id,
+              attachmentId: snap.wpId,
+              operation: snap.operation,
+              kind: snap.kind,
+              status: 'partial',
+              newAttachmentId: outcome.newAttachmentId,
+              reason: `original re-uploaded as new attachment #${outcome.newAttachmentId}; attachment #${snap.wpId} is unchanged and references still point at it. Retry with a replace-in-place backend (SSH/WP-CLI), or rewrite refs: localpress references ${snap.wpId} --update-to ${outcome.newAttachmentId}`,
+            });
+            info('    ↳ partial (snapshot kept for retry)');
+            continue;
+          }
+
           store.markRestored(snap.id);
           // The restored bytes no longer match what processing_history recorded
           // as this operation's output, so exclude that row from future stats
@@ -193,10 +226,20 @@ export function registerUndoCommand(program: Command): void {
         }
       }
 
+      const restored = results.filter((r) => r.status === 'restored').length;
+      const partial = results.filter((r) => r.status === 'partial').length;
+
       if (parentOpts.json) {
-        printJson({ restored: results.length - failures, failures, results });
+        printJson({ restored, partial, failures, results });
       } else {
-        info(`\n  Done: ${results.length - failures} restored, ${failures} failed.`);
+        const partialNote = partial > 0 ? `, ${partial} partial` : '';
+        info(`\n  Done: ${restored} restored${partialNote}, ${failures} failed.`);
+        if (partial > 0) {
+          warn(
+            '  ⚠ Partial restores uploaded the original as a new attachment; the ' +
+              'snapshot was kept so you can retry with a replace-in-place backend.',
+          );
+        }
       }
 
       db.close();
@@ -204,13 +247,20 @@ export function registerUndoCommand(program: Command): void {
     });
 }
 
-/** Apply a single snapshot back to WordPress. Throws on failure. */
+/**
+ * Apply a single snapshot back to WordPress. Throws on failure.
+ *
+ * Returns `{ status: 'restored' }` when the live attachment was updated in
+ * place, or `{ status: 'partial', newAttachmentId }` when replace-in-place was
+ * unavailable and the original had to be uploaded as a new attachment (the
+ * caller must NOT mark the snapshot restored in that case).
+ */
 export async function restoreSnapshot(
   snap: SnapshotRecord,
   resolver: ResolverLike,
   store: SnapshotStore,
   strict: boolean,
-): Promise<void> {
+): Promise<RestoreOutcome> {
   if (snap.kind === 'metadata-only') {
     const metaAdapter: WpBackend = resolver.resolve('update-meta');
     await metaAdapter.updateMetadata(snap.wpId, {
@@ -220,7 +270,7 @@ export async function restoreSnapshot(
       description: snap.beforeMeta.description,
       ...(snap.beforeMeta.slug !== undefined ? { slug: snap.beforeMeta.slug } : {}),
     });
-    return;
+    return { status: 'restored' };
   }
 
   // Binary snapshot: load blob bytes (existence/size/hash verified by readBlob)
@@ -269,7 +319,7 @@ export async function restoreSnapshot(
           ...(snap.beforeMeta.slug !== undefined ? { slug: snap.beforeMeta.slug } : {}),
         });
       }
-      return;
+      return { status: 'restored' };
     } catch (err) {
       if (err instanceof CapabilityUnavailableError && !strict) {
         // Fall through to upload-new fallback.
@@ -291,4 +341,5 @@ export async function restoreSnapshot(
   warn(
     `    ⚠ Original uploaded as new attachment #${uploaded.id} (in-place replacement not available). Update references manually if needed.`,
   );
+  return { status: 'partial', newAttachmentId: uploaded.id };
 }
