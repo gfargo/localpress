@@ -68,6 +68,9 @@ export interface ApplyResult {
   };
 }
 
+/** Grace period after a WS close to allow a reload (or tab-switch) to reconnect. */
+const CLOSE_GRACE_MS = 2500;
+
 /**
  * Start the preview server and open the browser.
  * Returns a promise that resolves when the user applies or cancels.
@@ -86,6 +89,7 @@ export async function startPreviewServer(
     server: ReturnType<typeof Bun.serve> | null;
     wsConnected: boolean;
     wsHeartbeatId: ReturnType<typeof setInterval> | null;
+    closeGraceId: ReturnType<typeof setTimeout> | null;
   } = {
     lastResultBytes: null,
     lastResultMimeType: null,
@@ -93,17 +97,34 @@ export async function startPreviewServer(
     server: null,
     wsConnected: false,
     wsHeartbeatId: null,
+    closeGraceId: null,
   };
 
+  let resolved = false;
   let resolvePromise: (value: { applied: boolean; result: ApplyResult | null }) => void;
   const done = new Promise<{ applied: boolean; result: ApplyResult | null }>((resolve) => {
     resolvePromise = resolve;
   });
+  const resolveOnce = (value: { applied: boolean; result: ApplyResult | null }) => {
+    if (resolved) return;
+    resolved = true;
+    resolvePromise(value);
+  };
 
   const shutdown = () => {
     if (state.timeoutId) clearTimeout(state.timeoutId);
     if (state.wsHeartbeatId) clearInterval(state.wsHeartbeatId);
+    if (state.closeGraceId) clearTimeout(state.closeGraceId);
     state.server?.stop(true);
+  };
+
+  const resetIdleTimeout = () => {
+    if (state.timeoutId) clearTimeout(state.timeoutId);
+    state.timeoutId = setTimeout(() => {
+      warn('Preview server timed out. Shutting down.');
+      shutdown();
+      resolveOnce({ applied: false, result: null });
+    }, timeoutMs);
   };
 
   state.server = Bun.serve({
@@ -114,6 +135,11 @@ export async function startPreviewServer(
     idleTimeout: 120,
     fetch: async (req, server) => {
       const url = new URL(req.url);
+
+      // Any API activity keeps the session alive.
+      if (url.pathname.startsWith('/api/')) {
+        resetIdleTimeout();
+      }
 
       // WebSocket upgrade for heartbeat.
       if (url.pathname === '/ws' && req.headers.get('upgrade') === 'websocket') {
@@ -191,10 +217,12 @@ export async function startPreviewServer(
           const result = await options.onApply(state.lastResultBytes, state.lastResultMimeType);
           info(`  ✓ Applied successfully (${result.message})`);
           // Delay shutdown to ensure the response is fully sent to the browser
-          // before the server closes the TCP connection.
+          // before the server closes the TCP connection. Resolve before shutting
+          // down — shutdown() triggers the WS close handler synchronously, which
+          // would otherwise resolve `{applied: false}` first.
           setTimeout(() => {
+            resolveOnce({ applied: true, result });
             shutdown();
-            resolvePromise({ applied: true, result });
           }, 500);
           return new Response(JSON.stringify(result), {
             headers: { 'Content-Type': 'application/json' },
@@ -211,8 +239,8 @@ export async function startPreviewServer(
 
       // Cancel and shut down.
       if (url.pathname === '/api/cancel' && req.method === 'POST') {
+        resolveOnce({ applied: false, result: null });
         shutdown();
-        resolvePromise({ applied: false, result: null });
         return new Response(JSON.stringify({ ok: true }), {
           headers: { 'Content-Type': 'application/json' },
         });
@@ -240,15 +268,29 @@ export async function startPreviewServer(
     websocket: {
       open() {
         state.wsConnected = true;
+        if (state.closeGraceId) {
+          clearTimeout(state.closeGraceId);
+          state.closeGraceId = null;
+        }
+        resetIdleTimeout();
       },
       message() {
         // Heartbeat pong — client is alive.
+        resetIdleTimeout();
       },
       close() {
         state.wsConnected = false;
-        info('  Browser tab closed. Shutting down preview server.');
-        shutdown();
-        resolvePromise({ applied: false, result: null });
+        // Don't shut down immediately: a page reload (or a brief tab switch)
+        // closes the socket and reopens a new one moments later. Give it a
+        // grace window before treating this as a real "tab closed".
+        if (state.closeGraceId) clearTimeout(state.closeGraceId);
+        state.closeGraceId = setTimeout(() => {
+          state.closeGraceId = null;
+          if (state.wsConnected) return;
+          info('  Browser tab closed. Shutting down preview server.');
+          shutdown();
+          resolveOnce({ applied: false, result: null });
+        }, CLOSE_GRACE_MS);
       },
     },
   });
@@ -262,11 +304,7 @@ export async function startPreviewServer(
   openBrowser(previewUrl);
 
   // Auto-shutdown timeout.
-  state.timeoutId = setTimeout(() => {
-    warn('Preview server timed out. Shutting down.');
-    shutdown();
-    resolvePromise({ applied: false, result: null });
-  }, timeoutMs);
+  resetIdleTimeout();
 
   return done;
 }
