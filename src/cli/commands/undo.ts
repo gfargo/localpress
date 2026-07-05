@@ -186,7 +186,7 @@ export function registerUndoCommand(program: Command): void {
 }
 
 /** Apply a single snapshot back to WordPress. Throws on failure. */
-async function restoreSnapshot(
+export async function restoreSnapshot(
   snap: SnapshotRecord,
   resolver: AdapterResolver,
   strict: boolean,
@@ -198,6 +198,7 @@ async function restoreSnapshot(
       title: snap.beforeMeta.title,
       caption: snap.beforeMeta.caption,
       description: snap.beforeMeta.description,
+      ...(snap.beforeMeta.slug !== undefined ? { slug: snap.beforeMeta.slug } : {}),
     });
     return;
   }
@@ -228,6 +229,7 @@ async function restoreSnapshot(
           title: snap.beforeMeta.title,
           caption: snap.beforeMeta.caption,
           description: snap.beforeMeta.description,
+          ...(snap.beforeMeta.slug !== undefined ? { slug: snap.beforeMeta.slug } : {}),
         });
       }
       return;

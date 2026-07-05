@@ -36,6 +36,8 @@ export interface MediaItem {
   id: number;
   title: string;
   filename: string;
+  /** WP slug / post_name — affects the attachment permalink. */
+  slug?: string;
   url: string;
   mimeType: string;
   width?: number;
