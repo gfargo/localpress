@@ -51,7 +51,9 @@ function respond(command: string): FakeExecResult {
     return ok('null');
   }
   if (command.includes('post meta list') && command.includes('_wp_attachment_metadata')) {
-    return ok(JSON.stringify([{ meta_value: { file: "2024/01/O'Brien's headshot.png", sizes: {} } }]));
+    return ok(
+      JSON.stringify([{ meta_value: { file: "2024/01/O'Brien's headshot.png", sizes: {} } }]),
+    );
   }
   if (command.includes('post meta list') && command.includes('_wp_attachment_image_alt')) {
     return ok('[]');
