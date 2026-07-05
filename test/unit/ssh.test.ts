@@ -11,9 +11,66 @@
 import { describe, expect, test } from 'bun:test';
 
 import { AdapterResolver } from '../../src/adapters/resolver.ts';
-import { buildSshArgs, sshDestination } from '../../src/adapters/ssh.ts';
+import { buildSshArgs, shellQuote, sshDestination } from '../../src/adapters/ssh.ts';
 import { isWpCliAvailableForSite } from '../../src/adapters/wp-cli.ts';
 import type { SiteConfig, SshConfig } from '../../src/types.ts';
+
+// -- shellQuote ---------------------------------------------------------------
+
+// Parses a single POSIX single-quoted shell "word" back into its raw value,
+// mirroring what a real shell would do — used to assert shellQuote() output
+// round-trips through an actual shell without executing anything.
+function parseSingleQuotedWord(word: string): string {
+  let result = '';
+  let i = 0;
+  while (i < word.length) {
+    if (word[i] === "'") {
+      const end = word.indexOf("'", i + 1);
+      result += word.slice(i + 1, end);
+      i = end + 1;
+    } else if (word.startsWith("\\'", i)) {
+      result += "'";
+      i += 2;
+    } else {
+      result += word[i];
+      i += 1;
+    }
+  }
+  return result;
+}
+
+describe('shellQuote', () => {
+  test('wraps a plain value in single quotes', () => {
+    expect(shellQuote('hello')).toBe("'hello'");
+  });
+
+  test('round-trips values containing single quotes', () => {
+    const value = "O'Brien's headshot";
+    expect(parseSingleQuotedWord(shellQuote(value))).toBe(value);
+  });
+
+  test('round-trips shell metacharacters without executing them', () => {
+    const dangerous = [
+      '$(rm -rf /)',
+      '`echo pwned`',
+      '; rm -rf ~',
+      '"double quotes"',
+      '\\backslash\\',
+      'newline\ntext',
+      '/tmp; rm -rf ~',
+    ];
+    for (const value of dangerous) {
+      expect(parseSingleQuotedWord(shellQuote(value))).toBe(value);
+    }
+  });
+
+  test('round-trips a JSON payload with embedded quotes', () => {
+    const meta = { title: "O'Brien's headshot", note: 'says "hi"' };
+    const json = JSON.stringify(meta);
+    const quoted = shellQuote(json);
+    expect(JSON.parse(parseSingleQuotedWord(quoted))).toEqual(meta);
+  });
+});
 
 // -- Test fixtures ------------------------------------------------------------
 
