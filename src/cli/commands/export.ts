@@ -14,6 +14,7 @@ import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { ListFilters, MediaItem } from '../../adapters/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 /** Metadata written alongside exported files for re-import. */
@@ -66,11 +67,7 @@ export function registerExportCommand(program: Command): void {
 
       if (idStrs.length > 0) {
         // Explicit IDs provided.
-        const ids = idStrs.map((s) => Number.parseInt(s, 10));
-        if (ids.some(Number.isNaN)) {
-          error('All arguments must be valid attachment IDs (integers).');
-          process.exit(2);
-        }
+        const ids = parseAttachmentIds(idStrs);
 
         const adapter = resolver.resolve('get');
         for (const id of ids) {

@@ -35,6 +35,7 @@ import {
 } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 interface TagResult {
@@ -103,11 +104,7 @@ export function registerTagCommand(program: Command): void {
 
       let ids: number[];
       if (idStrs.length > 0) {
-        ids = idStrs.map((s) => Number.parseInt(s, 10));
-        if (ids.some(Number.isNaN)) {
-          error('All arguments must be valid attachment IDs (integers).');
-          process.exit(2);
-        }
+        ids = parseAttachmentIds(idStrs);
       } else {
         info('  Fetching image attachments…');
         const all = await fetchAllImages(listAdapter);

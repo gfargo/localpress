@@ -31,6 +31,7 @@ import {
 import type { ImageFormat, OptimizeOptions } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { getCachedClassification } from './classify.ts';
 
@@ -330,11 +331,7 @@ export function registerOptimizeCommand(program: Command): void {
       let items: MediaItem[] = [];
 
       if (hasExplicitIds) {
-        const ids = idStrs.map((s) => Number.parseInt(s, 10));
-        if (ids.some(Number.isNaN)) {
-          error('All arguments must be valid attachment IDs (integers).');
-          process.exit(2);
-        }
+        const ids = parseAttachmentIds(idStrs);
         const getAdapter = resolver.resolve('get');
         for (const id of ids) {
           try {

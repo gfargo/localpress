@@ -204,6 +204,43 @@ describe('SnapshotStore', () => {
     store.markRestored(id2);
     const next = store.getLastSnapshotForAttachment('testsite', 5);
     expect(next?.id).toBe(id1);
+
+    // Regression: repeated captures of the same attachment in one session must
+    // not share a blob path — each row's blob is independently readable.
+    const snap1 = store.getSnapshot(id1);
+    const snap2 = store.getSnapshot(id2);
+    if (snap1 === null || snap2 === null) throw new Error('snapshot not found');
+    expect(snap1.blobPath).not.toBeNull();
+    expect(snap2.blobPath).not.toBeNull();
+    expect(snap1.blobPath).not.toBe(snap2.blobPath);
+    expect(store.readBlob(snap1).toString()).toBe('a');
+    expect(store.readBlob(snap2).toString()).toBe('b');
+  });
+
+  test('recapturing the same attachment + beforeHash in one session skips a redundant blob', () => {
+    const session = store.openSession('testsite', 'optimize');
+    const id1 = store.capture({
+      siteName: 'testsite',
+      sessionId: session.id,
+      attachmentId: 9,
+      operation: 'optimize',
+      sourceBytes: Buffer.from('original bytes'),
+      beforeMeta: { filename: '9.jpg', mimeType: 'image/jpeg' },
+      beforeHash: 'sha256:same',
+    });
+    const id2 = store.capture({
+      siteName: 'testsite',
+      sessionId: session.id,
+      attachmentId: 9,
+      operation: 'optimize',
+      sourceBytes: Buffer.from('original bytes'),
+      beforeMeta: { filename: '9.jpg', mimeType: 'image/jpeg' },
+      beforeHash: 'sha256:same',
+    });
+    store.closeSession(session.id);
+
+    expect(id2).toBe(id1);
+    expect(store.listSnapshots('testsite', { attachmentId: 9 }).length).toBe(1);
   });
 
   test('stats include count, sessions, and total bytes', () => {
