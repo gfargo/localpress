@@ -138,6 +138,12 @@ mock.module('../../src/adapters/ssh.ts', () => ({
         }),
       );
     }
+    if (command.includes('post meta list') && command.includes('_wp_attachment_metadata')) {
+      return ok(JSON.stringify([{ meta_value: state.regenerated ? NEW_META : OLD_META }]));
+    }
+    if (command.includes('post meta list') && command.includes('_wp_attachment_image_alt')) {
+      return ok('[]');
+    }
     if (command.includes('_wp_attachment_image_alt')) {
       return ok('');
     }
