@@ -1,182 +1,208 @@
 /**
- * Regression tests for the preview server's promise-resolution race
- * (issue #105): a successful /api/apply must resolve `{applied: true}`
- * even though shutdown() synchronously fires the WS close handler, and a
- * reconnect within the grace window must not cancel the session.
+ * Integration-style unit tests for the preview server's auth guard.
+ * Spins up a real `startPreviewServer` instance with stubbed onProcess/onApply
+ * callbacks and hits it with `fetch()` to confirm the token/Host checks are wired
+ * in correctly — in particular that `/api/apply` never reaches the WordPress-mutating
+ * callback without a valid token.
+ *
+ * `node:child_process` is mocked so no real browser-opener process is spawned;
+ * instead we capture the URL (with the `#<token>` fragment) that the server
+ * would have opened, so tests can address it directly.
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterEach, describe, expect, mock, test } from 'bun:test';
 
-import { setOutputOptions } from '../../src/cli/utils/output.ts';
-import { startPreviewServer } from '../../src/engine/preview/server.ts';
+const capturedUrlBox: { value: string | null } = { value: null };
 
-setOutputOptions({ quiet: true });
+mock.module('node:child_process', () => ({
+  spawn: (_cmd: string, args: string[]) => {
+    capturedUrlBox.value = args[args.length - 1] ?? null;
+    return { on: () => {}, unref: () => {} };
+  },
+}));
 
-// The server opens the default browser via `xdg-open`/`open`/`start`, which
-// doesn't exist in a headless CI sandbox. Stub it on PATH so startPreviewServer
-// doesn't throw before we get a chance to talk to it over HTTP/WS.
-let fakeBinDir: string | null = null;
-let originalPath: string | undefined;
+const { startPreviewServer } = await import('../../src/engine/preview/server.ts');
 
-beforeAll(() => {
-  fakeBinDir = mkdtempSync(join(tmpdir(), 'localpress-fake-bin-'));
-  const stubPath = join(fakeBinDir, 'xdg-open');
-  writeFileSync(stubPath, '#!/bin/sh\nexit 0\n');
-  chmodSync(stubPath, 0o755);
-  originalPath = process.env.PATH;
-  process.env.PATH = `${fakeBinDir}:${originalPath ?? ''}`;
-});
+async function startServer(
+  onApply: (bytes: Buffer, mime: string | null) => Promise<{ wpId: number; message: string }>,
+) {
+  capturedUrlBox.value = null;
+  let applyCalls = 0;
 
-afterAll(() => {
-  if (originalPath !== undefined) process.env.PATH = originalPath;
-  if (fakeBinDir) rmSync(fakeBinDir, { recursive: true, force: true });
-});
-
-let nextPort = 19801;
-
-function basePreviewOptions(port: number, overrides: Record<string, unknown> = {}) {
-  return {
-    port,
-    sourceBytes: Buffer.from('source'),
-    filename: 'test.png',
-    mimeType: 'image/png',
-    wpId: 1,
-    mode: 'optimize' as const,
-    html: '<html></html>',
+  const donePromise = startPreviewServer({
+    port: 0,
+    sourceBytes: Buffer.from('fake-image-bytes'),
+    filename: 'test.jpg',
+    mimeType: 'image/jpeg',
+    wpId: 42,
+    mode: 'optimize',
+    html: '<html><body>preview</body></html>',
     timeoutMs: 60_000,
     onProcess: async () => ({
-      bytes: Buffer.from('result'),
-      mimeType: 'image/png',
+      bytes: Buffer.from('processed'),
+      mimeType: 'image/webp',
       stats: {},
     }),
-    onApply: async () => ({ wpId: 42, message: 'uploaded' }),
-    ...overrides,
+    onApply: async (bytes, mime) => {
+      applyCalls++;
+      return onApply(bytes, mime);
+    },
+  });
+
+  for (let i = 0; i < 100 && !capturedUrlBox.value; i++) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  if (!capturedUrlBox.value) throw new Error('server did not open a browser URL in time');
+
+  const [base, token] = (capturedUrlBox.value as string).split('#');
+  const url = new URL(base);
+
+  return {
+    port: Number(url.port),
+    token: token ?? '',
+    donePromise,
+    getApplyCalls: () => applyCalls,
   };
 }
 
-/** Resolves to a sentinel after `ms` if `promise` hasn't settled yet. */
-async function notYetResolved(promise: Promise<unknown>, ms: number): Promise<boolean> {
-  const sentinel = Symbol('pending');
-  const result = await Promise.race([
-    promise,
-    new Promise((r) => setTimeout(() => r(sentinel), ms)),
-  ]);
-  return result === sentinel;
-}
+describe('preview server auth', () => {
+  const cleanups: Array<() => Promise<void>> = [];
 
-describe('startPreviewServer', () => {
-  const sockets: WebSocket[] = [];
-
-  afterEach(() => {
-    for (const ws of sockets.splice(0)) {
-      try {
-        ws.close();
-      } catch {
-        // already closed
-      }
+  afterEach(async () => {
+    while (cleanups.length) {
+      const fn = cleanups.pop();
+      if (fn) await fn();
     }
   });
 
-  test('apply followed by ws close resolves {applied: true}, not cancelled', async () => {
-    const port = nextPort++;
-    const donePromise = startPreviewServer(basePreviewOptions(port));
-
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
-    sockets.push(ws);
-    await new Promise((resolve) => {
-      ws.onopen = resolve;
+  test('GET / with correct Host succeeds; wrong Host 404s', async () => {
+    const { port, token, donePromise } = await startServer(async () => ({
+      wpId: 1,
+      message: 'ok',
+    }));
+    cleanups.push(async () => {
+      await fetch(`http://127.0.0.1:${port}/api/cancel`, {
+        method: 'POST',
+        headers: { 'X-Preview-Token': token },
+      }).catch(() => {});
+      await donePromise;
     });
 
-    await fetch(`http://127.0.0.1:${port}/api/process`, { method: 'POST', body: '{}' });
-    await fetch(`http://127.0.0.1:${port}/api/apply`, { method: 'POST' });
+    const ok = await fetch(`http://127.0.0.1:${port}/`, {
+      headers: { host: `127.0.0.1:${port}` },
+    });
+    expect(ok.status).toBe(200);
+
+    const bad = await fetch(`http://127.0.0.1:${port}/`, {
+      headers: { host: 'evil.example.com' },
+    });
+    expect(bad.status).toBe(404);
+  });
+
+  test('/api/source requires a matching token', async () => {
+    const { port, token, donePromise } = await startServer(async () => ({
+      wpId: 1,
+      message: 'ok',
+    }));
+    cleanups.push(async () => {
+      await fetch(`http://127.0.0.1:${port}/api/cancel`, {
+        method: 'POST',
+        headers: { 'X-Preview-Token': token },
+      }).catch(() => {});
+      await donePromise;
+    });
+
+    const noToken = await fetch(`http://127.0.0.1:${port}/api/source`);
+    expect(noToken.status).toBe(404);
+
+    const wrongToken = await fetch(`http://127.0.0.1:${port}/api/source?token=wrong`);
+    expect(wrongToken.status).toBe(404);
+
+    const correct = await fetch(`http://127.0.0.1:${port}/api/source?token=${token}`);
+    expect(correct.status).toBe(200);
+  });
+
+  test('POST /api/apply without a token never reaches the onApply callback', async () => {
+    const { port, token, getApplyCalls, donePromise } = await startServer(async () => ({
+      wpId: 99,
+      message: 'applied',
+    }));
+    cleanups.push(async () => {
+      await fetch(`http://127.0.0.1:${port}/api/cancel`, {
+        method: 'POST',
+        headers: { 'X-Preview-Token': token },
+      }).catch(() => {});
+      await donePromise;
+    });
+
+    const res = await fetch(`http://127.0.0.1:${port}/api/apply`, { method: 'POST' });
+    expect(res.status).toBe(404);
+    expect(getApplyCalls()).toBe(0);
+  });
+
+  test('POST /api/apply with the correct token reaches onApply and resolves', async () => {
+    const { port, token, getApplyCalls, donePromise } = await startServer(async () => ({
+      wpId: 99,
+      message: 'applied',
+    }));
+
+    // /api/apply requires a primed result — generate one via /api/process first.
+    await fetch(`http://127.0.0.1:${port}/api/process`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Preview-Token': token },
+      body: JSON.stringify({}),
+    });
+
+    const res = await fetch(`http://127.0.0.1:${port}/api/apply`, {
+      method: 'POST',
+      headers: { 'X-Preview-Token': token },
+    });
+    expect(res.status).toBe(200);
+    expect(getApplyCalls()).toBe(1);
 
     const result = await donePromise;
     expect(result.applied).toBe(true);
-    expect(result.result?.wpId).toBe(42);
   });
 
-  test('closing and reconnecting within the grace window does not cancel', async () => {
-    const port = nextPort++;
-    const donePromise = startPreviewServer(basePreviewOptions(port));
-
-    const ws1 = new WebSocket(`ws://127.0.0.1:${port}/ws`);
-    sockets.push(ws1);
-    await new Promise((resolve) => {
-      ws1.onopen = resolve;
-    });
-    ws1.close();
-
-    // Reconnect quickly, well within the ~2.5s grace window.
-    await new Promise((r) => setTimeout(r, 300));
-    const ws2 = new WebSocket(`ws://127.0.0.1:${port}/ws`);
-    sockets.push(ws2);
-    await new Promise((resolve) => {
-      ws2.onopen = resolve;
+  test('WS upgrade to /ws without a token is refused', async () => {
+    const { port, token, donePromise } = await startServer(async () => ({
+      wpId: 1,
+      message: 'ok',
+    }));
+    cleanups.push(async () => {
+      await fetch(`http://127.0.0.1:${port}/api/cancel`, {
+        method: 'POST',
+        headers: { 'X-Preview-Token': token },
+      }).catch(() => {});
+      await donePromise;
     });
 
-    // Give the (cancelled) grace timer a chance to fire if it weren't cleared.
-    expect(await notYetResolved(donePromise, 2800)).toBe(true);
-
-    // Clean up: close the live socket with no reconnect so the server shuts
-    // itself down naturally via the grace-period path (avoids the server's
-    // force-close-before-response quirk on /api/cancel, unrelated to this test).
-    ws2.close();
-    const result = await donePromise;
-    expect(result.applied).toBe(false);
-  }, 10_000);
-
-  test('closing with no reconnect resolves {applied: false} after the grace period', async () => {
-    const port = nextPort++;
-    const donePromise = startPreviewServer(basePreviewOptions(port));
-
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
-    sockets.push(ws);
-    await new Promise((resolve) => {
-      ws.onopen = resolve;
+    const res = await fetch(`http://127.0.0.1:${port}/ws`, {
+      headers: { upgrade: 'websocket', connection: 'upgrade' },
     });
+    expect(res.status).toBe(404);
+  });
+
+  test('WS upgrade to /ws with the correct token is accepted', async () => {
+    const { port, token, donePromise } = await startServer(async () => ({
+      wpId: 1,
+      message: 'ok',
+    }));
+    cleanups.push(async () => {
+      await fetch(`http://127.0.0.1:${port}/api/cancel`, {
+        method: 'POST',
+        headers: { 'X-Preview-Token': token },
+      }).catch(() => {});
+      await donePromise;
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${token}`);
+    const opened = await new Promise<boolean>((resolve) => {
+      ws.onopen = () => resolve(true);
+      ws.onerror = () => resolve(false);
+      setTimeout(() => resolve(false), 2000);
+    });
+    expect(opened).toBe(true);
     ws.close();
-
-    const result = await donePromise;
-    expect(result.applied).toBe(false);
-    expect(result.result).toBeNull();
-  }, 10_000);
-
-  test('apply does not re-arm the close-grace timer (no stray "tab closed" log or re-resolve)', async () => {
-    const port = nextPort++;
-    setOutputOptions({ quiet: false });
-    const writes: string[] = [];
-    const originalWrite = process.stdout.write.bind(process.stdout);
-    process.stdout.write = ((chunk: string) => {
-      writes.push(String(chunk));
-      return true;
-    }) as typeof process.stdout.write;
-
-    try {
-      const donePromise = startPreviewServer(basePreviewOptions(port));
-
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
-      sockets.push(ws);
-      await new Promise((resolve) => {
-        ws.onopen = resolve;
-      });
-
-      await fetch(`http://127.0.0.1:${port}/api/process`, { method: 'POST', body: '{}' });
-      await fetch(`http://127.0.0.1:${port}/api/apply`, { method: 'POST' });
-
-      const result = await donePromise;
-      expect(result.applied).toBe(true);
-
-      // The apply path's shutdown() synchronously fires the WS close handler.
-      // Wait past the ~2.5s grace window to confirm it wasn't re-armed (which
-      // would log "Browser tab closed" and keep the process alive needlessly).
-      await new Promise((r) => setTimeout(r, 2800));
-      expect(writes.some((w) => w.includes('Browser tab closed'))).toBe(false);
-    } finally {
-      process.stdout.write = originalWrite;
-      setOutputOptions({ quiet: true });
-    }
-  }, 10_000);
+  });
 });

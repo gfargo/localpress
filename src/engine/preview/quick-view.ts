@@ -8,6 +8,8 @@
  */
 
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { isAuthorized, isValidHost } from './token-auth.ts';
 
 export interface QuickViewOptions {
   /** Image bytes to display. */
@@ -53,6 +55,7 @@ export async function quickViewInBrowser(options: QuickViewOptions): Promise<voi
     state.server?.stop(true);
   };
 
+  const token = randomUUID();
   const html = buildQuickViewHtml(options);
 
   state.server = Bun.serve({
@@ -60,14 +63,28 @@ export async function quickViewInBrowser(options: QuickViewOptions): Promise<voi
     hostname: '127.0.0.1',
     fetch(req, server) {
       const url = new URL(req.url);
-      if (url.pathname === '/ws' && req.headers.get('upgrade') === 'websocket') {
-        const upgraded = server.upgrade(req, { data: {} });
-        return upgraded ? undefined : new Response('Upgrade failed', { status: 500 });
+
+      // Kill DNS rebinding: every request must target this server's own host:port.
+      if (!isValidHost(req, server.port)) {
+        return new Response('Not Found', { status: 404 });
       }
+
+      // The UI page itself stays unauthenticated — the token lives in the URL
+      // fragment, which browsers never send to the server.
       if (url.pathname === '/' && req.method === 'GET') {
         return new Response(html, {
           headers: { 'Content-Type': 'text/html; charset=utf-8' },
         });
+      }
+
+      // Every other route requires the session token.
+      if (!isAuthorized(req, url, server.port, token)) {
+        return new Response('Not Found', { status: 404 });
+      }
+
+      if (url.pathname === '/ws' && req.headers.get('upgrade') === 'websocket') {
+        const upgraded = server.upgrade(req, { data: {} });
+        return upgraded ? undefined : new Response('Upgrade failed', { status: 500 });
       }
       if (url.pathname === '/image' && req.method === 'GET') {
         return new Response(options.imageBytes, {
@@ -97,7 +114,7 @@ export async function quickViewInBrowser(options: QuickViewOptions): Promise<voi
   });
 
   const previewUrl = `http://127.0.0.1:${state.server.port}`;
-  openBrowser(previewUrl);
+  openBrowser(`${previewUrl}#${token}`);
 
   // Auto-shutdown after 5 minutes if the WebSocket never connects.
   state.timeoutId = setTimeout(
@@ -159,11 +176,13 @@ function buildQuickViewHtml(opts: QuickViewOptions): string {
   <span class="meta">${escapeHtml(meta)}</span>
 </div>
 <div class="viewer">
-  <img src="/image" alt="${escapeHtml(opts.filename)}" />
+  <img id="quick-view-img" alt="${escapeHtml(opts.filename)}" />
 </div>
 <script>
+  const TOKEN = location.hash.slice(1);
+  document.getElementById('quick-view-img').src = '/image?token=' + encodeURIComponent(TOKEN);
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(proto + '//' + location.host + '/ws');
+  const ws = new WebSocket(proto + '//' + location.host + '/ws?token=' + encodeURIComponent(TOKEN));
   ws.onopen = () => { setInterval(() => { if (ws.readyState === 1) ws.send('ping'); }, 5000); };
 </script>
 </body>
@@ -188,5 +207,10 @@ function openBrowser(url: string): void {
   const cmd =
     process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
   const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
-  spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
+  const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+  // Without this, a missing browser-opener binary (e.g. no xdg-open in a
+  // headless/CI environment) surfaces as an unhandled 'error' event and
+  // crashes the process.
+  child.on('error', () => {});
+  child.unref();
 }

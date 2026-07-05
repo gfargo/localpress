@@ -18,7 +18,9 @@
  */
 
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { info, warn } from '../../cli/utils/output.ts';
+import { isAuthorized, isValidHost } from './token-auth.ts';
 
 export interface PreviewServerOptions {
   /** Port to listen on. 0 = auto-assign. */
@@ -80,6 +82,7 @@ export async function startPreviewServer(
 ): Promise<{ applied: boolean; result: ApplyResult | null }> {
   const port = options.port ?? 0;
   const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
+  const token = randomUUID();
 
   // Mutable state shared between the fetch handler and lifecycle management.
   const state: {
@@ -139,7 +142,28 @@ export async function startPreviewServer(
     fetch: async (req, server) => {
       const url = new URL(req.url);
 
-      // Any API activity keeps the session alive.
+      // Kill DNS rebinding: every request, token-gated or not, must target this
+      // server's own host:port.
+      if (!isValidHost(req, server.port)) {
+        return new Response('Not Found', { status: 404 });
+      }
+
+      // Serve the UI unauthenticated — the token lives in the URL fragment,
+      // which browsers never send to the server, so there's nothing to check here.
+      if (url.pathname === '/' && req.method === 'GET') {
+        return new Response(options.html, {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+
+      // Every other route is state-changing or returns private data — require the
+      // session token. Same generic 404 for bad host/token/path so an attacker can't
+      // distinguish which check failed.
+      if (!isAuthorized(req, url, server.port, token)) {
+        return new Response('Not Found', { status: 404 });
+      }
+
+      // Any authorized API activity keeps the session alive.
       if (url.pathname.startsWith('/api/')) {
         resetIdleTimeout();
       }
@@ -148,13 +172,6 @@ export async function startPreviewServer(
       if (url.pathname === '/ws' && req.headers.get('upgrade') === 'websocket') {
         const upgraded = server.upgrade(req, { data: {} });
         return upgraded ? undefined : new Response('WebSocket upgrade failed', { status: 500 });
-      }
-
-      // Serve the UI.
-      if (url.pathname === '/' && req.method === 'GET') {
-        return new Response(options.html, {
-          headers: { 'Content-Type': 'text/html; charset=utf-8' },
-        });
       }
 
       // Serve the original image.
@@ -309,7 +326,7 @@ export async function startPreviewServer(
   info(`  Preview server running at ${previewUrl}`);
   info('  Opening browser...');
 
-  openBrowser(previewUrl);
+  openBrowser(`${previewUrl}#${token}`);
 
   // Auto-shutdown timeout.
   resetIdleTimeout();
@@ -322,5 +339,10 @@ function openBrowser(url: string): void {
   const cmd =
     process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
   const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
-  spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
+  const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+  // Without this, a missing browser-opener binary (e.g. no xdg-open in a
+  // headless/CI environment) surfaces as an unhandled 'error' event and
+  // crashes the process.
+  child.on('error', () => {});
+  child.unref();
 }
