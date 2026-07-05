@@ -240,10 +240,10 @@ export class SiteDb {
               COUNT(*)                                          AS total,
               SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS succeeded,
               SUM(CASE WHEN status = 'failure' THEN 1 ELSE 0 END) AS failed,
-              SUM(CASE WHEN bytes_before > bytes_after THEN bytes_before - bytes_after ELSE 0 END) AS bytes_saved,
-              SUM(bytes_before)                                 AS bytes_in,
-              SUM(bytes_after)                                  AS bytes_out,
-              SUM(duration_ms)                                  AS total_ms,
+              SUM(CASE WHEN status = 'success' AND bytes_before > bytes_after THEN bytes_before - bytes_after ELSE 0 END) AS bytes_saved,
+              SUM(CASE WHEN status = 'success' THEN bytes_before ELSE 0 END) AS bytes_in,
+              SUM(CASE WHEN status = 'success' THEN bytes_after ELSE 0 END) AS bytes_out,
+              SUM(CASE WHEN status = 'success' THEN duration_ms ELSE 0 END) AS total_ms,
               MAX(ran_at)                                       AS last_ran_at
        FROM processing_history
        WHERE site_name = ?
@@ -255,8 +255,8 @@ export class SiteDb {
     const totals = this.db
       .query(
         `SELECT COUNT(DISTINCT wp_id)                                       AS files_touched,
-              SUM(CASE WHEN bytes_before > bytes_after THEN bytes_before - bytes_after ELSE 0 END) AS bytes_saved,
-              SUM(bytes_before)                                           AS bytes_in,
+              SUM(CASE WHEN status = 'success' AND bytes_before > bytes_after THEN bytes_before - bytes_after ELSE 0 END) AS bytes_saved,
+              SUM(CASE WHEN status = 'success' THEN bytes_before ELSE 0 END) AS bytes_in,
               COUNT(*)                                                    AS total_ops,
               SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END)        AS succeeded,
               MAX(ran_at)                                                 AS last_ran_at
@@ -317,6 +317,19 @@ export class SiteDb {
       optimized,
       unoptimized: totalAttachments - optimized,
     };
+  }
+
+  /**
+   * Delete attachment rows not observed during the most recent full-library
+   * scan (`last_seen_at` predates `scanStartedAt`). Returns the number of
+   * rows removed.
+   */
+  pruneStaleAttachments(siteName: string, scanStartedAt: number): number {
+    const result = this.db.run('DELETE FROM attachments WHERE site_name = ? AND last_seen_at < ?', [
+      siteName,
+      scanStartedAt,
+    ]);
+    return result.changes;
   }
 
   /** Get format breakdown (MIME type counts) for a site. */

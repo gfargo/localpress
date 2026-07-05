@@ -12,7 +12,7 @@
  *   - birefnet-lite: BiRefNet lightweight variant (~224MB, MIT) — state-of-the-art quality
  */
 
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir } from '../../cli/utils/config.ts';
 
@@ -155,7 +155,20 @@ export async function ensureModel(
     offset += chunk.length;
   }
 
-  await Bun.write(modelPath, buffer);
+  // Write to a `.partial` path first so a killed/interrupted download never
+  // leaves a truncated file at `modelPath` that `isModelCached` would treat
+  // as valid on the next invocation.
+  const partialPath = `${modelPath}.partial`;
+  await Bun.write(partialPath, buffer);
+
+  if (contentLength > 0 && totalLength !== contentLength) {
+    rmSync(partialPath, { force: true });
+    throw new Error(
+      `Downloaded model '${name}' is incomplete: expected ${contentLength} bytes, got ${totalLength}. Please retry.`,
+    );
+  }
+
+  renameSync(partialPath, modelPath);
   onProgress?.(`  ✓ Model saved to ${modelPath} (${(totalLength / (1024 * 1024)).toFixed(1)} MB)`);
 
   return modelPath;
