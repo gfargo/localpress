@@ -15,6 +15,24 @@ import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts
 import { buildDispatchArgs } from '../utils/dispatch.ts';
 import { error, info, printJson } from '../utils/output.ts';
 
+/**
+ * Fetch a page, falling back to page 1 if a page > 1 fails (e.g. the
+ * library shrank or filters changed since the page was persisted, so the
+ * previously-saved page is now out of range). A failure at page 1 rethrows —
+ * that's a real error (auth/network), not a stale-page problem.
+ */
+export async function fetchPageWithFallback<T>(
+  fetchPage: (page: number) => Promise<T>,
+  page: number,
+): Promise<{ result: T; page: number }> {
+  try {
+    return { result: await fetchPage(page), page };
+  } catch (err) {
+    if (page <= 1) throw err;
+    return { result: await fetchPage(1), page: 1 };
+  }
+}
+
 export function registerListCommand(program: Command): void {
   program
     .command('list')
@@ -140,7 +158,17 @@ export function registerListCommand(program: Command): void {
           );
 
           try {
-            result = await adapter.listMediaPage({ ...filters, page: interactivePage });
+            const fetched = await fetchPageWithFallback(
+              (page) => adapter.listMediaPage({ ...filters, page }),
+              interactivePage,
+            );
+            result = fetched.result;
+            if (fetched.page !== interactivePage) {
+              // Saved/requested page was out of range (library shrank, filters changed) — reset once.
+              interactivePage = fetched.page;
+              interactiveCursor = 0;
+              saveBrowserPosition(interactivePage, 0);
+            }
           } catch (err) {
             spinner.unmount();
             error(err instanceof Error ? err.message : String(err));
