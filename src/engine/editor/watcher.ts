@@ -7,6 +7,7 @@
  */
 
 import { watch } from 'chokidar';
+import { createRerunGuard } from '../../cli/utils/rerun-guard.ts';
 
 export interface WatcherOptions {
   /** Debounce interval in milliseconds. Default: 500ms. */
@@ -34,7 +35,24 @@ export interface FileWatcher {
 export function watchFile(filePath: string, options: WatcherOptions): FileWatcher {
   const debounceMs = options.debounceMs ?? 500;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let processing = false;
+
+  const trigger = createRerunGuard(async () => {
+    try {
+      await options.onSave(filePath);
+    } catch (err) {
+      options.onError?.(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+
+  const scheduleRun = () => {
+    // Debounce: reset the timer on each change/add event.
+    if (debounceTimer) clearTimeout(debounceTimer);
+
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      void trigger();
+    }, debounceMs);
+  };
 
   const watcher = watch(filePath, {
     // Don't fire on the initial add — we only care about changes.
@@ -48,22 +66,10 @@ export function watchFile(filePath: string, options: WatcherOptions): FileWatche
     },
   });
 
-  watcher.on('change', () => {
-    // Debounce: reset the timer on each change event.
-    if (debounceTimer) clearTimeout(debounceTimer);
-
-    debounceTimer = setTimeout(async () => {
-      if (processing) return;
-      processing = true;
-      try {
-        await options.onSave(filePath);
-      } catch (err) {
-        options.onError?.(err instanceof Error ? err : new Error(String(err)));
-      } finally {
-        processing = false;
-      }
-    }, debounceMs);
-  });
+  // Some editors save via delete+recreate (atomic save) rather than an
+  // in-place write, which chokidar reports as `add`, not `change`.
+  watcher.on('change', scheduleRun);
+  watcher.on('add', scheduleRun);
 
   watcher.on('error', (err) => {
     options.onError?.(err);
