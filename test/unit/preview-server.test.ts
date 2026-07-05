@@ -143,4 +143,40 @@ describe('startPreviewServer', () => {
     expect(result.applied).toBe(false);
     expect(result.result).toBeNull();
   }, 10_000);
+
+  test('apply does not re-arm the close-grace timer (no stray "tab closed" log or re-resolve)', async () => {
+    const port = nextPort++;
+    setOutputOptions({ quiet: false });
+    const writes: string[] = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+
+    try {
+      const donePromise = startPreviewServer(basePreviewOptions(port));
+
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+      sockets.push(ws);
+      await new Promise((resolve) => {
+        ws.onopen = resolve;
+      });
+
+      await fetch(`http://127.0.0.1:${port}/api/process`, { method: 'POST', body: '{}' });
+      await fetch(`http://127.0.0.1:${port}/api/apply`, { method: 'POST' });
+
+      const result = await donePromise;
+      expect(result.applied).toBe(true);
+
+      // The apply path's shutdown() synchronously fires the WS close handler.
+      // Wait past the ~2.5s grace window to confirm it wasn't re-armed (which
+      // would log "Browser tab closed" and keep the process alive needlessly).
+      await new Promise((r) => setTimeout(r, 2800));
+      expect(writes.some((w) => w.includes('Browser tab closed'))).toBe(false);
+    } finally {
+      process.stdout.write = originalWrite;
+      setOutputOptions({ quiet: true });
+    }
+  }, 10_000);
 });

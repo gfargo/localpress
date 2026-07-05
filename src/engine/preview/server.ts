@@ -122,8 +122,11 @@ export async function startPreviewServer(
     if (state.timeoutId) clearTimeout(state.timeoutId);
     state.timeoutId = setTimeout(() => {
       warn('Preview server timed out. Shutting down.');
-      shutdown();
+      // Resolve before shutting down — shutdown() triggers the WS close handler
+      // synchronously (see the apply path below), and close() checks `resolved`
+      // to decide whether to arm the reconnect grace timer.
       resolveOnce({ applied: false, result: null });
+      shutdown();
     }, timeoutMs);
   };
 
@@ -280,6 +283,11 @@ export async function startPreviewServer(
       },
       close() {
         state.wsConnected = false;
+        // A deliberate shutdown (apply/cancel/timeout) resolves the promise
+        // before calling shutdown(), which stops the server and triggers this
+        // handler synchronously. Don't treat that as a "tab closed" event —
+        // only arm the grace timer for a close we didn't initiate ourselves.
+        if (resolved) return;
         // Don't shut down immediately: a page reload (or a brief tab switch)
         // closes the socket and reopens a new one moments later. Give it a
         // grace window before treating this as a real "tab closed".
