@@ -143,6 +143,18 @@ export function registerDeleteCommand(program: Command): void {
           await deleteAdapter.delete(id, { force: Boolean(options.force) });
           info(`    ✓ ${options.force ? 'Permanently deleted' : 'Moved to trash'}`);
 
+          db.upsertAttachment({
+            siteName: site.name,
+            wpId: item.id,
+            sourceUrl: item.url,
+            sourceHash: null,
+            sizeBytes: item.sizeBytes ?? null,
+            width: item.width ?? null,
+            height: item.height ?? null,
+            mimeType: item.mimeType,
+            lastSeenAt: Date.now(),
+          });
+
           db.recordProcessing({
             siteName: site.name,
             wpId: item.id,

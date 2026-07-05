@@ -18,6 +18,7 @@ import {
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -26,16 +27,16 @@ export function registerHistoryCommand(program: Command): void {
     .command('history')
     .description('Browse the time-machine: sessions, snapshots, retention')
     .option('--session <id>', 'filter to a specific session')
-    .option('--attachment <id>', 'filter to a specific attachment ID', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--attachment <id>',
+      'filter to a specific attachment ID',
+      parseIntOption('--attachment'),
     )
     .option(
       '--operation <op>',
       'filter by operation (optimize, convert, resize, remove-bg, caption)',
     )
-    .option('--limit <n>', 'max sessions/snapshots to show (default 50)', (v) =>
-      Number.parseInt(v, 10),
-    )
+    .option('--limit <n>', 'max sessions/snapshots to show (default 50)', parseIntOption('--limit'))
     .option('-i, --interactive', 'browse with keyboard navigation')
     .action(async (options) => {
       const parentOpts = program.opts();
@@ -225,14 +226,20 @@ export function registerHistoryCommand(program: Command): void {
   history
     .command('prune')
     .description('Apply retention policy: drop oldest snapshots until limits are met')
-    .option('--max-size <bytes>', 'override config: drop until total size ≤ this many bytes', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--max-size <bytes>',
+      'override config: drop until total size ≤ this many bytes',
+      parseIntOption('--max-size'),
     )
-    .option('--older-than <days>', 'drop snapshots older than N days', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--older-than <days>',
+      'drop snapshots older than N days',
+      parseIntOption('--older-than'),
     )
-    .option('--max-sessions <n>', 'keep only the N most recent sessions', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--max-sessions <n>',
+      'keep only the N most recent sessions',
+      parseIntOption('--max-sessions'),
     )
     .action(async (options) => {
       const parentOpts = program.opts();

@@ -30,6 +30,7 @@ import {
 } from '../../engine/image/optimize.ts';
 import type { ImageFormat, OptimizeOptions } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { getCachedClassification } from './classify.ts';
@@ -67,8 +68,10 @@ export function registerOptimizeCommand(program: Command): void {
       '--unoptimized',
       "process only attachments localpress hasn't seen yet (dry-run unless --apply)",
     )
-    .option('--larger-than <bytes>', 'only attachments larger than this (works with --all)', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--larger-than <bytes>',
+      'only attachments larger than this (works with --all)',
+      parseIntOption('--larger-than'),
     )
     .option(
       '--to <format>',
@@ -78,7 +81,7 @@ export function registerOptimizeCommand(program: Command): void {
       '--mode <mode>',
       'compression mode: lossy or lossless (default: lossy for jpeg/webp/avif, lossless for png)',
     )
-    .option('--quality <n>', '0-100 quality value (codec-specific)', (v) => Number.parseInt(v, 10))
+    .option('--quality <n>', '0-100 quality value (codec-specific)', parseIntOption('--quality'))
     .option(
       '--target-size <size>',
       'binary-search quality to hit this output size (e.g. 100kb, 1mb). Applies to jpeg/webp/avif.',
@@ -95,8 +98,10 @@ export function registerOptimizeCommand(program: Command): void {
       'sharp',
     )
     .option('--preview', 'open a browser preview to adjust settings before applying')
-    .option('--preview-port <port>', 'port for the preview server (default: auto)', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--preview-port <port>',
+      'port for the preview server (default: auto)',
+      parseIntOption('--preview-port'),
     )
     .option(
       '--regenerate-thumbnails',
@@ -279,7 +284,8 @@ export function registerOptimizeCommand(program: Command): void {
 
             if (resultWpId === null) {
               const uploadAdapter = resolver.resolve('upload');
-              const newFilename = item.filename.replace(/\.[^.]+$/, '-optimized.webp');
+              const ext = mimeToExtension(resultMimeType ?? item.mimeType) ?? '.jpg';
+              const newFilename = item.filename.replace(/\.[^.]+$/, `-optimized${ext}`);
               const uploaded = await uploadAdapter.upload(resultBytes, {
                 filename: newFilename,
                 title: item.title,
@@ -710,7 +716,7 @@ export function registerOptimizeCommand(program: Command): void {
 
 // -- Helpers ------------------------------------------------------------------
 
-function mimeToExtension(mimeType: string): string | undefined {
+export function mimeToExtension(mimeType: string): string | undefined {
   const map: Record<string, string> = {
     'image/webp': '.webp',
     'image/avif': '.avif',

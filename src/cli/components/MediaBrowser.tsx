@@ -434,6 +434,13 @@ export function MediaBrowser({
         const fmtMap: Record<string, string> = { w: 'webp', a: 'avif', j: 'jpeg', p: 'png' };
         const fmt = fmtMap[input];
         if (fmt) {
+          if (selectedIds.size > 0) {
+            setConvertMode(false);
+            setConvertStep('format');
+            setConvertFormat('');
+            doExit({ type: 'bulk-convert', ids: [...selectedIds], page, cursor, to: fmt });
+            return;
+          }
           setConvertFormat(fmt);
           setConvertStep('quality');
         }
@@ -625,6 +632,13 @@ export function MediaBrowser({
         doExit({ type: 'optimize', id: item.id, page, cursor, preview: true });
       }
     } else if (input === 'c') {
+      if (selectedIds.size > 0) {
+        setConvertStep('format');
+        setConvertFormat('');
+        setConvertQuality('');
+        setConvertMode(true);
+        return;
+      }
       const item = filteredItems[cursor];
       if (item?.mimeType.startsWith('image/')) {
         setConvertStep('format');
@@ -632,6 +646,13 @@ export function MediaBrowser({
         setConvertQuality('');
         setConvertMode(true);
       }
+    } else if (input === 'd') {
+      if (selectedIds.size > 0) {
+        doExit({ type: 'bulk-pull', ids: [...selectedIds], page, cursor });
+        return;
+      }
+      const item = filteredItems[cursor];
+      if (item) doExit({ type: 'bulk-pull', ids: [item.id], page, cursor });
     } else if (input === 's') {
       const item = filteredItems[cursor];
       if (item?.mimeType.startsWith('image/')) {
@@ -1233,7 +1254,7 @@ export function MediaBrowser({
               const missingAlt = !loading && isImage && !item.altText;
               const size = item.sizeBytes ? formatBytes(item.sizeBytes) : '     ';
               const ext = (item.mimeType.split('/')[1] ?? '').slice(0, 4).padEnd(4);
-              const maxName = listWidth - 32;
+              const maxName = Math.max(8, listWidth - 32);
               const name =
                 item.filename.length > maxName
                   ? `${item.filename.slice(0, maxName - 1)}…`
@@ -1343,6 +1364,10 @@ export function MediaBrowser({
                   <Text color="green">[e]</Text>
                   <Text dimColor> edit (round-trip)</Text>
                 </Text>
+                <Text>
+                  <Text color="green">[d]</Text>
+                  <Text dimColor> download</Text>
+                </Text>
                 {onOpenInBrowser && (
                   <Text>
                     <Text color="cyan">[W]</Text>
@@ -1385,13 +1410,13 @@ export function MediaBrowser({
         {selectedItem?.mimeType.startsWith('image/') ? (
           <Text dimColor>
             [jk] nav [nb] page [/] search [o] opt [O] opt+preview [r] rembg [R] rembg+preview [c]
-            conv [s] resize [a] cap [e] edit [W] WP [↵] details
+            conv [s] resize [a] cap [e] edit [d] download [W] WP [↵] details
             {canImages ? '  [p] preview' : ''} [q] quit
           </Text>
         ) : (
           <Text dimColor>
-            [↑↓/jk] navigate [←→/n/b] page [/] search [o] optimize [O] opt+preview [e] edit [W] open
-            in WP [↵] details [q] quit
+            [↑↓/jk] navigate [←→/n/b] page [/] search [o] optimize [O] opt+preview [e] edit [d]
+            download [W] open in WP [↵] details [q] quit
           </Text>
         )}
       </Box>
