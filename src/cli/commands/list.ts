@@ -12,6 +12,7 @@ import type { ListFilters, MediaItem, SortField, SortOrder } from '../../adapter
 import { SiteDb } from '../../engine/state/db.ts';
 import type { MediaBrowserAction } from '../components/MediaBrowser.tsx';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { buildDispatchArgs } from '../utils/dispatch.ts';
 import { error, info, printJson } from '../utils/output.ts';
 
 /**
@@ -286,71 +287,7 @@ export function registerListCommand(program: Command): void {
             continue;
           }
 
-          let subCmd: string;
-          let extraArgs: string[] = [];
-          let targetIds: string[] = [];
-
-          switch (pendingAction.type) {
-            case 'optimize':
-              subCmd = 'optimize';
-              targetIds = [String(pendingAction.id)];
-              if (pendingAction.quality !== undefined)
-                extraArgs.push('--quality', String(pendingAction.quality));
-              if (pendingAction.to) extraArgs.push('--to', pendingAction.to);
-              if (pendingAction.keepOriginal) extraArgs.push('--keep-original');
-              if (pendingAction.preview) extraArgs.push('--preview');
-              break;
-            case 'bulk-optimize':
-              subCmd = 'optimize';
-              targetIds = pendingAction.ids.map(String);
-              if (pendingAction.quality !== undefined)
-                extraArgs.push('--quality', String(pendingAction.quality));
-              if (pendingAction.to) extraArgs.push('--to', pendingAction.to);
-              extraArgs.push('--apply');
-              break;
-            case 'remove-bg':
-              subCmd = 'remove-bg';
-              targetIds = [String(pendingAction.id)];
-              if (pendingAction.preview) extraArgs.push('--preview');
-              break;
-            case 'bulk-remove-bg':
-              subCmd = 'remove-bg';
-              targetIds = pendingAction.ids.map(String);
-              extraArgs.push('--apply');
-              break;
-            case 'caption':
-              subCmd = 'caption';
-              targetIds = [String(pendingAction.id)];
-              break;
-            case 'convert':
-              subCmd = 'convert';
-              targetIds = [String(pendingAction.id)];
-              extraArgs = ['--to', pendingAction.to];
-              if (pendingAction.quality !== undefined)
-                extraArgs.push('--quality', String(pendingAction.quality));
-              break;
-            case 'bulk-convert':
-              subCmd = 'convert';
-              targetIds = pendingAction.ids.map(String);
-              extraArgs = ['--to', pendingAction.to];
-              extraArgs.push('--apply');
-              break;
-            case 'resize':
-              subCmd = 'resize';
-              targetIds = [String(pendingAction.id)];
-              if (pendingAction.maxWidth)
-                extraArgs.push('--max-width', String(pendingAction.maxWidth));
-              if (pendingAction.maxHeight)
-                extraArgs.push('--max-height', String(pendingAction.maxHeight));
-              break;
-            case 'bulk-pull':
-              subCmd = 'pull';
-              targetIds = pendingAction.ids.map(String);
-              break;
-            default:
-              subCmd = 'edit';
-              targetIds = ['id' in pendingAction ? String(pendingAction.id) : '0'];
-          }
+          const { subCmd, targetIds, extraArgs } = buildDispatchArgs(pendingAction);
 
           // Spawn the subcommand with all target IDs.
           const cmdArgs = isDevMode(process.argv, process.execPath)
