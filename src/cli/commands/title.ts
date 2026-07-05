@@ -20,6 +20,7 @@ import { resolveHistoryConfig } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 export function registerTitleCommand(program: Command): void {
   program
@@ -43,7 +44,6 @@ export function registerTitleCommand(program: Command): void {
     )
     .option('--language <lang>', 'generate in this language (e.g. "Spanish")')
     .option('--overwrite', 'replace existing titles (default: skip if already set non-trivially)')
-    .option('--dry-run', 'print generated titles without writing to WordPress')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
 
@@ -64,7 +64,7 @@ export function registerTitleCommand(program: Command): void {
       }
 
       const isBulk = !idStrs.length && (options.missingTitle || options.all);
-      const isDryRun = options.dryRun || (isBulk && !parentOpts.apply);
+      const isDryRun = resolveDryRun(parentOpts, isBulk);
 
       if (!idStrs.length && !isBulk) {
         error(
@@ -99,7 +99,7 @@ export function registerTitleCommand(program: Command): void {
         return;
       }
 
-      if (isBulk && !parentOpts.apply && !options.dryRun) {
+      if (isBulk && isDryRun) {
         info('  Dry-run: pass --apply to write titles to WordPress.\n');
       }
 
