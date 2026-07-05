@@ -64,6 +64,7 @@ function makeFakeBackend(overrides: Partial<WpBackend> = {}): WpBackend {
       throw new Error('pruneOrphans not stubbed');
     },
     findReferences: async () => [],
+    findUnattached: async () => [],
     ...overrides,
   };
 }

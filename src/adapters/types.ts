@@ -26,7 +26,8 @@ export type Capability =
   | 'regenerate-thumbnails'
   | 'prune-orphans'
   | 'fast-references' // featured images + Gutenberg block IDs (REST-cheap)
-  | 'full-references'; // content URL parsing + post meta scanning (WP-CLI-fast)
+  | 'full-references' // content URL parsing + post meta scanning (WP-CLI-fast)
+  | 'find-unattached'; // post_parent=0 attachments with zero references anywhere (WP-CLI only)
 
 /**
  * A media library item, normalized across backends.
@@ -183,6 +184,8 @@ export interface WpBackend {
 
   // Reference finding
   findReferences(id: number, scope: ReferenceScope): Promise<Reference[]>;
+  /** Attachments with post_parent=0 and zero references anywhere (WP-CLI only). */
+  findUnattached(): Promise<number[]>;
 }
 
 /**
