@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { OPTIMIZABLE_MIME_TYPES, isOptimizableMime } from '../../src/cli/commands/optimize.ts';
 import {
   AnimatedImageError,
   UnsupportedFormatError,
@@ -68,6 +69,22 @@ describe('optimizeImage — format guards', () => {
     await expect(
       optimizeImage(svg, 'image/svg+xml', { toFormat: 'svg' as never }),
     ).rejects.toBeInstanceOf(UnsupportedFormatError);
+  });
+});
+
+describe('OPTIMIZABLE_MIME_TYPES — bulk-path whitelist', () => {
+  test('excludes SVG and other non-raster types', () => {
+    expect(isOptimizableMime('image/svg+xml')).toBe(false);
+    expect(isOptimizableMime('image/x-icon')).toBe(false);
+    expect(isOptimizableMime('application/pdf')).toBe(false);
+    expect(isOptimizableMime(undefined)).toBe(false);
+  });
+
+  test('includes all supported raster types', () => {
+    for (const mime of ['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif']) {
+      expect(OPTIMIZABLE_MIME_TYPES.has(mime)).toBe(true);
+      expect(isOptimizableMime(mime)).toBe(true);
+    }
   });
 });
 

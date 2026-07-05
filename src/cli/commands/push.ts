@@ -11,6 +11,7 @@ import { basename } from 'node:path';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import { CapabilityUnavailableError, type UpdateMetadata } from '../../adapters/types.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -18,14 +19,16 @@ export function registerPushCommand(program: Command): void {
   program
     .command('push <path>')
     .description('Upload a local file to the media library')
-    .option('--replace <id>', 'replace this attachment instead of creating a new one', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--replace <id>',
+      'replace this attachment instead of creating a new one',
+      parseIntOption('--replace'),
     )
     .option('--title <title>', 'attachment title')
     .option('--alt <text>', 'alt text')
     .option('--caption <text>', 'caption')
     .option('--description <text>', 'description')
-    .option('--post <id>', 'attach to this post', (v) => Number.parseInt(v, 10))
+    .option('--post <id>', 'attach to this post', parseIntOption('--post'))
     .action(async (filePath: string, options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();

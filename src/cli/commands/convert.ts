@@ -16,10 +16,16 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
-import { optimizeImage } from '../../engine/image/optimize.ts';
+import {
+  AnimatedImageError,
+  UnsupportedFormatError,
+  optimizeImage,
+} from '../../engine/image/optimize.ts';
 import type { ImageFormat } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 const VALID_FORMATS = new Set(['webp', 'avif', 'jpeg', 'png']);
@@ -29,7 +35,7 @@ export function registerConvertCommand(program: Command): void {
     .command('convert <ids...>')
     .description('Convert attachments to a different format (webp, avif, jpeg, png)')
     .requiredOption('--to <format>', 'target format: webp, avif, jpeg, or png')
-    .option('--quality <n>', 'quality value 0-100 (codec-specific)', (v) => Number.parseInt(v, 10))
+    .option('--quality <n>', 'quality value 0-100 (codec-specific)', parseIntOption('--quality'))
     .option('--keep-original', 'upload as a new attachment instead of replacing')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
@@ -40,11 +46,7 @@ export function registerConvertCommand(program: Command): void {
         process.exit(2);
       }
 
-      const ids = idStrs.map((s) => Number.parseInt(s, 10));
-      if (ids.some(Number.isNaN)) {
-        error('All arguments must be valid attachment IDs (integers).');
-        process.exit(2);
-      }
+      const ids = parseAttachmentIds(idStrs);
 
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
@@ -83,8 +85,10 @@ export function registerConvertCommand(program: Command): void {
         from: string;
         to: string;
         savedBytes: number;
+        rewrittenUrls?: number;
       }> = [];
       let failures = 0;
+      let skipped = 0;
 
       for (const id of ids) {
         const startTime = Date.now();
@@ -139,15 +143,27 @@ export function registerConvertCommand(program: Command): void {
           const formatChanged = targetMime !== item.mimeType;
           const newExtension = formatChanged ? mimeToExtension(targetMime) : undefined;
 
+          let rewrittenUrls: number | undefined;
+
           if (!options.keepOriginal) {
             const replaceAdapter = resolver.tryResolve('replace-in-place');
             if (replaceAdapter) {
               try {
-                await replaceAdapter.replaceInPlace(id, result.bytes, {
+                const replaced = await replaceAdapter.replaceInPlace(id, result.bytes, {
                   newMimeType: formatChanged ? targetMime : undefined,
                   newExtension,
                 });
                 resultWpId = id;
+
+                const rewrite = replaced.formatChangeRewrite;
+                if (rewrite) {
+                  rewrittenUrls = rewrite.rewrittenUrls;
+                  if (rewrite.warning) {
+                    warn(`    ⚠ ${rewrite.warning}`);
+                  } else if (rewrite.rewrittenUrls > 0) {
+                    info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
+                  }
+                }
               } catch (err) {
                 if (err instanceof CapabilityUnavailableError && !parentOpts.strict) {
                   // Fall through.
@@ -216,8 +232,16 @@ export function registerConvertCommand(program: Command): void {
             from: item.mimeType,
             to: `image/${targetFormat}`,
             savedBytes: saved,
+            rewrittenUrls,
           });
         } catch (err) {
+          // Animated-source and unsupported-format cases are deliberate skips,
+          // not failures — never flatten an animation or rasterize a vector.
+          if (err instanceof AnimatedImageError || err instanceof UnsupportedFormatError) {
+            warn(`    ↳ Skipped #${id}: ${err.message}`);
+            skipped++;
+            continue;
+          }
           error(`    ✗ #${id}: ${err instanceof Error ? err.message : String(err)}`);
           failures++;
         }
@@ -232,11 +256,11 @@ export function registerConvertCommand(program: Command): void {
       db.close();
 
       if (parentOpts.json) {
-        printJson({ converted: results.length, failures, results });
+        printJson({ converted: results.length, failures, skipped, results });
       } else if (results.length > 0) {
         const totalSaved = results.reduce((sum, r) => sum + r.savedBytes, 0);
         info(
-          `\n  Done: ${results.length} converted, ${failures} failed. Saved ${formatBytes(totalSaved)}.`,
+          `\n  Done: ${results.length} converted, ${failures} failed, ${skipped} skipped. Saved ${formatBytes(totalSaved)}.`,
         );
       }
 

@@ -89,13 +89,16 @@ export async function removeBackground(
   const ort = (await import('onnxruntime-node')) as import('./onnx-types.ts').OnnxRuntime;
 
   // 3. Load and prepare the input image.
+  //    EXIF-oriented photos (e.g. portrait iPhone JPEGs stored landscape with
+  //    orientation 6) must be normalized before we compute dimensions or take
+  //    raw pixels, otherwise the mask ends up rotated relative to the output.
   const inputImage = sharp(imageBytes);
   const metadata = await inputImage.metadata();
-  const origWidth = metadata.width ?? 0;
-  const origHeight = metadata.height ?? 0;
+  const { width: origWidth, height: origHeight } = getOrientedDimensions(metadata);
 
   // Resize to model input size and extract raw RGB pixels.
   const resizedBuffer = await sharp(imageBytes)
+    .rotate()
     .resize(modelInputSize, modelInputSize, { fit: 'fill' })
     .removeAlpha()
     .raw()
@@ -182,7 +185,7 @@ export async function removeBackground(
     .toBuffer();
 
   // 8. Composite: apply mask as alpha channel to the original image.
-  const outputPipeline = sharp(imageBytes).ensureAlpha();
+  const outputPipeline = sharp(imageBytes).rotate().ensureAlpha();
 
   // Extract raw RGBA pixels.
   const rgbaBuffer = await outputPipeline.raw().toBuffer();
@@ -221,6 +224,23 @@ export async function removeBackground(
 }
 
 // -- Helpers ------------------------------------------------------------------
+
+/**
+ * EXIF orientations 5-8 rotate the image 90°/270°, swapping width and height
+ * once `.rotate()` normalizes pixels; 2-4 are flips/180° and don't swap.
+ */
+export function getOrientedDimensions(metadata: {
+  width?: number;
+  height?: number;
+  orientation?: number;
+}): { width: number; height: number } {
+  const orientation = metadata.orientation ?? 1;
+  const swapDims = orientation >= 5;
+  return {
+    width: swapDims ? (metadata.height ?? 0) : (metadata.width ?? 0),
+    height: swapDims ? (metadata.width ?? 0) : (metadata.height ?? 0),
+  };
+}
 
 export function parseHexColor(hex: string): { r: number; g: number; b: number } {
   const stripped = hex.replace(/^#/, '');

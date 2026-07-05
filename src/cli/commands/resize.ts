@@ -16,18 +16,24 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
-import { optimizeImage } from '../../engine/image/optimize.ts';
+import {
+  AnimatedImageError,
+  UnsupportedFormatError,
+  optimizeImage,
+} from '../../engine/image/optimize.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 export function registerResizeCommand(program: Command): void {
   program
     .command('resize <ids...>')
     .description('Resize attachments, preserving aspect ratio')
-    .option('--max-width <n>', 'maximum width in pixels', (v) => Number.parseInt(v, 10))
-    .option('--max-height <n>', 'maximum height in pixels', (v) => Number.parseInt(v, 10))
-    .option('--quality <n>', 'quality value 0-100', (v) => Number.parseInt(v, 10))
+    .option('--max-width <n>', 'maximum width in pixels', parseIntOption('--max-width'))
+    .option('--max-height <n>', 'maximum height in pixels', parseIntOption('--max-height'))
+    .option('--quality <n>', 'quality value 0-100', parseIntOption('--quality'))
     .option('--keep-original', 'upload as a new attachment instead of replacing')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
@@ -37,11 +43,7 @@ export function registerResizeCommand(program: Command): void {
         process.exit(2);
       }
 
-      const ids = idStrs.map((s) => Number.parseInt(s, 10));
-      if (ids.some(Number.isNaN)) {
-        error('All arguments must be valid attachment IDs (integers).');
-        process.exit(2);
-      }
+      const ids = parseAttachmentIds(idStrs);
 
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
@@ -83,6 +85,7 @@ export function registerResizeCommand(program: Command): void {
         savedBytes: number;
       }> = [];
       let failures = 0;
+      let skipped = 0;
 
       for (const id of ids) {
         const startTime = Date.now();
@@ -228,6 +231,13 @@ export function registerResizeCommand(program: Command): void {
             savedBytes: saved,
           });
         } catch (err) {
+          // Animated-source and unsupported-format cases are deliberate skips,
+          // not failures — never flatten an animation or rasterize a vector.
+          if (err instanceof AnimatedImageError || err instanceof UnsupportedFormatError) {
+            warn(`    ↳ Skipped #${id}: ${err.message}`);
+            skipped++;
+            continue;
+          }
           error(`    ✗ #${id}: ${err instanceof Error ? err.message : String(err)}`);
           failures++;
         }
@@ -242,9 +252,9 @@ export function registerResizeCommand(program: Command): void {
       db.close();
 
       if (parentOpts.json) {
-        printJson({ resized: results.length, failures, results });
+        printJson({ resized: results.length, failures, skipped, results });
       } else if (results.length > 0) {
-        info(`\n  Done: ${results.length} resized, ${failures} failed.`);
+        info(`\n  Done: ${results.length} resized, ${failures} failed, ${skipped} skipped.`);
       }
 
       if (failures > 0) process.exit(1);

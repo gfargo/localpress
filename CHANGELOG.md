@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`watch --optimize` no longer aborts on SVG/unsupported files** (#94 follow-up)
+  — unsupported formats are now uploaded as-is with a warning instead of erroring
+  out, matching `import --optimize`'s existing behavior. The bulk-path MIME
+  whitelist (`OPTIMIZABLE_MIME_TYPES`) is now exported and directly unit-tested.
+- **`resize`, `convert`, and `watch` now report animation-preservation skips
+  consistently with `optimize`** (#93 follow-up). Animated sources refused
+  because the target format can't hold animation are counted/emitted as
+  `skipped` instead of `failures`/`error`, matching `optimize`'s handling.
+### Fixed — data safety
+- **`undo` verifies a binary snapshot's blob before restoring it** (#92).
+  `SnapshotStore.readBlob` now checks the blob file exists, that its size
+  matches the recorded `blob_size`, and (when `beforeHash` was captured) that
+  its SHA-256 matches, refusing with a clear error instead of restoring
+  missing/truncated/corrupted bytes over a live attachment. Snapshots written
+  by pre-2.1.0 versions (before the fire-and-forget write bug was fixed) may
+  now correctly fail this check if their blob was never fully flushed to disk.
+### Fixed
+- **`optimize` idempotency is correct in both directions** (#97): re-running
+  `optimize` after a successful replace-in-place now compares the live file's
+  hash against the *previous run's output* (not its original source hash), so
+  a second `--all --apply` skips already-optimized files instead of
+  re-compressing and double-counting `stats` savings. `undo` now marks the
+  reversed `processing_history` row so a restored attachment is eligible for
+  re-optimizing again (previously permanently "skipped"), and stats no longer
+  count savings that were later undone. Changed options (`--to`, `--quality`,
+  `--target-size`, etc.) are now compared too, so a follow-up run with
+  different settings always re-processes instead of being silently skipped.
+  Added `optimize --force` to bypass the skip explicitly, and a distinct
+  `'skipped'` processing status (the "result would be larger" case is no
+  longer recorded as `'success'`).
+- **`sites run` forwards `--apply`/`--dry-run`/`--strict` to child processes**
+  (#104). Previously these parent-level flags were silently dropped, so bulk
+  ops ran as no-op dry-runs while the parent reported success.
+- **`sites run` tokenizer no longer drops empty quoted arguments or treats
+  mid-word apostrophes as quotes** (#104) — `--alt-text ""` is preserved and
+  `don't-stop` is no longer mangled into `dont-stop`.
+- **`sites run` children get a 30-minute default timeout** (#104), separate
+  from the 5-minute MCP-tool-call default, and are now escalated to `SIGKILL`
+  if they don't exit within a grace period after `SIGTERM`. Configurable via
+  `--timeout <ms>`.
+- **`update` verifies the downloaded tarball's SHA256 checksum before
+  extracting** (#121) — the release workflow now publishes a `checksums.txt`
+  asset; `update` downloads it alongside the archive and hard-fails if the
+  digest doesn't match or `checksums.txt` is missing from the release. Any
+  non-`https:` download URL is rejected outright.
+- **`update`'s install swap is now atomic** (#121) — the new install is staged
+  in a sibling directory and swapped into place with two `rename()` calls
+  (`targetDir → backup`, `staging → targetDir`) instead of deleting the old
+  install and copying over it, so a crash mid-update can't leave a broken
+  install. On failure after the first rename, the backup is renamed back.
+- **`a11y` no longer reports a false "No accessibility issues found" success**
+  when the scan failed or was truncated (#103). HTTP/network errors during
+  pagination or `--id` lookups are now recorded and surfaced (human output +
+  `errors: []` in `--json`), and the command exits with `ExitCode.NetworkError`
+  instead of `0`. Hitting `--limit` before all pages are checked is now
+  reported as an incomplete scan rather than silently treated as exhaustive.
+  `--json` output adds `errors` and `complete` fields (additive).
+
 ## [2.1.0] - 2026-07-05
 
 Trust & correctness release — hardens the safety primitives (dry-run, undo,
