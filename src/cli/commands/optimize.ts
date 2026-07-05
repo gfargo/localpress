@@ -36,7 +36,7 @@ import { getCachedClassification } from './classify.ts';
 
 /** Source MIME types the optimize pipeline can safely handle. Anything else
  * (e.g. image/svg+xml) is skipped so it can't be rasterized in place. */
-const OPTIMIZABLE_MIME_TYPES = new Set([
+export const OPTIMIZABLE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/jpg',
   'image/png',
@@ -44,6 +44,11 @@ const OPTIMIZABLE_MIME_TYPES = new Set([
   'image/avif',
   'image/gif',
 ]);
+
+/** Whether a source MIME type is safe to run through the optimize pipeline. */
+export function isOptimizableMime(mimeType: string | null | undefined): boolean {
+  return OPTIMIZABLE_MIME_TYPES.has(mimeType ?? '');
+}
 
 interface OptimizeResultRecord {
   id: number;

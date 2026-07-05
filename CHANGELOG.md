@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`watch --optimize` no longer aborts on SVG/unsupported files** (#94 follow-up)
+  — unsupported formats are now uploaded as-is with a warning instead of erroring
+  out, matching `import --optimize`'s existing behavior. The bulk-path MIME
+  whitelist (`OPTIMIZABLE_MIME_TYPES`) is now exported and directly unit-tested.
+
 ## [2.1.0] - 2026-07-05
 
 Trust & correctness release — hardens the safety primitives (dry-run, undo,
