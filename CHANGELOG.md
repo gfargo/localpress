@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`optimize` idempotency is correct in both directions** (#97): re-running
+  `optimize` after a successful replace-in-place now compares the live file's
+  hash against the *previous run's output* (not its original source hash), so
+  a second `--all --apply` skips already-optimized files instead of
+  re-compressing and double-counting `stats` savings. `undo` now marks the
+  reversed `processing_history` row so a restored attachment is eligible for
+  re-optimizing again (previously permanently "skipped"), and stats no longer
+  count savings that were later undone. Changed options (`--to`, `--quality`,
+  `--target-size`, etc.) are now compared too, so a follow-up run with
+  different settings always re-processes instead of being silently skipped.
+  Added `optimize --force` to bypass the skip explicitly, and a distinct
+  `'skipped'` processing status (the "result would be larger" case is no
+  longer recorded as `'success'`).
+
 ## [2.1.0] - 2026-07-05
 
 Trust & correctness release — hardens the safety primitives (dry-run, undo,
