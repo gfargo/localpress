@@ -151,6 +151,8 @@ These were debated and resolved during planning. **Don't relitigate without stro
 
 **Command registration:** each command file exports `registerXxxCommand(program: Command)`, called from `src/cli/index.ts`.
 
+**No AI attribution in pushed artifacts:** never add "Generated with Claude Code" / "Co-Authored-By" footers, session links, or any AI-tool attribution to PR titles/bodies, commit messages, code comments, or anything else committed or pushed. Write them as a human maintainer would. (Some tooling appends these by default — strip them.)
+
 ---
 
 ## Things that are tempting but wrong
