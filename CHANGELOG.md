@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`watch --delete` no longer fails on every removal** (#102). It called
+  `delete()` with no options, which always hit the same `rest_trash_not_supported`
+  501 that stock WordPress (no `MEDIA_TRASH`) returns for non-force deletes.
+  `watch --delete` now deliberately force-deletes (documented in `--help` and
+  the module docblock) and captures a time-machine snapshot first, so
+  `localpress undo --apply` can restore the file.
+- Added integration test coverage for a non-force `delete()` call against a
+  stock WordPress install, asserting the actionable `MEDIA_TRASH`/`--force`
+  error message instead of a raw 501.
 - **`watch --optimize` no longer aborts on SVG/unsupported files** (#94 follow-up)
   — unsupported formats are now uploaded as-is with a warning instead of erroring
   out, matching `import --optimize`'s existing behavior. The bulk-path MIME

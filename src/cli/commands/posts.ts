@@ -97,6 +97,11 @@ const typeEndpointCache = new Map<string, string>();
  * show_in_rest is true — rest_base does not always equal the type slug
  * (e.g. `portfolio_project` may register with `rest_base: 'portfolio'`).
  * Built-in types ('post', 'page') are hardcoded to skip the lookup.
+ *
+ * `/wp/v2/types/<slug>` is keyed by the registered type slug, not rest_base,
+ * so a caller who already knows (and passes) the rest_base gets a 404 there.
+ * Fall back to scanning the `/wp/v2/types` collection for a matching
+ * rest_base before giving up — this lets `--type` accept either form.
  */
 export async function resolveTypeEndpoint(site: SiteConfig, type: string): Promise<string> {
   if (type === 'post') return '/posts';
@@ -110,6 +115,11 @@ export async function resolveTypeEndpoint(site: SiteConfig, type: string): Promi
   const res = await fetch(url, { headers: { Authorization: auth } });
 
   if (res.status === 404) {
+    const endpoint = await resolveEndpointByRestBase(site, type, auth);
+    if (endpoint) {
+      typeEndpointCache.set(type, endpoint);
+      return endpoint;
+    }
     throw new PostTypeError(
       `Post type "${type}" was not found on this site. Check the slug with \`localpress posts list --type <slug>\` or your CPT registration.`,
       ExitCode.InvalidUsage,
@@ -133,6 +143,27 @@ export async function resolveTypeEndpoint(site: SiteConfig, type: string): Promi
   const endpoint = `/${data.rest_base || type}`;
   typeEndpointCache.set(type, endpoint);
   return endpoint;
+}
+
+/**
+ * Look up `/wp/v2/types` for a registered type whose rest_base matches the
+ * given slug, so `--type <rest_base>` works even when it differs from the
+ * actual post type name.
+ */
+async function resolveEndpointByRestBase(
+  site: SiteConfig,
+  type: string,
+  auth: string,
+): Promise<string | null> {
+  const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2/types`;
+  const res = await fetch(url, { headers: { Authorization: auth } });
+  if (!res.ok) return null;
+
+  const types = (await res.json()) as Record<string, { rest_base?: string }>;
+  for (const info of Object.values(types)) {
+    if (info.rest_base === type) return `/${type}`;
+  }
+  return null;
 }
 
 export function registerPostsCommand(program: Command): void {
