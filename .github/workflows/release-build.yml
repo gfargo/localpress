@@ -1,0 +1,175 @@
+name: Release Build
+
+# Reusable build+publish pipeline. Given a tag (e.g. v2.2.0), it:
+#   1. re-verifies the tagged commit (typecheck + unit tests),
+#   2. builds the 5-platform binaries/tarballs,
+#   3. ensures a GitHub Release exists for the tag and uploads the archives
+#      + a checksums.txt (so `localpress update` can verify downloads),
+#   4. updates Formula/localpress.rb with the fresh SHA256s and pushes it to
+#      both this repo's main branch and the shared gfargo/homebrew-tap.
+#
+# Two entry points call this:
+#   - release-please.yml  → automated, after a Release PR is merged
+#   - release.yml         → manual fallback, when a v* tag is pushed by hand
+#
+# Prerequisites:
+#   - HOMEBREW_TAP_TOKEN secret: a GitHub PAT with `repo` scope on
+#     the shared gfargo Homebrew tap (gfargo/homebrew-tap).
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag to build and publish (e.g. v2.2.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Unit tests
+        run: bun test test/unit/
+
+      - name: Derive version
+        id: version
+        env:
+          TAG: ${{ inputs.tag }}
+        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build all targets
+        run: bun run build:all
+
+      - name: Compute SHA256 checksums
+        id: checksums
+        run: |
+          echo "darwin_arm64=$(sha256sum dist/localpress-darwin-arm64.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "darwin_x64=$(sha256sum dist/localpress-darwin-x64.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux_arm64=$(sha256sum dist/localpress-linux-arm64.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux_x64=$(sha256sum dist/localpress-linux-x64.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+          # sha256sum-compatible checksums.txt covering all published archives,
+          # published as its own release asset so `localpress update` can
+          # verify the tarball it downloads before extracting it.
+          cd dist
+          sha256sum \
+            localpress-darwin-arm64.tar.gz \
+            localpress-darwin-x64.tar.gz \
+            localpress-linux-arm64.tar.gz \
+            localpress-linux-x64.tar.gz \
+            localpress-windows-x64.zip \
+            > checksums.txt
+          cd ..
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          # release-please (automated path) already created the Release; the
+          # manual-tag path has not, so create it with generated notes if absent.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --generate-notes --latest
+          fi
+          gh release upload "$TAG" \
+            dist/localpress-darwin-arm64.tar.gz \
+            dist/localpress-darwin-x64.tar.gz \
+            dist/localpress-linux-arm64.tar.gz \
+            dist/localpress-linux-x64.tar.gz \
+            dist/localpress-windows-x64.zip \
+            dist/checksums.txt \
+            --clobber
+
+      - name: Update Homebrew formula
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256_DARWIN_ARM64: ${{ steps.checksums.outputs.darwin_arm64 }}
+          SHA256_DARWIN_X64: ${{ steps.checksums.outputs.darwin_x64 }}
+          SHA256_LINUX_ARM64: ${{ steps.checksums.outputs.linux_arm64 }}
+          SHA256_LINUX_X64: ${{ steps.checksums.outputs.linux_x64 }}
+        run: |
+          # The formula has exactly 4 sha256 lines in order:
+          # darwin-arm64, darwin-x64, linux-arm64, linux-x64.
+          python3 -c "
+          import os
+          v = os.environ['VERSION']
+          shas = [
+              os.environ['SHA256_DARWIN_ARM64'],
+              os.environ['SHA256_DARWIN_X64'],
+              os.environ['SHA256_LINUX_ARM64'],
+              os.environ['SHA256_LINUX_X64'],
+          ]
+          with open('Formula/localpress.rb', 'r') as f:
+              lines = f.readlines()
+          idx = 0
+          out = []
+          for line in lines:
+              stripped = line.strip()
+              if stripped.startswith('sha256 '):
+                  if idx < len(shas):
+                      indent = line[:len(line) - len(line.lstrip())]
+                      out.append(indent + 'sha256 \"' + shas[idx] + '\"\n')
+                      idx += 1
+                  else:
+                      out.append(line)
+              elif stripped.startswith('version '):
+                  indent = line[:len(line) - len(line.lstrip())]
+                  out.append(indent + 'version \"' + v + '\"\n')
+              else:
+                  out.append(line)
+          with open('Formula/localpress.rb', 'w') as f:
+              f.writelines(out)
+          "
+
+      - name: Commit updated formula
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/localpress.rb
+          # `[skip ci]` keeps this formula-only commit from re-triggering the
+          # release-please workflow on the push to main below.
+          git diff --staged --quiet || git commit -m "chore: update Homebrew formula to v${VERSION} [skip ci]"
+          # Rebase onto current main before pushing — this job checks out at the
+          # tag commit, which may lag behind main if new commits landed after
+          # the tag (e.g. a follow-up patch or feature commit).
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
+
+      - name: Push formula to homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set — skipping tap push. Add it to repo secrets to enable."
+            exit 0
+          fi
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/gfargo/homebrew-tap.git /tmp/tap
+          cp Formula/localpress.rb /tmp/tap/Formula/localpress.rb
+          cd /tmp/tap
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/localpress.rb
+          git diff --staged --quiet || git commit -m "chore: update formula to v${VERSION}"
+          git push origin main
