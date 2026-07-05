@@ -32,6 +32,7 @@ import {
 } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson } from '../utils/output.ts';
 import { resolveDryRun } from '../utils/run-mode.ts';
 
@@ -64,11 +65,7 @@ export function registerRenameCommand(program: Command): void {
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
       const dryRun = resolveDryRun(parentOpts, false);
-      const ids = idStrs.map((s) => Number.parseInt(s, 10));
-      if (ids.some(Number.isNaN)) {
-        error('All arguments must be valid attachment IDs (integers).');
-        process.exit(2);
-      }
+      const ids = parseAttachmentIds(idStrs);
 
       if (!options.smart && !options.to) {
         error(

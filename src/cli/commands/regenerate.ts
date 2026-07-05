@@ -56,7 +56,9 @@ export function registerRegenerateCommand(program: Command): void {
       let ids: number[];
 
       if (hasExplicitIds) {
-        ids = idStrs.map((s) => Number.parseInt(s, 10)).filter((n) => !Number.isNaN(n));
+        ids = [
+          ...new Set(idStrs.map((s) => Number.parseInt(s, 10)).filter((n) => !Number.isNaN(n))),
+        ];
         if (ids.length === 0) {
           error('No valid attachment IDs provided.');
           process.exit(2);

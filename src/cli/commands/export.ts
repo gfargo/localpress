@@ -16,6 +16,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { ExitCode } from '../../types.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 /** ZIP32 (classic ZIP) format limits — 32-bit size/offset fields, 16-bit entry count. */
@@ -84,11 +85,7 @@ export function registerExportCommand(program: Command): void {
 
       if (idStrs.length > 0) {
         // Explicit IDs provided.
-        const ids = idStrs.map((s) => Number.parseInt(s, 10));
-        if (ids.some(Number.isNaN)) {
-          error('All arguments must be valid attachment IDs (integers).');
-          process.exit(2);
-        }
+        const ids = parseAttachmentIds(idStrs);
 
         const adapter = resolver.resolve('get');
         for (const id of ids) {
