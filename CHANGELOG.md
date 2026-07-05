@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`resize`, `convert`, and `watch` now report animation-preservation skips
+  consistently with `optimize`** (#93 follow-up). Animated sources refused
+  because the target format can't hold animation are counted/emitted as
+  `skipped` instead of `failures`/`error`, matching `optimize`'s handling.
 ### Fixed — data safety
 - **`undo` verifies a binary snapshot's blob before restoring it** (#92).
   `SnapshotStore.readBlob` now checks the blob file exists, that its size
