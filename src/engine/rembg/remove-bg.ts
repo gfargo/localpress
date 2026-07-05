@@ -222,8 +222,18 @@ export async function removeBackground(
 
 // -- Helpers ------------------------------------------------------------------
 
-function parseHexColor(hex: string): { r: number; g: number; b: number } {
-  const clean = hex.replace('#', '');
+export function parseHexColor(hex: string): { r: number; g: number; b: number } {
+  const stripped = hex.replace(/^#/, '');
+  if (!/^[0-9a-f]{3}$|^[0-9a-f]{6}$/i.test(stripped)) {
+    throw new Error(`Invalid hex color "${hex}". Use 3 or 6 hex digits, e.g. #fff or #ffffff.`);
+  }
+  const clean =
+    stripped.length === 3
+      ? stripped
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : stripped;
   return {
     r: Number.parseInt(clean.slice(0, 2), 16),
     g: Number.parseInt(clean.slice(2, 4), 16),

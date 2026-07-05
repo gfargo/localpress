@@ -23,6 +23,7 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
+import { formatToMime, mimeToExtension } from '../../engine/image/mime.ts';
 import {
   AnimatedImageError,
   UnsupportedFormatError,
@@ -144,6 +145,11 @@ export function registerOptimizeCommand(program: Command): void {
             'Example: localpress optimize 123 124 125\n' +
             'Example: localpress optimize --unoptimized --apply',
         );
+        process.exit(2);
+      }
+
+      if (options.mode !== undefined && options.mode !== 'lossy' && options.mode !== 'lossless') {
+        error(`Invalid --mode "${options.mode}". Must be "lossy" or "lossless".`);
         process.exit(2);
       }
 
@@ -585,9 +591,13 @@ export function registerOptimizeCommand(program: Command): void {
           }
 
           const qualityNote = result.finalQuality !== undefined ? `, q=${result.finalQuality}` : '';
+          const changeNote =
+            result.savedBytes >= 0
+              ? `${(result.savedRatio * 100).toFixed(1)}% reduction`
+              : `grew by ${formatBytes(-result.savedBytes)} (+${Math.abs(result.savedRatio * 100).toFixed(1)}%)`;
           info(
             `    ✓ ${formatBytes(result.before.sizeBytes)} → ${formatBytes(result.after.sizeBytes)} ` +
-              `(${(result.savedRatio * 100).toFixed(1)}% reduction, ${durationMs}ms${qualityNote})`,
+              `(${changeNote}, ${durationMs}ms${qualityNote})`,
           );
           if (result.appliedSteps.length > 0) {
             info(`      Steps: ${result.appliedSteps.join(' → ')}`);
@@ -709,28 +719,6 @@ export function registerOptimizeCommand(program: Command): void {
 }
 
 // -- Helpers ------------------------------------------------------------------
-
-function mimeToExtension(mimeType: string): string | undefined {
-  const map: Record<string, string> = {
-    'image/webp': '.webp',
-    'image/avif': '.avif',
-    'image/jpeg': '.jpg',
-    'image/png': '.png',
-    'image/gif': '.gif',
-  };
-  return map[mimeType];
-}
-
-function formatToMime(format: string): string {
-  const map: Record<string, string> = {
-    webp: 'image/webp',
-    avif: 'image/avif',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    gif: 'image/gif',
-  };
-  return map[format] ?? `image/${format}`;
-}
 
 function recordSuccess(
   db: SiteDb,

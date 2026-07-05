@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { cleanCaption } from '../../src/engine/caption/ollama.ts';
+import { cleanCaption, cleanClassify } from '../../src/engine/caption/ollama.ts';
 
 describe('cleanCaption', () => {
   test('passes through already-clean alt text unchanged', () => {
@@ -87,5 +87,27 @@ Overall, the image provides a visual representation of the commands and their ou
     expect(out).not.toContain('Overall');
     expect(out.startsWith('A screenshot of a terminal window')).toBe(true);
     expect(out.length).toBeLessThan(250);
+  });
+});
+
+describe('cleanClassify', () => {
+  test('matches a plain single-word label', () => {
+    expect(cleanClassify('screenshot')).toBe('screenshot');
+    expect(cleanClassify('Diagram')).toBe('diagram');
+  });
+
+  test('does not match a label mentioned only in a negation', () => {
+    // "screenshot" appears in the text, but only as the label being denied —
+    // "photograph" (matched via the `photo` label) is the actual answer and
+    // comes first in the sentence.
+    expect(cleanClassify('This is a photograph, not a screenshot.')).toBe('photo');
+  });
+
+  test('picks the earliest mentioned label when several appear', () => {
+    expect(cleanClassify('Not a diagram — this looks like an illustration.')).toBe('diagram');
+  });
+
+  test('falls back to the first word when no label matches', () => {
+    expect(cleanClassify('unrecognized output here')).toBe('unrecognized');
   });
 });

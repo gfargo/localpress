@@ -10,7 +10,7 @@
 import { basename } from 'node:path';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
-import { CapabilityUnavailableError } from '../../adapters/types.ts';
+import { CapabilityUnavailableError, type UpdateMetadata } from '../../adapters/types.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -48,6 +48,24 @@ export function registerPushCommand(program: Command): void {
         if (replaceAdapter) {
           try {
             const result = await replaceAdapter.replaceInPlace(options.replace, fileBuffer);
+
+            const metaUpdate: UpdateMetadata = {};
+            if (options.title !== undefined) metaUpdate.title = options.title;
+            if (options.alt !== undefined) metaUpdate.altText = options.alt;
+            if (options.caption !== undefined) metaUpdate.caption = options.caption;
+            if (options.description !== undefined) metaUpdate.description = options.description;
+
+            if (Object.keys(metaUpdate).length > 0) {
+              try {
+                const metaAdapter = resolver.resolve('update-meta');
+                await metaAdapter.updateMetadata(options.replace, metaUpdate);
+              } catch (metaErr) {
+                warn(
+                  `File replaced, but metadata update failed: ${metaErr instanceof Error ? metaErr.message : String(metaErr)}`,
+                );
+              }
+            }
+
             if (parentOpts.json) {
               printJson({ action: 'replaced', attachment: result });
             } else {

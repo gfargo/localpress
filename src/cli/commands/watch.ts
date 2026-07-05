@@ -17,11 +17,12 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
-import { basename, relative, resolve } from 'node:path';
+import { basename, extname, relative, resolve } from 'node:path';
 import { watch } from 'chokidar';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { CapabilityUnavailableError } from '../../adapters/types.ts';
+import { formatToMime, mimeToExtension } from '../../engine/image/mime.ts';
 import { optimizeImage } from '../../engine/image/optimize.ts';
 import type { ImageFormat } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
@@ -137,11 +138,13 @@ export function registerWatchCommand(program: Command): void {
             return;
           }
 
-          const filename = basename(filePath);
-          const mime = mimeFromPath(filePath);
+          let filename = basename(filePath);
+          const sourceMime = mimeFromPath(filePath);
+          let mime = sourceMime;
 
           // Optimize if requested.
           let optimizeInfo = '';
+          let formatChanged = false;
           if (options.optimize || options.to) {
             const optimizeOpts = {
               quality: options.quality,
@@ -150,10 +153,21 @@ export function registerWatchCommand(program: Command): void {
               maxHeight: options.maxHeight,
             };
 
-            const result = await optimizeImage(fileBuffer, mime, optimizeOpts);
+            const result = await optimizeImage(fileBuffer, sourceMime, optimizeOpts);
             const savedPct = (result.savedRatio * 100).toFixed(1);
             optimizeInfo = ` (${formatBytes(originalSize)} → ${formatBytes(result.after.sizeBytes)}, -${savedPct}%)`;
             fileBuffer = Buffer.from(result.bytes);
+
+            // Rewrite the filename/mime to match the converted format so
+            // uploaded/replaced attachments don't carry the original extension
+            // under different bytes (e.g. a webp file named `photo.jpg`).
+            const newMime = formatToMime(result.after.format);
+            if (newMime !== sourceMime) {
+              formatChanged = true;
+              mime = newMime;
+              const newExt = mimeToExtension(newMime) ?? extname(filename);
+              filename = filename.replace(/\.[^.]+$/, newExt);
+            }
           }
 
           // Determine if this is a replace or a new upload.
@@ -166,6 +180,9 @@ export function registerWatchCommand(program: Command): void {
                 const result = await replaceAdapter.replaceInPlace(
                   existingMapping.wpId,
                   fileBuffer,
+                  formatChanged
+                    ? { newMimeType: mime, newExtension: extname(filename) }
+                    : undefined,
                 );
                 db.upsertWatchMapping(site.name, watchDir, relPath, hash, result.id);
 
