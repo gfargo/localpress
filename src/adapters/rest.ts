@@ -238,6 +238,14 @@ export class RestAdapter implements WpBackend {
     throw new CapabilityUnavailableError('prune-orphans', 'rest');
   }
 
+  async findUnattached(): Promise<number[]> {
+    throw new CapabilityUnavailableError(
+      'find-unattached',
+      'rest',
+      'Finding truly unattached media (post_parent=0 with zero references) requires the WP-CLI adapter — REST has no cheap way to query post_parent across all attachments plus scan every post for references.',
+    );
+  }
+
   // Reference finding ---------------------------------------------------------
 
   async findReferences(id: number, scope: ReferenceScope): Promise<Reference[]> {

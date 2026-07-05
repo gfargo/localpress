@@ -33,6 +33,7 @@ const WP_CLI_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   'prune-orphans',
   'fast-references',
   'full-references',
+  'find-unattached',
 ]);
 
 export class WpCliAdapter implements WpBackend {
@@ -456,6 +457,30 @@ export class WpCliAdapter implements WpBackend {
     }
 
     return { orphanFiles, missingFiles, reclaimableBytes };
+  }
+
+  async findUnattached(): Promise<number[]> {
+    // Candidates: attachments with no parent post at all.
+    const candidateOutput = await this.wp(
+      `db query "SELECT ID FROM wp_posts WHERE post_type='attachment' AND post_parent=0" --skip-column-names`,
+    );
+    const candidateIds = candidateOutput
+      .split('\n')
+      .filter(Boolean)
+      .map((s) => Number.parseInt(s.trim(), 10))
+      .filter((id) => !Number.isNaN(id));
+
+    // A candidate is truly unattached only if it's also unreferenced anywhere
+    // (content URLs, post meta, featured images, Gutenberg blocks) — a page
+    // builder or ACF field can reference media without setting post_parent.
+    const unattached: number[] = [];
+    for (const id of candidateIds) {
+      const references = await this.findReferences(id, 'full');
+      if (references.length === 0) {
+        unattached.push(id);
+      }
+    }
+    return unattached;
   }
 
   // Reference finding ---------------------------------------------------------
