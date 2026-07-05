@@ -17,6 +17,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added integration test coverage for a non-force `delete()` call against a
   stock WordPress install, asserting the actionable `MEDIA_TRASH`/`--force`
   error message instead of a raw 501.
+- **`watch --optimize` no longer aborts on SVG/unsupported files** (#94 follow-up)
+  — unsupported formats are now uploaded as-is with a warning instead of erroring
+  out, matching `import --optimize`'s existing behavior. The bulk-path MIME
+  whitelist (`OPTIMIZABLE_MIME_TYPES`) is now exported and directly unit-tested.
+- **`resize`, `convert`, and `watch` now report animation-preservation skips
+  consistently with `optimize`** (#93 follow-up). Animated sources refused
+  because the target format can't hold animation are counted/emitted as
+  `skipped` instead of `failures`/`error`, matching `optimize`'s handling.
+### Fixed — data safety
+- **`undo` verifies a binary snapshot's blob before restoring it** (#92).
+  `SnapshotStore.readBlob` now checks the blob file exists, that its size
+  matches the recorded `blob_size`, and (when `beforeHash` was captured) that
+  its SHA-256 matches, refusing with a clear error instead of restoring
+  missing/truncated/corrupted bytes over a live attachment. Snapshots written
+  by pre-2.1.0 versions (before the fire-and-forget write bug was fixed) may
+  now correctly fail this check if their blob was never fully flushed to disk.
+### Fixed
+- **`optimize` idempotency is correct in both directions** (#97): re-running
+  `optimize` after a successful replace-in-place now compares the live file's
+  hash against the *previous run's output* (not its original source hash), so
+  a second `--all --apply` skips already-optimized files instead of
+  re-compressing and double-counting `stats` savings. `undo` now marks the
+  reversed `processing_history` row so a restored attachment is eligible for
+  re-optimizing again (previously permanently "skipped"), and stats no longer
+  count savings that were later undone. Changed options (`--to`, `--quality`,
+  `--target-size`, etc.) are now compared too, so a follow-up run with
+  different settings always re-processes instead of being silently skipped.
+  Added `optimize --force` to bypass the skip explicitly, and a distinct
+  `'skipped'` processing status (the "result would be larger" case is no
+  longer recorded as `'success'`).
 - **`sites run` forwards `--apply`/`--dry-run`/`--strict` to child processes**
   (#104). Previously these parent-level flags were silently dropped, so bulk
   ops ran as no-op dry-runs while the parent reported success.

@@ -8,6 +8,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -61,44 +62,43 @@ export async function removeBackgroundWithSystemRembg(
 ): Promise<SystemRembgResult> {
   const startTime = Date.now();
 
-  const inputPath = join(tmpdir(), `localpress-rembg-in-${Date.now()}.png`);
-  const outputPath = join(tmpdir(), `localpress-rembg-out-${Date.now()}.png`);
+  const uid = randomUUID();
+  const inputPath = join(tmpdir(), `localpress-rembg-in-${uid}.png`);
+  const outputPath = join(tmpdir(), `localpress-rembg-out-${uid}.png`);
 
-  // Write input file.
-  await Bun.write(inputPath, imageBytes);
+  try {
+    // Write input file.
+    await Bun.write(inputPath, imageBytes);
 
-  // Build rembg command.
-  const args = ['i'];
-  if (options.model) {
-    args.push('-m', options.model);
-  }
-  if (options.alphaMatte) {
-    args.push('-a');
-  }
-  args.push(inputPath, outputPath);
+    // Build rembg command.
+    const args = ['i'];
+    if (options.model) {
+      args.push('-m', options.model);
+    }
+    if (options.alphaMatte) {
+      args.push('-a');
+    }
+    args.push(inputPath, outputPath);
 
-  const result = await execCommand('rembg', args);
+    const result = await execCommand('rembg', args);
 
-  if (result.exitCode !== 0) {
-    // Clean up.
+    if (result.exitCode !== 0) {
+      throw new Error(`rembg failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`);
+    }
+
+    // Read output file.
+    const outputFile = Bun.file(outputPath);
+    if (!(await outputFile.exists())) {
+      throw new Error('rembg did not produce an output file.');
+    }
+
+    const outputBytes = Buffer.from(await outputFile.arrayBuffer());
+    const durationMs = Date.now() - startTime;
+
+    return { bytes: outputBytes, durationMs };
+  } finally {
     cleanup(inputPath, outputPath);
-    throw new Error(`rembg failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`);
   }
-
-  // Read output file.
-  const outputFile = Bun.file(outputPath);
-  if (!(await outputFile.exists())) {
-    cleanup(inputPath, outputPath);
-    throw new Error('rembg did not produce an output file.');
-  }
-
-  const outputBytes = Buffer.from(await outputFile.arrayBuffer());
-  const durationMs = Date.now() - startTime;
-
-  // Clean up temp files.
-  cleanup(inputPath, outputPath);
-
-  return { bytes: outputBytes, durationMs };
 }
 
 // -- Helpers ------------------------------------------------------------------

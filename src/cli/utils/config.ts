@@ -26,6 +26,14 @@ export function assertValidSiteName(name: string): void {
   }
 }
 
+/** Thrown for config-resolution failures (missing/corrupt config, no/unknown active site). */
+export class ConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConfigError';
+  }
+}
+
 /**
  * Resolve the localpress config directory, respecting XDG on Linux/macOS
  * and falling back sensibly on Windows.
@@ -85,7 +93,7 @@ export async function loadConfig(): Promise<Config> {
     return parsed;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(
+    throw new ConfigError(
       `Failed to read config at ${configPath}: ${message}\nIf the file is corrupt, you can delete it and run \`localpress init\` again.`,
     );
   }
@@ -139,7 +147,7 @@ export function mergeSiteConfig(
 export function resolveActiveSite(config: Config, override?: string): SiteConfig {
   const name = override ?? config.activeSite;
   if (!name) {
-    throw new Error(
+    throw new ConfigError(
       'No active site configured. Run `localpress init` to add one, or pass --site <name>.',
     );
   }
@@ -149,7 +157,7 @@ export function resolveActiveSite(config: Config, override?: string): SiteConfig
     const hint = known.length
       ? `Known sites: ${known.join(', ')}`
       : 'No sites are configured. Run `localpress init` first.';
-    throw new Error(`Unknown site '${name}'. ${hint}`);
+    throw new ConfigError(`Unknown site '${name}'. ${hint}`);
   }
   return site;
 }

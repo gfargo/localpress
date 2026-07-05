@@ -23,7 +23,7 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
-import { basename, relative, resolve } from 'node:path';
+import { basename, extname, relative, resolve } from 'node:path';
 import { watch } from 'chokidar';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
@@ -35,11 +35,19 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
-import { optimizeImage } from '../../engine/image/optimize.ts';
+import { formatToMime, mimeToExtension } from '../../engine/image/mime.ts';
+import {
+  AnimatedImageError,
+  UnsupportedFormatError,
+  optimizeImage,
+} from '../../engine/image/optimize.ts';
 import type { ImageFormat } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { createRerunGuard } from '../utils/rerun-guard.ts';
+import { isOptimizableMime } from './optimize.ts';
 
 /** Image extensions we watch for. */
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.avif', '.gif', '.svg']);
@@ -82,16 +90,18 @@ export function registerWatchCommand(program: Command): void {
     .command('watch <directory>')
     .description('Watch a local directory and auto-push new/changed images to WordPress')
     .option('--optimize', 'run the optimization pipeline before uploading')
-    .option('--quality <n>', 'optimization quality (1-100)', (v) => Number.parseInt(v, 10))
+    .option('--quality <n>', 'optimization quality (1-100)', parseIntOption('--quality'))
     .option('--to <format>', 'convert to format before uploading (webp, avif, jpeg, png)')
-    .option('--max-width <n>', 'max width in pixels', (v) => Number.parseInt(v, 10))
-    .option('--max-height <n>', 'max height in pixels', (v) => Number.parseInt(v, 10))
+    .option('--max-width <n>', 'max width in pixels', parseIntOption('--max-width'))
+    .option('--max-height <n>', 'max height in pixels', parseIntOption('--max-height'))
     .option(
       '--delete',
       'permanently delete from WordPress when local file is removed (force-deletes, skips trash; captures an undo snapshot first)',
     )
-    .option('--debounce <ms>', 'debounce interval in ms (default: 800)', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--debounce <ms>',
+      'debounce interval in ms (default: 800)',
+      parseIntOption('--debounce'),
     )
     .action(async (directory: string, options) => {
       const parentOpts = program.opts();
@@ -122,8 +132,22 @@ export function registerWatchCommand(program: Command): void {
 
       const debounceMs = options.debounce ?? DEBOUNCE_MS;
 
-      // Track in-flight operations to avoid duplicate processing.
-      const processing = new Set<string>();
+      // Per-file rerun guards: a save that arrives while a sync for the same
+      // file is in flight is queued and rerun once the in-flight sync
+      // finishes, rather than dropped. State is kept per-file so concurrent
+      // uploads for different files never block each other. Entries are
+      // never evicted, which is fine for a long-running watch process since
+      // the set of distinct paths in a watched directory is bounded.
+      const rerunGuards = new Map<string, (isNew: boolean) => Promise<void>>();
+
+      function getGuard(filePath: string): (isNew: boolean) => Promise<void> {
+        let guard = rerunGuards.get(filePath);
+        if (!guard) {
+          guard = createRerunGuard<boolean>((isNew) => processFile(filePath, isNew));
+          rerunGuards.set(filePath, guard);
+        }
+        return guard;
+      }
 
       // Debounce timers per file.
       const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -140,13 +164,9 @@ export function registerWatchCommand(program: Command): void {
       async function processFile(filePath: string, isNew: boolean): Promise<void> {
         const relPath = relative(watchDir, filePath);
 
-        if (processing.has(filePath)) return;
-        processing.add(filePath);
-
         try {
           const file = Bun.file(filePath);
           if (!(await file.exists())) {
-            processing.delete(filePath);
             return;
           }
 
@@ -158,16 +178,26 @@ export function registerWatchCommand(program: Command): void {
           const existingMapping = db.getWatchMapping(site.name, watchDir, relPath);
           if (existingMapping && existingMapping.fileHash === hash) {
             // File hasn't actually changed (editor may have touched mtime).
-            processing.delete(filePath);
             return;
           }
 
-          const filename = basename(filePath);
-          const mime = mimeFromPath(filePath);
+          let filename = basename(filePath);
+          const sourceMime = mimeFromPath(filePath);
+          let mime = sourceMime;
 
           // Optimize if requested.
           let optimizeInfo = '';
-          if (options.optimize || options.to) {
+          let formatChanged = false;
+          if ((options.optimize || options.to) && !isOptimizableMime(mime)) {
+            optimizeInfo = ' (unsupported format, uploaded as-is)';
+            if (parentOpts.json) {
+              printJson({ event: 'optimize-skipped', file: relPath, mimeType: mime });
+            } else {
+              warn(
+                `  ⚠ ${relPath}: unsupported format for optimization (${mime}). Uploading as-is.`,
+              );
+            }
+          } else if (options.optimize || options.to) {
             const optimizeOpts = {
               quality: options.quality,
               toFormat: options.to as ImageFormat | undefined,
@@ -175,10 +205,21 @@ export function registerWatchCommand(program: Command): void {
               maxHeight: options.maxHeight,
             };
 
-            const result = await optimizeImage(fileBuffer, mime, optimizeOpts);
+            const result = await optimizeImage(fileBuffer, sourceMime, optimizeOpts);
             const savedPct = (result.savedRatio * 100).toFixed(1);
             optimizeInfo = ` (${formatBytes(originalSize)} → ${formatBytes(result.after.sizeBytes)}, -${savedPct}%)`;
             fileBuffer = Buffer.from(result.bytes);
+
+            // Rewrite the filename/mime to match the converted format so
+            // uploaded/replaced attachments don't carry the original extension
+            // under different bytes (e.g. a webp file named `photo.jpg`).
+            const newMime = formatToMime(result.after.format);
+            if (newMime !== sourceMime) {
+              formatChanged = true;
+              mime = newMime;
+              const newExt = mimeToExtension(newMime) ?? extname(filename);
+              filename = filename.replace(/\.[^.]+$/, newExt);
+            }
           }
 
           // Determine if this is a replace or a new upload.
@@ -191,6 +232,9 @@ export function registerWatchCommand(program: Command): void {
                 const result = await replaceAdapter.replaceInPlace(
                   existingMapping.wpId,
                   fileBuffer,
+                  formatChanged
+                    ? { newMimeType: mime, newExtension: extname(filename) }
+                    : undefined,
                 );
                 db.upsertWatchMapping(site.name, watchDir, relPath, hash, result.id);
 
@@ -204,7 +248,6 @@ export function registerWatchCommand(program: Command): void {
                 } else {
                   info(`↻ ${relPath} → replaced #${result.id}${optimizeInfo}`);
                 }
-                processing.delete(filePath);
                 return;
               } catch (err) {
                 if ((err as CapabilityUnavailableError).name !== 'CapabilityUnavailableError') {
@@ -219,7 +262,6 @@ export function registerWatchCommand(program: Command): void {
               warn(
                 `Cannot replace #${existingMapping.wpId} in place (no WP-CLI). Skipping ${relPath} (--strict mode).`,
               );
-              processing.delete(filePath);
               return;
             }
 
@@ -259,14 +301,22 @@ export function registerWatchCommand(program: Command): void {
             }
           }
         } catch (err) {
+          // Animated-source and unsupported-format cases are deliberate skips,
+          // not failures — never flatten an animation or rasterize a vector.
+          if (err instanceof AnimatedImageError || err instanceof UnsupportedFormatError) {
+            if (parentOpts.json) {
+              printJson({ event: 'skipped', file: relPath, reason: err.message });
+            } else {
+              warn(`↳ Skipped ${relPath}: ${err.message}`);
+            }
+            return;
+          }
           const msg = err instanceof Error ? err.message : String(err);
           if (parentOpts.json) {
             printJson({ event: 'error', file: relPath, error: msg });
           } else {
             error(`✗ ${relPath}: ${msg}`);
           }
-        } finally {
-          processing.delete(filePath);
         }
       }
 
@@ -369,7 +419,7 @@ export function registerWatchCommand(program: Command): void {
           filePath,
           setTimeout(() => {
             debounceTimers.delete(filePath);
-            void processFile(filePath, isNew);
+            void getGuard(filePath)(isNew);
           }, debounceMs),
         );
       }

@@ -468,7 +468,8 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--max-height', a.maxHeight);
       opt(argv, '--encoder', a.encoder);
       opt(argv, '--profile', a.profile);
-      flag(argv, '--strip-metadata', a.stripMetadata);
+      if (a.stripMetadata === true) argv.push('--strip-metadata');
+      else if (a.stripMetadata === false) argv.push('--no-strip-metadata');
       flag(argv, '--apply', a.apply);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
@@ -482,7 +483,6 @@ export function registerTools(server: McpServer): void {
       inputSchema: {
         ...commonSiteArg,
         ids: z.array(z.number().int().positive()).optional(),
-        all: z.boolean().optional(),
         to: z.enum(['webp', 'avif', 'jpeg', 'png']).describe('Target format'),
         quality: z.number().int().min(1).max(100).optional(),
         apply: z.boolean().optional(),
@@ -493,7 +493,6 @@ export function registerTools(server: McpServer): void {
       const a = args as ArgMap;
       const argv = ['convert'];
       ids(argv, a.ids);
-      flag(argv, '--all', a.all);
       opt(argv, '--to', a.to);
       opt(argv, '--quality', a.quality);
       flag(argv, '--apply', a.apply);
@@ -510,7 +509,6 @@ export function registerTools(server: McpServer): void {
       inputSchema: {
         ...commonSiteArg,
         ids: z.array(z.number().int().positive()).optional(),
-        all: z.boolean().optional(),
         maxWidth: z.number().int().positive().optional(),
         maxHeight: z.number().int().positive().optional(),
         apply: z.boolean().optional(),
@@ -521,7 +519,6 @@ export function registerTools(server: McpServer): void {
       const a = args as ArgMap;
       const argv = ['resize'];
       ids(argv, a.ids);
-      flag(argv, '--all', a.all);
       opt(argv, '--max-width', a.maxWidth);
       opt(argv, '--max-height', a.maxHeight);
       flag(argv, '--apply', a.apply);
@@ -802,7 +799,7 @@ export function registerTools(server: McpServer): void {
     {
       title: 'Delete attachments',
       description:
-        'Delete one or more attachments. Without `force: true`, WordPress moves them to trash (recoverable from the admin). With `force: true`, attachments + files are permanently removed. Pre-captures a binary snapshot for each attachment so `undo` can re-upload the file (as a new attachment ID; references will need rewriting).',
+        'Delete one or more attachments. Without `force: true`, WordPress moves them to trash (recoverable from the admin). With `force: true`, attachments + files are permanently removed — also requires `confirm: true`. Pre-captures a binary snapshot for each attachment so `undo` can re-upload the file (as a new attachment ID; references will need rewriting).',
       inputSchema: {
         ...commonSiteArg,
         ids: z.array(z.number().int().positive()).describe('Attachment IDs to delete'),
@@ -810,10 +807,25 @@ export function registerTools(server: McpServer): void {
           .boolean()
           .optional()
           .describe('Permanently delete (skip trash). Default: move to trash.'),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe('Required alongside `force: true` to acknowledge permanent deletion.'),
       },
     },
     async (args) => {
       const a = args as ArgMap;
+      if (a.force === true && a.confirm !== true) {
+        return {
+          isError: true as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: 'Refusing to permanently delete: pass `confirm: true` alongside `force: true` to acknowledge this is irreversible.',
+            },
+          ],
+        };
+      }
       const argv = ['delete'];
       ids(argv, a.ids);
       flag(argv, '--force', a.force);
@@ -908,7 +920,7 @@ export function registerTools(server: McpServer): void {
       const argv = ['push', a.file as string];
       opt(argv, '--replace', a.replace);
       opt(argv, '--title', a.title);
-      opt(argv, '--alt-text', a.altText);
+      opt(argv, '--alt', a.altText);
       opt(argv, '--caption', a.caption);
       return runCli(argv, a.site as string | undefined);
     },
@@ -1364,7 +1376,8 @@ export function registerTools(server: McpServer): void {
     'posts_delete',
     {
       title: 'Delete a post or page',
-      description: 'Move a post/page to trash, or permanently delete with force=true.',
+      description:
+        'Move a post/page to trash, or permanently delete with force=true (also requires confirm=true).',
       inputSchema: {
         ...commonSiteArg,
         id: z.number().int().positive().describe('Post or page ID'),
@@ -1373,10 +1386,25 @@ export function registerTools(server: McpServer): void {
           .optional()
           .describe('Post type slug: post, page, or any custom post type (default: post)'),
         force: z.boolean().optional().describe('Permanently delete (skip trash)'),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe('Required alongside `force: true` to acknowledge permanent deletion.'),
       },
     },
     async (args) => {
       const a = args as ArgMap;
+      if (a.force === true && a.confirm !== true) {
+        return {
+          isError: true as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: 'Refusing to permanently delete: pass `confirm: true` alongside `force: true` to acknowledge this is irreversible.',
+            },
+          ],
+        };
+      }
       const argv = ['posts', 'delete', String(a.id)];
       opt(argv, '--type', a.type);
       flag(argv, '--force', a.force);

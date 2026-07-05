@@ -15,7 +15,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, unlinkSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import * as readline from 'node:readline';
@@ -218,6 +218,12 @@ export function registerEditCommand(program: Command): void {
           rl.close();
           resolve();
         });
+
+        // Non-interactive stdin (e.g. `edit 5 < /dev/null`) never emits
+        // 'line' — only 'close' fires once stdin hits EOF.
+        rl.on('close', () => {
+          resolve();
+        });
       });
 
       // 6. Clean up.
@@ -226,7 +232,7 @@ export function registerEditCommand(program: Command): void {
 
       if (!options.keepFile && !options.to) {
         try {
-          unlinkSync(localPath);
+          rmSync(destDir, { recursive: true, force: true });
         } catch {
           // Best effort.
         }

@@ -10,7 +10,8 @@
 import { basename } from 'node:path';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
-import { CapabilityUnavailableError } from '../../adapters/types.ts';
+import { CapabilityUnavailableError, type UpdateMetadata } from '../../adapters/types.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -18,14 +19,16 @@ export function registerPushCommand(program: Command): void {
   program
     .command('push <path>')
     .description('Upload a local file to the media library')
-    .option('--replace <id>', 'replace this attachment instead of creating a new one', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--replace <id>',
+      'replace this attachment instead of creating a new one',
+      parseIntOption('--replace'),
     )
     .option('--title <title>', 'attachment title')
     .option('--alt <text>', 'alt text')
     .option('--caption <text>', 'caption')
     .option('--description <text>', 'description')
-    .option('--post <id>', 'attach to this post', (v) => Number.parseInt(v, 10))
+    .option('--post <id>', 'attach to this post', parseIntOption('--post'))
     .action(async (filePath: string, options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -48,6 +51,24 @@ export function registerPushCommand(program: Command): void {
         if (replaceAdapter) {
           try {
             const result = await replaceAdapter.replaceInPlace(options.replace, fileBuffer);
+
+            const metaUpdate: UpdateMetadata = {};
+            if (options.title !== undefined) metaUpdate.title = options.title;
+            if (options.alt !== undefined) metaUpdate.altText = options.alt;
+            if (options.caption !== undefined) metaUpdate.caption = options.caption;
+            if (options.description !== undefined) metaUpdate.description = options.description;
+
+            if (Object.keys(metaUpdate).length > 0) {
+              try {
+                const metaAdapter = resolver.resolve('update-meta');
+                await metaAdapter.updateMetadata(options.replace, metaUpdate);
+              } catch (metaErr) {
+                warn(
+                  `File replaced, but metadata update failed: ${metaErr instanceof Error ? metaErr.message : String(metaErr)}`,
+                );
+              }
+            }
+
             if (parentOpts.json) {
               printJson({ action: 'replaced', attachment: result });
             } else {

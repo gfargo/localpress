@@ -79,9 +79,11 @@ export function registerShowCommand(program: Command): void {
           info(`    Status:     ${lastProcessing.status}`);
           if (lastProcessing.bytesBefore && lastProcessing.bytesAfter) {
             const saved = lastProcessing.bytesBefore - lastProcessing.bytesAfter;
-            const pct = ((saved / lastProcessing.bytesBefore) * 100).toFixed(1);
+            const pct = Math.abs((saved / lastProcessing.bytesBefore) * 100).toFixed(1);
+            const changeNote =
+              saved >= 0 ? `${pct}% reduction` : `grew by ${formatBytes(-saved)} (+${pct}%)`;
             info(
-              `    Size:       ${formatBytes(lastProcessing.bytesBefore)} → ${formatBytes(lastProcessing.bytesAfter)} (${pct}% reduction)`,
+              `    Size:       ${formatBytes(lastProcessing.bytesBefore)} → ${formatBytes(lastProcessing.bytesAfter)} (${changeNote})`,
             );
           }
           if (lastProcessing.durationMs) {

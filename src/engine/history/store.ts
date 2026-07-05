@@ -13,15 +13,17 @@
  *   4. At command end the session is closed: `store.closeSession(session, count)`
  *   5. `store.restore(snapshotId, adapter)` reverses a snapshot.
  *
- * The blob files are deduplicated by content hash within a session — if you
- * snapshot the same source bytes twice in one bulk run, you only store one
- * blob. Cross-session dedupe is not done (kept simple — it's a rare case and
- * complicates restore).
+ * Blob filenames are unique per snapshot row (`<attachmentId>-<rowId><ext>`),
+ * so multiple snapshots of the same attachment never collide on disk. Within
+ * a session, capturing the same (attachment, beforeHash) again while an
+ * earlier un-restored binary snapshot still exists is a no-op — the existing
+ * snapshot id is returned instead of writing a redundant blob. Cross-session
+ * dedupe is not done (kept simple — it's a rare case and complicates restore).
  */
 
 import type { Database } from 'bun:sqlite';
-import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type {
   HistoryStats,
@@ -174,20 +176,13 @@ export class SnapshotStore {
     const kind: SnapshotKind = opts.sourceBytes ? 'binary' : 'metadata-only';
     const now = Date.now();
 
-    let blobPath: string | null = null;
-    let blobSize = 0;
-
-    if (opts.sourceBytes) {
-      const ext = pickExtension(opts.beforeMeta);
-      blobPath = join(this.blobRoot, opts.siteName, opts.sessionId, `${opts.attachmentId}${ext}`);
-      mkdirSync(dirname(blobPath), { recursive: true });
-      // Write the blob synchronously BEFORE inserting the DB row. A detached
-      // async write can leave a committed snapshot row pointing at a missing or
-      // truncated file if the process exits first — and its rejection would be
-      // an uncatchable unhandled rejection. If this throws, no row is created
-      // and the best-effort caller (captureSnapshot) swallows it.
-      writeFileSync(blobPath, opts.sourceBytes);
-      blobSize = opts.sourceBytes.length;
+    if (opts.sourceBytes && opts.beforeHash) {
+      const existingId = this.findActiveSnapshotByHash(
+        opts.sessionId,
+        opts.attachmentId,
+        opts.beforeHash,
+      );
+      if (existingId !== null) return existingId;
     }
 
     const result = this.db.run(
@@ -201,15 +196,58 @@ export class SnapshotStore {
         opts.attachmentId,
         opts.operation,
         kind,
-        blobPath,
-        blobSize,
+        null,
+        0,
         JSON.stringify(opts.beforeMeta),
         opts.beforeHash ?? null,
         now,
       ],
     );
+    const rowId = Number(result.lastInsertRowid);
 
-    return Number(result.lastInsertRowid);
+    if (opts.sourceBytes) {
+      const ext = pickExtension(opts.beforeMeta);
+      const blobPath = join(
+        this.blobRoot,
+        opts.siteName,
+        opts.sessionId,
+        `${opts.attachmentId}-${rowId}${ext}`,
+      );
+      mkdirSync(dirname(blobPath), { recursive: true });
+      // Write the blob synchronously, then point the row at it. If this
+      // throws, the row is left with blob_path = NULL — detectable — rather
+      // than risking a row pointing at a missing/truncated file.
+      writeFileSync(blobPath, opts.sourceBytes);
+      const blobSize = opts.sourceBytes.length;
+      this.db.run('UPDATE snapshots SET blob_path = ?, blob_size = ? WHERE id = ?', [
+        blobPath,
+        blobSize,
+        rowId,
+      ]);
+    }
+
+    return rowId;
+  }
+
+  /**
+   * Find an un-restored binary snapshot in this session for the same
+   * attachment and pre-change content hash — the recapture the header
+   * comment promises to skip.
+   */
+  private findActiveSnapshotByHash(
+    sessionId: string,
+    attachmentId: number,
+    beforeHash: string,
+  ): number | null {
+    const row = this.db
+      .query(
+        `SELECT id FROM snapshots
+         WHERE session_id = ? AND wp_id = ? AND before_hash = ?
+           AND restored_at IS NULL AND kind = 'binary'
+         LIMIT 1`,
+      )
+      .get(sessionId, attachmentId, beforeHash) as { id: number } | null;
+    return row ? row.id : null;
   }
 
   /** Mark a snapshot as restored. The blob stays on disk until pruned. */
@@ -278,12 +316,39 @@ export class SnapshotStore {
     return row ? mapSnapshotRow(row) : null;
   }
 
-  /** Read blob bytes for a binary snapshot. Throws if not a binary snapshot. */
+  /**
+   * Read blob bytes for a binary snapshot. Throws if not a binary snapshot, if
+   * the blob is missing/truncated, or if its content hash doesn't match the
+   * recorded `beforeHash` — never hand back bytes that might silently corrupt
+   * a live attachment on restore.
+   */
   readBlob(snapshot: SnapshotRecord): Buffer {
     if (snapshot.kind !== 'binary' || !snapshot.blobPath) {
       throw new Error(`Snapshot #${snapshot.id} is not a binary snapshot`);
     }
-    return readFileSync(snapshot.blobPath);
+    if (!existsSync(snapshot.blobPath)) {
+      throw new Error(
+        `Snapshot #${snapshot.id} blob is missing on disk (${snapshot.blobPath}) — cannot safely restore attachment #${snapshot.wpId}.`,
+      );
+    }
+
+    const bytes = readFileSync(snapshot.blobPath);
+    if (bytes.length !== snapshot.blobSize) {
+      throw new Error(
+        `Snapshot #${snapshot.id} blob is truncated (expected ${snapshot.blobSize} bytes, found ${bytes.length}) — refusing to restore a partial file.`,
+      );
+    }
+
+    if (snapshot.beforeHash) {
+      const actualHash = createHash('sha256').update(bytes).digest('hex');
+      if (actualHash !== snapshot.beforeHash) {
+        throw new Error(
+          `Snapshot #${snapshot.id} blob content hash mismatch — refusing to restore a corrupted file.`,
+        );
+      }
+    }
+
+    return bytes;
   }
 
   // Stats & retention --------------------------------------------------------

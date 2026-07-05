@@ -10,6 +10,7 @@
 
 import type { Command } from 'commander';
 import { ExitCode } from '../../types.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson } from '../utils/output.ts';
 
@@ -188,8 +189,8 @@ export function registerA11yCommand(program: Command): void {
     .description('Accessibility audit — check posts/pages for WCAG issues')
     .option('--type <type>', 'post type to check: post, page, or both (default: both)')
     .option('--status <status>', 'post status to check (default: publish)', 'publish')
-    .option('--id <id>', 'check a specific post/page only', (v) => Number.parseInt(v, 10))
-    .option('--limit <n>', 'max posts to check (default: 100)', (v) => Number.parseInt(v, 10))
+    .option('--id <id>', 'check a specific post/page only', parseIntOption('--id'))
+    .option('--limit <n>', 'max posts to check (default: 100)', parseIntOption('--limit'))
     .action(async (options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
