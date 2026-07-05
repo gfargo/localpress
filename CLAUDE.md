@@ -76,7 +76,9 @@ You're picking up `localpress` at **v2.1.0**. All 37 CLI commands are implemente
 - Homebrew tap at `gfargo/homebrew-tap`
 - GitHub Releases with binaries/tarballs for 5 platforms (darwin-arm64, darwin-x64, linux-arm64, linux-x64, windows-x64)
 - `localpress update` self-update from a released tarball
-- Automated release workflow: build → checksum → release → update formula
+- **Automated, conventional-commit-driven releases** via release-please: merging
+  the auto-maintained "Release vX.Y.Z" PR cuts the tag → builds → checksums →
+  GitHub Release → Homebrew formula bump. See **[Releasing](#releasing)** below.
 
 **Testing:**
 - 232 test cases across 23 files: unit tests (`test/unit/`), integration tests against Dockerized WordPress (`test/integration/`, fully passing — including write-auth via Application Passwords), and tarball smoke tests (`test/tarball/`, exercise the built binary end-to-end)
@@ -84,7 +86,9 @@ You're picking up `localpress` at **v2.1.0**. All 37 CLI commands are implemente
 **CI:**
 - GitHub Actions: typecheck + lint + unit tests on PR
 - Integration tests against Dockerized WordPress (with proper pretty-permalinks + Apache auth-header passthrough)
-- Binary/tarball builds + GitHub Release + Homebrew formula update on v* tag
+- PR-title lint (conventional commits) so squash-merge subjects drive versioning
+- release-please maintains the Release PR; merging it builds binaries/tarballs +
+  GitHub Release + Homebrew formula update (see **[Releasing](#releasing)**)
 
 ### Release history
 
@@ -147,6 +151,8 @@ These were debated and resolved during planning. **Don't relitigate without stro
 
 **Command registration:** each command file exports `registerXxxCommand(program: Command)`, called from `src/cli/index.ts`.
 
+**No AI attribution in pushed artifacts:** never add "Generated with Claude Code" / "Co-Authored-By" footers, session links, or any AI-tool attribution to PR titles/bodies, commit messages, code comments, or anything else committed or pushed. Write them as a human maintainer would. (Some tooling appends these by default — strip them.)
+
 ---
 
 ## Things that are tempting but wrong
@@ -165,8 +171,10 @@ These were debated and resolved during planning. **Don't relitigate without stro
 localpress/
 ├── CLAUDE.md                         ← you are here
 ├── README.md                         ← user-facing overview
-├── CHANGELOG.md                      ← release history (authoritative)
+├── CHANGELOG.md                      ← release history (release-please maintains the top)
 ├── LICENSE                           ← MIT
+├── release-please-config.json        ← release automation config (bump rules, changelog sections)
+├── .release-please-manifest.json     ← current released version (source of truth for next bump)
 ├── package.json                      ← Bun + TS deps; build/test scripts
 ├── tsconfig.json                     ← strict, ESM, bundler resolution
 ├── biome.json                        ← lint/format config
@@ -234,9 +242,90 @@ localpress/
 │   └── SKILL.md                      ← Full AI agent skill with JSON schemas
 └── .github/
     └── workflows/
-        ├── ci.yml                    ← Unit + integration tests; binary builds on tag
-        └── release.yml               ← Build + release + Homebrew formula update
+        ├── ci.yml                    ← Unit + integration tests on PR/push
+        ├── pr-title-lint.yml         ← Conventional-commit PR-title check
+        ├── release-please.yml        ← Maintains the Release PR; cuts tag on merge
+        ├── release-build.yml         ← Reusable: build → checksum → release → formula
+        └── release.yml               ← Manual fallback: build/publish on a hand-pushed v* tag
 ```
+
+---
+
+## Releasing
+
+Releases are **automated and conventional-commit-driven** — you don't hand-pick
+version numbers or write release notes by hand anymore. The version comes from
+the commit types since the last release; the notes come from the commit
+subjects.
+
+### How a release happens (the normal path)
+
+1. **Land conventional commits on `main`.** Because we squash-merge, the *PR
+   title* becomes the single commit subject — so the PR title is what matters.
+   `pr-title-lint.yml` enforces the format on every PR.
+2. **release-please opens/updates a "Release vX.Y.Z" PR** (`release-please.yml`
+   runs on each push to `main`). It computes the next version from the commits,
+   and stages the `package.json` bump + a generated `CHANGELOG.md` section. This
+   PR sits open and keeps updating itself as more commits land — it's the
+   human-approval gate.
+3. **Merge the Release PR when you want to ship.** On merge, release-please
+   creates the `vX.Y.Z` tag + a GitHub Release (with generated notes) and sets
+   `release_created=true`.
+4. **That triggers the build** (`release-please.yml` calls the reusable
+   `release-build.yml`): typecheck + unit tests → 5-platform binaries/tarballs →
+   `checksums.txt` → uploads them to the Release → bumps `Formula/localpress.rb`
+   and pushes it to both `main` and the `gfargo/homebrew-tap`.
+
+That's it — merging one PR is the whole release.
+
+### How the version is decided (semver from commit types)
+
+| Commit type on `main` | Bump | Example |
+|---|---|---|
+| `fix:` | patch | 2.1.0 → 2.1.1 |
+| `feat:` | minor | 2.1.0 → 2.2.0 |
+| `feat!:` / `BREAKING CHANGE:` footer | major | 2.1.0 → 3.0.0 |
+| `docs:` `chore:` `refactor:` `test:` `ci:` `build:` `perf:` | none on their own | — |
+
+`perf:` shows in the changelog but doesn't force a release by itself; the
+type→section mapping lives in `release-please-config.json` (keep it in sync with
+the allowed `types` in `pr-title-lint.yml`).
+
+### The pieces
+
+- **`.github/workflows/release-please.yml`** — runs on push to `main`; maintains
+  the Release PR and, on merge, tags + calls the build.
+- **`.github/workflows/release-build.yml`** — reusable (`workflow_call`) build +
+  publish + Homebrew pipeline, parameterized by tag. Single source of truth for
+  "what a release produces."
+- **`.github/workflows/release.yml`** — manual fallback. Push a `v*` tag by hand
+  (`git tag -a v2.2.0 -m v2.2.0 && git push origin v2.2.0`) and it runs the same
+  `release-build.yml`. Use only if the automated flow is wedged.
+- **`.github/workflows/pr-title-lint.yml`** — conventional-commit check on PR
+  titles (accurate versioning depends on it, since we squash-merge).
+- **`release-please-config.json`** — bump rules, changelog sections, tag format
+  (`vX.Y.Z`, no component prefix).
+- **`.release-please-manifest.json`** — the current released version
+  (`{ ".": "2.1.0" }`). release-please reads and updates this; it's the source of
+  truth for computing the next bump. **Don't hand-edit it** except to correct a
+  drift.
+
+### Gotchas / invariants (don't break these)
+
+- **Don't manually bump `package.json` or hand-write the top `CHANGELOG.md`
+  section** — release-please owns both. Manual edits fight the Release PR.
+- **The tag → build link relies on staying in one workflow.** A tag created by
+  release-please uses `GITHUB_TOKEN`, which by GitHub's design does *not* trigger
+  the `on: push: tags` workflow (`release.yml`) — that's why the build is invoked
+  directly from `release-please.yml` via `needs`/`if`, not by listening for the
+  tag. Don't "simplify" this into a tag-listener; it will silently stop building.
+- **`HOMEBREW_TAP_TOKEN`** (repo secret, PAT with `repo` scope on
+  `gfargo/homebrew-tap`) must be present or the tap-push step no-ops (the Release
+  itself still succeeds).
+- The formula commit back to `main` carries `[skip ci]` so it doesn't spin up
+  another release-please run.
+- `release-build.yml` creates the Release only if one doesn't already exist, so
+  the manual-tag path works too (no release-please pre-created one there).
 
 ---
 

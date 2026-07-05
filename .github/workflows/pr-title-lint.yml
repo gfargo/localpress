@@ -1,0 +1,39 @@
+name: PR Title Lint
+
+# We squash-merge, so the PR title becomes the single commit subject on main —
+# and that subject is exactly what release-please reads to compute the next
+# version. This check keeps titles valid conventional commits so auto-versioning
+# stays accurate (a mistyped title would otherwise silently skip a bump).
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Keep in sync with changelog-sections in release-please-config.json.
+          types: |
+            feat
+            fix
+            perf
+            revert
+            docs
+            refactor
+            test
+            build
+            ci
+            chore
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            The subject "{subject}" must start with a lowercase letter.

@@ -1,0 +1,51 @@
+name: Release Please
+
+# Automated, conventional-commit-driven releases.
+#
+# On every push to main, release-please reads the commits since the last
+# release and maintains an open "Release vX.Y.Z" pull request that bumps
+# package.json + CHANGELOG.md. Merging that PR:
+#   - creates the git tag (vX.Y.Z) and a GitHub Release with generated notes,
+#   - sets release_created=true, which triggers the reusable build below to
+#     attach the platform binaries and update the Homebrew formula.
+#
+# Versioning follows semver from conventional-commit prefixes:
+#   fix:      -> patch (x.y.Z)
+#   feat:     -> minor (x.Y.0)
+#   feat!/BREAKING CHANGE -> major (X.0.0)
+#   chore/docs/refactor/test/ci/build -> no release on their own
+#
+# Because we squash-merge, the PR title is the commit subject release-please
+# reads — pr-title-lint.yml enforces that it is a valid conventional commit.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Release PR / tag
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build:
+    name: Build & publish
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/release-build.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit
