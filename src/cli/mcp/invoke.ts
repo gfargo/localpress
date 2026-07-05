@@ -37,9 +37,17 @@ export interface InvokeOptions {
   cwd?: string;
   /** Timeout in ms; child is killed if exceeded. Default: 5 minutes. */
   timeoutMs?: number;
+  /**
+   * Additional top-level (pre-subcommand) flags to forward verbatim, e.g.
+   * `['--apply']` or `['--dry-run', '--strict']`. Generic escape hatch so
+   * callers don't need a dedicated field per global boolean flag.
+   */
+  extraTopLevelFlags?: string[];
 }
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+/** Grace period after SIGTERM before escalating to SIGKILL. */
+const SIGKILL_GRACE_MS = 8 * 1000;
 
 export async function invokeCli(opts: InvokeOptions): Promise<CliResult> {
   const bin = getSelfBin(process.argv, process.execPath);
@@ -57,6 +65,7 @@ export async function invokeCli(opts: InvokeOptions): Promise<CliResult> {
   if (typeof opts.concurrency === 'number') {
     topLevelFlags.push('--concurrency', String(opts.concurrency));
   }
+  if (opts.extraTopLevelFlags?.length) topLevelFlags.push(...opts.extraTopLevelFlags);
   const argsWithSite = [...topLevelFlags, ...baseArgs];
 
   // In dev mode (`bun src/cli/index.ts mcp`), we need to re-invoke with the
@@ -76,10 +85,16 @@ export async function invokeCli(opts: InvokeOptions): Promise<CliResult> {
     let stdoutBuf = '';
     let stderrBuf = '';
     let timedOut = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
 
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGTERM');
+      // A child that ignores SIGTERM (or is stuck in an uninterruptible
+      // syscall) must not hang the parent forever — escalate.
+      killTimer = setTimeout(() => {
+        child.kill('SIGKILL');
+      }, SIGKILL_GRACE_MS);
     }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
     child.stdout.on('data', (chunk) => {
@@ -91,6 +106,7 @@ export async function invokeCli(opts: InvokeOptions): Promise<CliResult> {
 
     child.on('error', (err) => {
       clearTimeout(timer);
+      clearTimeout(killTimer);
       resolve({
         exitCode: -1,
         stdout: null,
@@ -101,6 +117,7 @@ export async function invokeCli(opts: InvokeOptions): Promise<CliResult> {
 
     child.on('close', (code) => {
       clearTimeout(timer);
+      clearTimeout(killTimer);
       const exitCode = code ?? -1;
       let parsed: unknown = stdoutBuf;
 

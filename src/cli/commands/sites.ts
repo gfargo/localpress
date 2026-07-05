@@ -18,10 +18,16 @@ import { error, info, printJson, warn } from '../utils/output.ts';
 /**
  * Tokenize a command string into an argv array, respecting single and double
  * quoted segments. Escaped quotes within the same quote style are not supported.
+ *
+ * A quote character only opens a quoted segment at a token boundary (i.e. when
+ * the current token is empty) so that apostrophes mid-word (e.g. `don't`) pass
+ * through literally instead of being treated as a quote-open. An empty quoted
+ * argument (`""`) is preserved as an empty-string token rather than dropped.
  */
 export function tokenizeCommand(input: string): string[] {
   const tokens: string[] = [];
   let current = '';
+  let sawQuote = false;
   let inQuote: '"' | "'" | null = null;
 
   for (const ch of input) {
@@ -31,24 +37,51 @@ export function tokenizeCommand(input: string): string[] {
       } else {
         current += ch;
       }
-    } else if (ch === '"' || ch === "'") {
+    } else if ((ch === '"' || ch === "'") && current.length === 0) {
       inQuote = ch;
+      sawQuote = true;
     } else if (ch === ' ') {
-      if (current.length) {
+      if (current.length || sawQuote) {
         tokens.push(current);
         current = '';
+        sawQuote = false;
       }
     } else {
       current += ch;
     }
   }
-  if (current.length) tokens.push(current);
+  if (current.length || sawQuote) tokens.push(current);
   return tokens;
 }
 
 /** Returns 0 if all results are ok, 1 otherwise. */
 export function aggregateExitCode(results: { ok: boolean }[]): 0 | 1 {
   return results.every((r) => r.ok) ? 0 : 1;
+}
+
+/**
+ * Default timeout for `sites run` children. Bulk ops (optimize --apply,
+ * caption --all, …) can run for a long time against a large media library —
+ * this must be much larger than the MCP-tool-call default in `invoke.ts`.
+ */
+export const SITES_RUN_DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * Build the top-level flags to forward from the parent `sites run` invocation
+ * into each child process, so `--apply`/`--dry-run`/`--strict` passed on the
+ * parent actually reach the child instead of silently being dropped (leaving
+ * bulk ops running as no-op dry-runs while the parent reports success).
+ */
+export function buildForwardedTopLevelFlags(parentOpts: {
+  apply?: boolean;
+  dryRun?: boolean;
+  strict?: boolean;
+}): string[] {
+  const flags: string[] = [];
+  if (parentOpts.apply) flags.push('--apply');
+  if (parentOpts.dryRun) flags.push('--dry-run');
+  if (parentOpts.strict) flags.push('--strict');
+  return flags;
 }
 
 /** Validate and resolve the target site names from command options. */
@@ -240,6 +273,11 @@ export function registerSitesCommand(program: Command): void {
     .description('Run a localpress command across multiple sites')
     .option('--all-sites', 'run against every configured site')
     .option('--sites <list>', 'comma-separated list of site names')
+    .option(
+      '--timeout <ms>',
+      `per-site timeout in milliseconds (default: ${SITES_RUN_DEFAULT_TIMEOUT_MS})`,
+      (v) => Number.parseInt(v, 10),
+    )
     .action(async (commandStr: string, options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -269,9 +307,21 @@ export function registerSitesCommand(program: Command): void {
         stderr: string;
       }[] = [];
 
+      const extraTopLevelFlags = buildForwardedTopLevelFlags(parentOpts);
+      const timeoutMs =
+        typeof options.timeout === 'number' && !Number.isNaN(options.timeout)
+          ? options.timeout
+          : SITES_RUN_DEFAULT_TIMEOUT_MS;
+
       for (const site of names) {
         if (!parentOpts.json) info(`\n── ${site} ──`);
-        const result = await invokeCli({ site, concurrency: parentOpts.concurrency, args });
+        const result = await invokeCli({
+          site,
+          concurrency: parentOpts.concurrency,
+          args,
+          extraTopLevelFlags,
+          timeoutMs,
+        });
         results.push({
           site,
           exitCode: result.exitCode,

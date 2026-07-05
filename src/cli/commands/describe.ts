@@ -16,6 +16,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 export function registerDescribeCommand(program: Command): void {
   program
@@ -36,7 +37,6 @@ export function registerDescribeCommand(program: Command): void {
     .option('--missing-description', 'only items currently lacking a description')
     .option('--language <lang>', 'generate in this language (e.g. "Spanish")')
     .option('--overwrite', 'replace existing descriptions')
-    .option('--dry-run', 'print without writing to WordPress')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
 
@@ -57,7 +57,7 @@ export function registerDescribeCommand(program: Command): void {
       }
 
       const isBulk = !idStrs.length && (options.missingDescription || options.all);
-      const isDryRun = options.dryRun || (isBulk && !parentOpts.apply);
+      const isDryRun = resolveDryRun(parentOpts, isBulk);
 
       if (!idStrs.length && !isBulk) {
         error(
@@ -85,7 +85,7 @@ export function registerDescribeCommand(program: Command): void {
         return;
       }
 
-      if (isBulk && !parentOpts.apply && !options.dryRun) {
+      if (isBulk && isDryRun) {
         info('  Dry-run: pass --apply to write descriptions to WordPress.\n');
       }
 

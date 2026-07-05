@@ -37,6 +37,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 interface TagResult {
   id: number;
@@ -70,7 +71,6 @@ export function registerTagCommand(program: Command): void {
       '--overwrite',
       'replace existing [tags: …] block; default appends if absent, keeps otherwise',
     )
-    .option('--dry-run', 'preview tags without writing to WordPress')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
 
@@ -91,7 +91,7 @@ export function registerTagCommand(program: Command): void {
       }
 
       const isBulk = !idStrs.length && (options.missingTags || options.all);
-      const isDryRun = options.dryRun || (isBulk && !parentOpts.apply);
+      const isDryRun = resolveDryRun(parentOpts, isBulk);
 
       if (!idStrs.length && !isBulk) {
         error(
@@ -119,7 +119,7 @@ export function registerTagCommand(program: Command): void {
         return;
       }
 
-      if (isBulk && !parentOpts.apply && !options.dryRun) {
+      if (isBulk && isDryRun) {
         info('  Dry-run: pass --apply to write tags to WordPress.\n');
       }
 

@@ -18,6 +18,7 @@ import {
 } from '../../engine/history/index.ts';
 import { optimizeImage } from '../../engine/image/optimize.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -26,9 +27,9 @@ export function registerResizeCommand(program: Command): void {
   program
     .command('resize <ids...>')
     .description('Resize attachments, preserving aspect ratio')
-    .option('--max-width <n>', 'maximum width in pixels', (v) => Number.parseInt(v, 10))
-    .option('--max-height <n>', 'maximum height in pixels', (v) => Number.parseInt(v, 10))
-    .option('--quality <n>', 'quality value 0-100', (v) => Number.parseInt(v, 10))
+    .option('--max-width <n>', 'maximum width in pixels', parseIntOption('--max-width'))
+    .option('--max-height <n>', 'maximum height in pixels', parseIntOption('--max-height'))
+    .option('--quality <n>', 'quality value 0-100', parseIntOption('--quality'))
     .option('--keep-original', 'upload as a new attachment instead of replacing')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();

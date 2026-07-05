@@ -13,6 +13,7 @@
 import { cpus } from 'node:os';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
+import type { MediaItem } from '../../adapters/types.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -70,7 +71,15 @@ export function registerRegenerateCommand(program: Command): void {
         }
 
         const listAdapter = resolver.resolve('list');
-        const allItems = await listAdapter.listMedia({ perPage: 100, page: 1 });
+        let allItems: MediaItem[] = [];
+        let page = 1;
+        while (true) {
+          const batch = await listAdapter.listMedia({ perPage: 100, page });
+          if (batch.length === 0) break;
+          allItems = allItems.concat(batch);
+          if (batch.length < 100) break;
+          page++;
+        }
         ids = allItems.map((item) => item.id);
 
         if (ids.length === 0) {

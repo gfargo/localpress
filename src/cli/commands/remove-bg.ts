@@ -30,6 +30,7 @@ import {
   removeBackgroundWithSystemRembg,
 } from '../../engine/rembg/system-rembg.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -52,8 +53,10 @@ export function registerRemoveBgCommand(program: Command): void {
     .option('--rembg', 'use system Python rembg instead of built-in ONNX pipeline')
     .option('--rembg-model <name>', 'model name for system rembg (e.g. isnet-general-use)')
     .option('--preview', 'open a browser preview to adjust settings before applying')
-    .option('--preview-port <port>', 'port for the preview server (default: auto)', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--preview-port <port>',
+      'port for the preview server (default: auto)',
+      parseIntOption('--preview-port'),
     )
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();

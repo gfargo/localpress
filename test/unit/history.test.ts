@@ -264,6 +264,53 @@ describe('SnapshotStore', () => {
     expect(stats.oldestSnapshotAt).not.toBeNull();
   });
 
+  test('getLastSession finds an interrupted session that never closed', () => {
+    // Simulate an older, properly closed session (e.g. yesterday's caption run).
+    const older = store.openSession('testsite', 'caption');
+    store.capture({
+      siteName: 'testsite',
+      sessionId: older.id,
+      attachmentId: 1,
+      operation: 'caption',
+      sourceBytes: null,
+      beforeMeta: { filename: '1.jpg', mimeType: 'image/jpeg' },
+    });
+    store.closeSession(older.id);
+
+    // Simulate a bulk command interrupted mid-run (Ctrl-C / crash): snapshots
+    // were captured but closeSession() never ran, so item_count stays 0.
+    const interrupted = store.openSession('testsite', 'optimize', { quality: 80 });
+    store.capture({
+      siteName: 'testsite',
+      sessionId: interrupted.id,
+      attachmentId: 2,
+      operation: 'optimize',
+      sourceBytes: Buffer.from('interrupted'),
+      beforeMeta: { filename: '2.jpg', mimeType: 'image/jpeg' },
+    });
+
+    const last = store.getLastSession('testsite');
+    expect(last?.id).toBe(interrupted.id);
+    expect(last?.itemCount).toBe(0);
+  });
+
+  test('getLastSession skips a session whose snapshots are all restored', () => {
+    const session = store.openSession('testsite', 'optimize');
+    const id = store.capture({
+      siteName: 'testsite',
+      sessionId: session.id,
+      attachmentId: 3,
+      operation: 'optimize',
+      sourceBytes: Buffer.from('done'),
+      beforeMeta: { filename: '3.jpg', mimeType: 'image/jpeg' },
+    });
+    store.closeSession(session.id);
+    if (id === null) throw new Error('capture returned null unexpectedly');
+    store.markRestored(id);
+
+    expect(store.getLastSession('testsite')).toBeNull();
+  });
+
   test('readBlob returns the captured bytes', () => {
     const session = store.openSession('testsite', 'optimize');
     const id = store.capture({

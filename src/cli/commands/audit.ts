@@ -18,6 +18,7 @@ import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { MediaItem } from '../../adapters/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -55,8 +56,10 @@ export function registerAuditCommand(program: Command): void {
     .description('Find optimization opportunities across the media library')
     .option('--unoptimized', 'flag images that have never been processed')
     .option('--large', 'flag images larger than --threshold (default 1MB)')
-    .option('--threshold <bytes>', 'size threshold for --large in bytes (default 1048576)', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--threshold <bytes>',
+      'size threshold for --large in bytes (default 1048576)',
+      parseIntOption('--threshold'),
     )
     .option('--unattached', 'flag attachments not associated with any post')
     .option('--missing-alt', 'flag images without alt text')
@@ -139,6 +142,7 @@ export function registerAuditCommand(program: Command): void {
       }
 
       // -- Fetch all media items -----------------------------------------------
+      const scanStartedAt = Date.now();
       let allItems: MediaItem[] = [];
       let page = 1;
       while (true) {
@@ -160,16 +164,41 @@ export function registerAuditCommand(program: Command): void {
         return;
       }
 
-      // Load processed IDs for --unoptimized check.
+      // Sync the DB's attachment cache to what this full fetch just saw, then
+      // prune rows for attachments that no longer exist remotely — otherwise
+      // `stats`' getLibraryOverview() keeps counting deleted attachments forever.
+      // Also load processed IDs for the --unoptimized check.
       let processedIds = new Set<number>();
-      if (runAll || options.unoptimized) {
-        try {
-          const db = SiteDb.init(getSiteDbPath(site.name));
-          processedIds = db.listProcessedWpIds(site.name);
-          db.close();
-        } catch {
-          // DB doesn't exist yet — all items are unoptimized.
+      let prunedCount = 0;
+      try {
+        const db = SiteDb.init(getSiteDbPath(site.name));
+        db.ensureSite(site.name, site.url);
+        for (const item of allItems) {
+          db.upsertAttachment({
+            siteName: site.name,
+            wpId: item.id,
+            sourceUrl: item.url,
+            sourceHash: null,
+            sizeBytes: item.sizeBytes ?? null,
+            width: item.width ?? null,
+            height: item.height ?? null,
+            mimeType: item.mimeType,
+            lastSeenAt: scanStartedAt,
+          });
         }
+        prunedCount = db.pruneStaleAttachments(site.name, scanStartedAt);
+        if (runAll || options.unoptimized) {
+          processedIds = db.listProcessedWpIds(site.name);
+        }
+        db.close();
+      } catch (err) {
+        warn(
+          `Failed to sync attachment records: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      if (prunedCount > 0) {
+        info(`Pruned ${prunedCount} attachment record(s) no longer present remotely.`);
       }
 
       for (const item of allItems) {
@@ -266,6 +295,7 @@ export function registerAuditCommand(program: Command): void {
         printJson({
           site: site.name,
           totalItems: allItems.length,
+          prunedAttachments: prunedCount,
           findings,
           summary: {
             unoptimized: findings.filter((f) => f.type === 'unoptimized').length,
