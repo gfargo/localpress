@@ -241,6 +241,20 @@ describe.skipIf(!canRun)('WordPress REST API integration', () => {
 
     await adapter.delete(uploaded.id, { force: true });
 
+    // processing_history has an FK on (site_name, wp_id) -> attachments, so the
+    // attachment row must exist locally before recording a processing event for it.
+    db.upsertAttachment({
+      siteName: testSite.name,
+      wpId: uploaded.id,
+      sourceUrl: uploaded.url,
+      sourceHash: null,
+      sizeBytes: uploaded.sizeBytes ?? null,
+      width: uploaded.width ?? null,
+      height: uploaded.height ?? null,
+      mimeType: uploaded.mimeType,
+      lastSeenAt: Date.now(),
+    });
+
     db.recordProcessing({
       siteName: testSite.name,
       wpId: uploaded.id,
