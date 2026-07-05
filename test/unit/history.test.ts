@@ -204,6 +204,43 @@ describe('SnapshotStore', () => {
     store.markRestored(id2);
     const next = store.getLastSnapshotForAttachment('testsite', 5);
     expect(next?.id).toBe(id1);
+
+    // Regression: repeated captures of the same attachment in one session must
+    // not share a blob path — each row's blob is independently readable.
+    const snap1 = store.getSnapshot(id1);
+    const snap2 = store.getSnapshot(id2);
+    if (snap1 === null || snap2 === null) throw new Error('snapshot not found');
+    expect(snap1.blobPath).not.toBeNull();
+    expect(snap2.blobPath).not.toBeNull();
+    expect(snap1.blobPath).not.toBe(snap2.blobPath);
+    expect(store.readBlob(snap1).toString()).toBe('a');
+    expect(store.readBlob(snap2).toString()).toBe('b');
+  });
+
+  test('recapturing the same attachment + beforeHash in one session skips a redundant blob', () => {
+    const session = store.openSession('testsite', 'optimize');
+    const id1 = store.capture({
+      siteName: 'testsite',
+      sessionId: session.id,
+      attachmentId: 9,
+      operation: 'optimize',
+      sourceBytes: Buffer.from('original bytes'),
+      beforeMeta: { filename: '9.jpg', mimeType: 'image/jpeg' },
+      beforeHash: 'sha256:same',
+    });
+    const id2 = store.capture({
+      siteName: 'testsite',
+      sessionId: session.id,
+      attachmentId: 9,
+      operation: 'optimize',
+      sourceBytes: Buffer.from('original bytes'),
+      beforeMeta: { filename: '9.jpg', mimeType: 'image/jpeg' },
+      beforeHash: 'sha256:same',
+    });
+    store.closeSession(session.id);
+
+    expect(id2).toBe(id1);
+    expect(store.listSnapshots('testsite', { attachmentId: 9 }).length).toBe(1);
   });
 
   test('stats include count, sessions, and total bytes', () => {
@@ -225,6 +262,53 @@ describe('SnapshotStore', () => {
     expect(stats.sessionCount).toBe(1);
     expect(stats.totalBytes).toBe(750);
     expect(stats.oldestSnapshotAt).not.toBeNull();
+  });
+
+  test('getLastSession finds an interrupted session that never closed', () => {
+    // Simulate an older, properly closed session (e.g. yesterday's caption run).
+    const older = store.openSession('testsite', 'caption');
+    store.capture({
+      siteName: 'testsite',
+      sessionId: older.id,
+      attachmentId: 1,
+      operation: 'caption',
+      sourceBytes: null,
+      beforeMeta: { filename: '1.jpg', mimeType: 'image/jpeg' },
+    });
+    store.closeSession(older.id);
+
+    // Simulate a bulk command interrupted mid-run (Ctrl-C / crash): snapshots
+    // were captured but closeSession() never ran, so item_count stays 0.
+    const interrupted = store.openSession('testsite', 'optimize', { quality: 80 });
+    store.capture({
+      siteName: 'testsite',
+      sessionId: interrupted.id,
+      attachmentId: 2,
+      operation: 'optimize',
+      sourceBytes: Buffer.from('interrupted'),
+      beforeMeta: { filename: '2.jpg', mimeType: 'image/jpeg' },
+    });
+
+    const last = store.getLastSession('testsite');
+    expect(last?.id).toBe(interrupted.id);
+    expect(last?.itemCount).toBe(0);
+  });
+
+  test('getLastSession skips a session whose snapshots are all restored', () => {
+    const session = store.openSession('testsite', 'optimize');
+    const id = store.capture({
+      siteName: 'testsite',
+      sessionId: session.id,
+      attachmentId: 3,
+      operation: 'optimize',
+      sourceBytes: Buffer.from('done'),
+      beforeMeta: { filename: '3.jpg', mimeType: 'image/jpeg' },
+    });
+    store.closeSession(session.id);
+    if (id === null) throw new Error('capture returned null unexpectedly');
+    store.markRestored(id);
+
+    expect(store.getLastSession('testsite')).toBeNull();
   });
 
   test('readBlob returns the captured bytes', () => {

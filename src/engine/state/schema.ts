@@ -15,7 +15,7 @@
  * On startup, the DB layer compares this against the stored value and applies
  * pending migrations.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /**
  * Initial schema (v1). Idempotent — safe to run on every CLI invocation.
@@ -168,6 +168,14 @@ export const MIGRATIONS: Migration[] = [
 
       CREATE INDEX IF NOT EXISTS idx_snapshots_wp_id
         ON snapshots(site_name, wp_id, created_at DESC);
+    `,
+  },
+  {
+    version: 5,
+    description:
+      'Add reverted_at to processing_history so undo can exclude reverted rows from stats/idempotency',
+    up: `
+      ALTER TABLE processing_history ADD COLUMN reverted_at INTEGER;
     `,
   },
 ];

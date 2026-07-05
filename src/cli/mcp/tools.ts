@@ -799,7 +799,7 @@ export function registerTools(server: McpServer): void {
     {
       title: 'Delete attachments',
       description:
-        'Delete one or more attachments. Without `force: true`, WordPress moves them to trash (recoverable from the admin). With `force: true`, attachments + files are permanently removed. Pre-captures a binary snapshot for each attachment so `undo` can re-upload the file (as a new attachment ID; references will need rewriting).',
+        'Delete one or more attachments. Without `force: true`, WordPress moves them to trash (recoverable from the admin). With `force: true`, attachments + files are permanently removed — also requires `confirm: true`. Pre-captures a binary snapshot for each attachment so `undo` can re-upload the file (as a new attachment ID; references will need rewriting).',
       inputSchema: {
         ...commonSiteArg,
         ids: z.array(z.number().int().positive()).describe('Attachment IDs to delete'),
@@ -807,10 +807,25 @@ export function registerTools(server: McpServer): void {
           .boolean()
           .optional()
           .describe('Permanently delete (skip trash). Default: move to trash.'),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe('Required alongside `force: true` to acknowledge permanent deletion.'),
       },
     },
     async (args) => {
       const a = args as ArgMap;
+      if (a.force === true && a.confirm !== true) {
+        return {
+          isError: true as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: 'Refusing to permanently delete: pass `confirm: true` alongside `force: true` to acknowledge this is irreversible.',
+            },
+          ],
+        };
+      }
       const argv = ['delete'];
       ids(argv, a.ids);
       flag(argv, '--force', a.force);
@@ -999,7 +1014,11 @@ export function registerTools(server: McpServer): void {
           .describe('Default title for imported items (overridden by manifest)'),
         altText: z.string().optional().describe('Default alt text for imported items'),
         post: z.number().int().positive().optional().describe('Attach all imports to this post'),
-        preserveIds: z.boolean().optional(),
+        preserveMetadata: z
+          .boolean()
+          .optional()
+          .describe('Reapply alt/title/caption from a previous export manifest'),
+        preserveIds: z.boolean().optional().describe('Deprecated alias for preserveMetadata'),
         dryRun: z.boolean().optional(),
         concurrency: z.number().int().positive().optional().describe('Parallel uploads'),
       },
@@ -1016,6 +1035,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--title', a.title);
       opt(argv, '--alt', a.altText);
       opt(argv, '--post', a.post);
+      flag(argv, '--preserve-metadata', a.preserveMetadata);
       flag(argv, '--preserve-ids', a.preserveIds);
       flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
@@ -1356,7 +1376,8 @@ export function registerTools(server: McpServer): void {
     'posts_delete',
     {
       title: 'Delete a post or page',
-      description: 'Move a post/page to trash, or permanently delete with force=true.',
+      description:
+        'Move a post/page to trash, or permanently delete with force=true (also requires confirm=true).',
       inputSchema: {
         ...commonSiteArg,
         id: z.number().int().positive().describe('Post or page ID'),
@@ -1365,10 +1386,25 @@ export function registerTools(server: McpServer): void {
           .optional()
           .describe('Post type slug: post, page, or any custom post type (default: post)'),
         force: z.boolean().optional().describe('Permanently delete (skip trash)'),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe('Required alongside `force: true` to acknowledge permanent deletion.'),
       },
     },
     async (args) => {
       const a = args as ArgMap;
+      if (a.force === true && a.confirm !== true) {
+        return {
+          isError: true as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: 'Refusing to permanently delete: pass `confirm: true` alongside `force: true` to acknowledge this is irreversible.',
+            },
+          ],
+        };
+      }
       const argv = ['posts', 'delete', String(a.id)];
       opt(argv, '--type', a.type);
       flag(argv, '--force', a.force);
