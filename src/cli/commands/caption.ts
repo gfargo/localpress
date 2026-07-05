@@ -28,7 +28,9 @@ import {
 } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 export function registerCaptionCommand(program: Command): void {
   program
@@ -48,7 +50,6 @@ export function registerCaptionCommand(program: Command): void {
     .option('--all', 'process all image attachments (dry-run unless --apply)')
     .option('--overwrite', 'replace existing alt text (default: skip if already set)')
     .option('--language <lang>', 'generate alt text in this language (e.g. "Spanish", "French")')
-    .option('--dry-run', 'print generated captions without updating WordPress')
     .option('--list-models', 'list Ollama models available locally and exit')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
@@ -147,11 +148,7 @@ export function registerCaptionCommand(program: Command): void {
       let ids: number[];
 
       if (idStrs.length > 0) {
-        ids = idStrs.map((s) => Number.parseInt(s, 10));
-        if (ids.some(Number.isNaN)) {
-          error('All arguments must be valid attachment IDs (integers).');
-          process.exit(2);
-        }
+        ids = parseAttachmentIds(idStrs);
       } else if (options.missingAlt) {
         info('  Fetching attachments with missing alt text…');
         const allItems = await fetchAllImageAttachments(listAdapter);
@@ -182,9 +179,9 @@ export function registerCaptionCommand(program: Command): void {
 
       // Bulk operations (--all, --missing-alt) are dry-run by default unless --apply is passed.
       const isBulk = !idStrs.length && (options.missingAlt || options.all);
-      const isDryRun = options.dryRun || (isBulk && !parentOpts.apply);
+      const isDryRun = resolveDryRun(parentOpts, isBulk);
 
-      if (isBulk && !parentOpts.apply && !options.dryRun) {
+      if (isBulk && isDryRun) {
         info('  Dry-run: pass --apply to write captions to WordPress.\n');
       }
 

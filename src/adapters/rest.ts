@@ -20,7 +20,7 @@ import type {
   UploadMetadata,
   WpBackend,
 } from './types.ts';
-import { CapabilityUnavailableError } from './types.ts';
+import { CapabilityUnavailableError, WpApiError } from './types.ts';
 
 /**
  * Capabilities supported by the REST adapter. Notably absent:
@@ -95,8 +95,9 @@ export class RestAdapter implements WpBackend {
       } catch {
         wpMessage = body.slice(0, 200);
       }
-      throw new Error(
+      throw new WpApiError(
         `WordPress REST API error: ${response.status} ${response.statusText}${wpMessage ? ` — ${wpMessage}` : ''} (${init?.method ?? 'GET'} ${url})`,
+        response.status,
       );
     }
 
@@ -105,8 +106,9 @@ export class RestAdapter implements WpBackend {
     try {
       data = JSON.parse(text) as T;
     } catch {
-      throw new Error(
+      throw new WpApiError(
         `WordPress REST API: expected JSON but got ${response.status} ${response.headers.get('content-type') ?? 'unknown content-type'} (${init?.method ?? 'GET'} ${response.url})\nBody: ${text.slice(0, 500)}`,
+        response.status,
       );
     }
     return { data, headers: response.headers };
@@ -325,7 +327,10 @@ export class RestAdapter implements WpBackend {
         // If we get a 400 on page > 1, we've gone past the last page.
         if (page > 1 && response.status === 400) break;
         const body = await response.text().catch(() => '');
-        throw new Error(`WordPress REST API error: ${response.status} — ${body.slice(0, 200)}`);
+        throw new WpApiError(
+          `WordPress REST API error: ${response.status} — ${body.slice(0, 200)}`,
+          response.status,
+        );
       }
 
       const items = (await response.json()) as T[];

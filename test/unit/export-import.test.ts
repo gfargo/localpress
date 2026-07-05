@@ -6,9 +6,33 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
+import { deflateRawSync } from 'node:zlib';
+import {
+  ZIP32_MAX_ENTRIES,
+  ZIP32_MAX_SIZE,
+  ZipLimitExceededError,
+  ZipStreamWriter,
+  estimateEntryCount,
+  estimateTotalBytes,
+} from '../../src/cli/commands/export.ts';
+import {
+  type ExportManifest,
+  buildManifestIndex,
+  collectImageFiles,
+  parseZip as parseZipReal,
+  resolveManifestItem,
+} from '../../src/cli/commands/import.ts';
 
 /**
  * Minimal ZIP builder — extracted from export.ts for testing.
@@ -195,6 +219,96 @@ describe('ZIP round-trip', () => {
   });
 });
 
+describe('Zip Slip guard', () => {
+  /**
+   * Mirrors the containment check in `extractZip` (src/cli/commands/import.ts):
+   * every entry is resolved against the temp extraction root, and rejected if
+   * it would land outside that root.
+   */
+  function extractZipGuarded(zipBuffer: Buffer, tempDir: string): string[] {
+    const written: string[] = [];
+    const tempRoot = resolve(tempDir);
+
+    for (const entry of parseZip(zipBuffer)) {
+      const destPath = resolve(tempRoot, entry.path);
+      if (destPath !== tempRoot && !destPath.startsWith(tempRoot + sep)) {
+        continue;
+      }
+
+      mkdirSync(dirname(destPath), { recursive: true });
+      writeFileSync(destPath, entry.data);
+      written.push(destPath);
+    }
+
+    return written;
+  }
+
+  test('rejects relative traversal entries', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'localpress-zipslip-'));
+
+    try {
+      const zip = buildZipSync([
+        { path: '../../../../tmp/localpress-zipslip-poc.txt', data: Buffer.from('pwned') },
+        { path: '2026/01/hero.jpg', data: Buffer.from('safe-image-data') },
+      ]);
+
+      const written = extractZipGuarded(zip, tempDir);
+
+      expect(written.every((p) => p.startsWith(resolve(tempDir) + sep))).toBe(true);
+      expect(written.some((p) => p.endsWith('hero.jpg'))).toBe(true);
+      expect(written.some((p) => p.includes('localpress-zipslip-poc.txt'))).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects absolute-path entries', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'localpress-zipslip-'));
+    const maliciousAbsPath = join(tmpdir(), 'localpress-zipslip-abs-poc.txt');
+
+    try {
+      // Confirm path.resolve's documented behavior: an absolute second segment
+      // wins outright, which is exactly what the guard must catch.
+      expect(resolve(resolve(tempDir), maliciousAbsPath)).toBe(maliciousAbsPath);
+
+      const zip = buildZipSync([
+        { path: maliciousAbsPath, data: Buffer.from('pwned') },
+        { path: '2026/01/hero.jpg', data: Buffer.from('safe-image-data') },
+      ]);
+
+      const written = extractZipGuarded(zip, tempDir);
+
+      expect(written.every((p) => p.startsWith(resolve(tempDir) + sep))).toBe(true);
+      expect(written.some((p) => p === maliciousAbsPath)).toBe(false);
+      expect(() =>
+        readdirSync(dirname(maliciousAbsPath)).includes('localpress-zipslip-abs-poc.txt'),
+      ).not.toThrow();
+      expect(readdirSync(tmpdir()).includes('localpress-zipslip-abs-poc.txt')).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+      rmSync(maliciousAbsPath, { force: true });
+    }
+  });
+
+  test('still extracts nested benign paths', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'localpress-zipslip-'));
+
+    try {
+      const zip = buildZipSync([
+        { path: '2026/01/hero.jpg', data: Buffer.from('safe-image-data') },
+      ]);
+
+      const written = extractZipGuarded(zip, tempDir);
+
+      expect(written).toHaveLength(1);
+      expect(written[0]).toBe(join(resolve(tempDir), '2026', '01', 'hero.jpg'));
+      expect(readFileSync(written[0], 'utf-8')).toBe('safe-image-data');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('CRC-32', () => {
   test('empty buffer produces known CRC', () => {
     expect(crc32(Buffer.alloc(0))).toBe(0x00000000);
@@ -349,5 +463,298 @@ describe('export manifest structure', () => {
     expect(parsed.version).toBe(1);
     expect(parsed.site).toBe('test');
     expect(parsed.items).toEqual([]);
+  });
+});
+
+function fakeItem(
+  id: number,
+  sizeBytes?: number,
+): Parameters<typeof estimateEntryCount>[0][number] {
+  return {
+    id,
+    title: `item-${id}`,
+    filename: `item-${id}.jpg`,
+    url: `https://example.com/wp-content/uploads/2026/01/item-${id}.jpg`,
+    mimeType: 'image/jpeg',
+    sizeBytes,
+    uploadedAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+describe('ZIP32 limit preflight estimates', () => {
+  test('estimateEntryCount counts items + manifest.json', () => {
+    const items = [fakeItem(1), fakeItem(2), fakeItem(3)];
+    expect(estimateEntryCount(items, {})).toBe(4); // 3 items + manifest
+  });
+
+  test('estimateEntryCount includes variant sizes when --include-sizes is set', () => {
+    const items = [
+      {
+        ...fakeItem(1),
+        sizes: {
+          thumbnail: { width: 150, height: 150, url: 'https://x/t.jpg', filename: 't.jpg' },
+          medium: { width: 300, height: 300, url: 'https://x/m.jpg', filename: 'm.jpg' },
+        },
+      },
+    ];
+    expect(estimateEntryCount(items, { includeSizes: true })).toBe(4); // 1 item + 2 sizes + manifest
+    expect(estimateEntryCount(items, { includeSizes: false })).toBe(2); // 1 item + manifest
+  });
+
+  test('estimateEntryCount flags an archive that would exceed the 65,535 entry ZIP32 limit', () => {
+    // Don't materialize 65k+ objects — just prove the math the real call site uses.
+    const itemCount = ZIP32_MAX_ENTRIES + 10;
+    const items = Array.from({ length: itemCount }, (_, i) => fakeItem(i));
+    const entryCount = estimateEntryCount(items, {});
+    expect(entryCount).toBeGreaterThan(ZIP32_MAX_ENTRIES);
+  });
+
+  test('estimateTotalBytes sums known sizeBytes metadata', () => {
+    const items = [fakeItem(1, 1000), fakeItem(2, 2000), fakeItem(3, undefined)];
+    expect(estimateTotalBytes(items, {})).toBe(3000);
+  });
+
+  test('estimateTotalBytes flags an archive that would exceed the 4 GiB ZIP32 size limit', () => {
+    const items = [fakeItem(1, ZIP32_MAX_SIZE), fakeItem(2, 1)];
+    expect(estimateTotalBytes(items, {})).toBeGreaterThan(ZIP32_MAX_SIZE);
+  });
+});
+
+describe('ZipStreamWriter', () => {
+  test('streams entries to disk and produces a ZIP parseable by the existing reader', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'localpress-zip-write-'));
+    const destPath = join(tempDir, 'export.zip');
+
+    try {
+      const writer = new ZipStreamWriter(destPath);
+      await writer.writeEntry('2026/01/hero.jpg', Buffer.from('fake-jpeg-bytes'));
+      await writer.writeEntry('2026/05/logo.png', Buffer.from('fake-png-bytes'));
+      await writer.writeEntry('manifest.json', Buffer.from('{"version":1}'));
+      await writer.finalize();
+
+      expect(existsSync(destPath)).toBe(true);
+      expect(existsSync(`${destPath}.tmp`)).toBe(false);
+
+      const parsed = parseZip(readFileSync(destPath));
+      expect(parsed).toHaveLength(3);
+      expect(parsed[0].path).toBe('2026/01/hero.jpg');
+      expect(parsed[0].data.toString()).toBe('fake-jpeg-bytes');
+      expect(parsed[1].path).toBe('2026/05/logo.png');
+      expect(parsed[2].path).toBe('manifest.json');
+      expect(parsed[2].data.toString()).toBe('{"version":1}');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('aborts and removes the .tmp file when an entry would exceed the 4 GiB per-file limit', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'localpress-zip-abort-'));
+    const destPath = join(tempDir, 'export.zip');
+
+    try {
+      const writer = new ZipStreamWriter(destPath);
+      // Simulate an oversized entry without actually allocating 4 GiB.
+      const oversized = { length: ZIP32_MAX_SIZE + 1 } as unknown as Buffer;
+
+      await expect(writer.writeEntry('huge-file.jpg', oversized)).rejects.toThrow(
+        ZipLimitExceededError,
+      );
+
+      writer.abort();
+
+      expect(existsSync(`${destPath}.tmp`)).toBe(false);
+      expect(existsSync(destPath)).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('collectImageFiles (real, from import.ts)', () => {
+  test('returns distinct relativePaths for same-basename files in different subdirectories', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'localpress-collect-'));
+
+    try {
+      mkdirSync(join(tempDir, '2026', '01'), { recursive: true });
+      mkdirSync(join(tempDir, '2026', '05'), { recursive: true });
+      writeFileSync(join(tempDir, '2026', '01', 'photo.jpg'), 'jan');
+      writeFileSync(join(tempDir, '2026', '05', 'photo.jpg'), 'may');
+
+      const files = collectImageFiles(tempDir);
+
+      expect(files).toHaveLength(2);
+      const relativePaths = files.map((f) => f.relativePath).sort();
+      expect(relativePaths).toEqual(['2026/01/photo.jpg', '2026/05/photo.jpg']);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+function makeManifest(items: ExportManifest['items']): ExportManifest {
+  return {
+    version: 1,
+    site: 'test',
+    siteUrl: 'https://test.com',
+    exportedAt: '2026-01-01T00:00:00.000Z',
+    items,
+    totalBytes: 0,
+  };
+}
+
+describe('manifest metadata matching (real, from import.ts)', () => {
+  test('resolves colliding basenames by relativePath instead of the last-indexed item', () => {
+    const manifest = makeManifest([
+      {
+        id: 1,
+        filename: 'photo.jpg',
+        relativePath: '2026/01/photo.jpg',
+        url: 'https://example.com/wp-content/uploads/2026/01/photo.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 1,
+        title: 'January',
+        uploadedAt: '2026-01-01T00:00:00.000Z',
+        sha256: 'a',
+      },
+      {
+        id: 2,
+        filename: 'photo.jpg',
+        relativePath: '2026/05/photo.jpg',
+        url: 'https://example.com/wp-content/uploads/2026/05/photo.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 1,
+        title: 'May',
+        uploadedAt: '2026-05-01T00:00:00.000Z',
+        sha256: 'b',
+      },
+    ]);
+    const index = buildManifestIndex(manifest);
+
+    const jan = resolveManifestItem(index, {
+      path: '/tmp/x/photo.jpg',
+      relativePath: '2026/01/photo.jpg',
+    });
+    const may = resolveManifestItem(index, {
+      path: '/tmp/x/photo.jpg',
+      relativePath: '2026/05/photo.jpg',
+    });
+
+    expect(jan.item?.id).toBe(1);
+    expect(jan.item?.title).toBe('January');
+    expect(may.item?.id).toBe(2);
+    expect(may.item?.title).toBe('May');
+  });
+
+  test('ambiguous basename with no relativePath match returns undefined, not the wrong item', () => {
+    const manifest = makeManifest([
+      {
+        id: 1,
+        filename: 'photo.jpg',
+        relativePath: '2026/01/photo.jpg',
+        url: 'https://example.com/wp-content/uploads/2026/01/photo.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 1,
+        title: 'January',
+        uploadedAt: '2026-01-01T00:00:00.000Z',
+        sha256: 'a',
+      },
+      {
+        id: 2,
+        filename: 'photo.jpg',
+        relativePath: '2026/05/photo.jpg',
+        url: 'https://example.com/wp-content/uploads/2026/05/photo.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 1,
+        title: 'May',
+        uploadedAt: '2026-05-01T00:00:00.000Z',
+        sha256: 'b',
+      },
+    ]);
+    const index = buildManifestIndex(manifest);
+
+    const resolution = resolveManifestItem(index, { path: '/tmp/x/photo.jpg', relativePath: null });
+
+    expect(resolution.item).toBeUndefined();
+    expect(resolution.ambiguous).toBe(true);
+  });
+
+  test('unique basename still resolves when relativePath is unavailable', () => {
+    const manifest = makeManifest([
+      {
+        id: 3,
+        filename: 'logo.png',
+        relativePath: '2026/02/logo.png',
+        url: 'https://example.com/wp-content/uploads/2026/02/logo.png',
+        mimeType: 'image/png',
+        sizeBytes: 1,
+        title: 'Logo',
+        uploadedAt: '2026-02-01T00:00:00.000Z',
+        sha256: 'c',
+      },
+    ]);
+    const index = buildManifestIndex(manifest);
+
+    const resolution = resolveManifestItem(index, { path: '/tmp/x/logo.png', relativePath: null });
+
+    expect(resolution.item?.id).toBe(3);
+    expect(resolution.ambiguous).toBe(false);
+  });
+});
+
+function buildLocalFileHeaderEntry(
+  path: string,
+  data: Buffer,
+  compression: number,
+  flags = 0,
+): Buffer {
+  const pathBuf = Buffer.from(path, 'utf-8');
+  const header = Buffer.alloc(30 + pathBuf.length);
+  header.writeUInt32LE(0x04034b50, 0);
+  header.writeUInt16LE(20, 4);
+  header.writeUInt16LE(flags, 6);
+  header.writeUInt16LE(compression, 8);
+  header.writeUInt16LE(0, 10);
+  header.writeUInt16LE(0, 12);
+  header.writeUInt32LE(0, 14);
+  header.writeUInt32LE(data.length, 18);
+  header.writeUInt32LE(data.length, 22);
+  header.writeUInt16LE(pathBuf.length, 26);
+  header.writeUInt16LE(0, 28);
+  pathBuf.copy(header, 30);
+  return Buffer.concat([header, data]);
+}
+
+describe('parseZip (real, from import.ts)', () => {
+  test('STORE entries still round-trip', () => {
+    const zip = buildZipSync([{ path: '2026/01/hero.jpg', data: Buffer.from('fake-jpeg-data') }]);
+    const parsed = parseZipReal(zip);
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].path).toBe('2026/01/hero.jpg');
+    expect(parsed[0].data.toString()).toBe('fake-jpeg-data');
+  });
+
+  test('DEFLATE-compressed entries decode correctly', () => {
+    const original = Buffer.from('Hello from a standard zip tool!');
+    const compressed = deflateRawSync(original);
+    const zip = buildLocalFileHeaderEntry('photo.txt', compressed, 8);
+
+    const parsed = parseZipReal(zip);
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].path).toBe('photo.txt');
+    expect(parsed[0].data.toString()).toBe('Hello from a standard zip tool!');
+  });
+
+  test('throws an explicit error for an unsupported compression method', () => {
+    const zip = buildLocalFileHeaderEntry('file.bin', Buffer.from('data'), 99);
+
+    expect(() => parseZipReal(zip)).toThrow(/unsupported ZIP compression/i);
+  });
+
+  test('throws an explicit error for a data-descriptor streamed entry', () => {
+    const zip = buildLocalFileHeaderEntry('file.bin', Buffer.from('data'), 8, 0x0008);
+
+    expect(() => parseZipReal(zip)).toThrow(/data descriptor/i);
   });
 });

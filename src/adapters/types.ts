@@ -49,6 +49,8 @@ export interface MediaItem {
   uploadedAt: string;
   /** WordPress's auto-generated thumbnail/medium/large variants. */
   sizes?: Record<string, MediaSize>;
+  /** Set by `replaceInPlace` when a format change triggered a reference rewrite. */
+  formatChangeRewrite?: FormatChangeRewrite;
 }
 
 export interface MediaSize {
@@ -57,6 +59,14 @@ export interface MediaSize {
   url: string;
   filename: string;
   sizeBytes?: number;
+}
+
+/** Outcome of rewriting post-content references after a format-changing replace-in-place. */
+export interface FormatChangeRewrite {
+  /** Number of URL occurrences rewritten across post content/meta (best-effort parse of `wp search-replace` output). */
+  rewrittenUrls: number;
+  /** Set when the rewrite step itself failed — the file replacement still succeeded. */
+  warning?: string;
 }
 
 export type SortField = 'date' | 'name' | 'size' | 'id';
@@ -188,5 +198,16 @@ export class CapabilityUnavailableError extends Error {
   ) {
     super(message ?? `Capability '${capability}' is not available on the ${adapter} adapter`);
     this.name = 'CapabilityUnavailableError';
+  }
+}
+
+/** Thrown when a WordPress REST API request fails with an HTTP error status. */
+export class WpApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'WpApiError';
   }
 }

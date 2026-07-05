@@ -147,8 +147,10 @@ export function registerStatsCommand(program: Command): void {
             `    Cumulative savings:  ${saved} across ${stats.filesTouched.toLocaleString()} attachments`,
           );
           info(`    Average compression: ${avgPct}%`);
+          const skippedNote =
+            stats.skipped > 0 ? ` / ${stats.skipped.toLocaleString()} skipped` : '';
           info(
-            `    Operations:          ${stats.succeeded.toLocaleString()} succeeded / ${(stats.totalOps - stats.succeeded).toLocaleString()} failed`,
+            `    Operations:          ${stats.succeeded.toLocaleString()} succeeded / ${stats.failed.toLocaleString()} failed${skippedNote}`,
           );
           info(`    Last run:            ${lastRan}`);
           info('');
