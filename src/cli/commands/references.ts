@@ -10,6 +10,7 @@ import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import { shellQuote, sshExec } from '../../adapters/ssh.ts';
 import type { ReferenceScope } from '../../adapters/types.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { resolveDryRun } from '../utils/run-mode.ts';
@@ -22,7 +23,7 @@ export function registerReferencesCommand(program: Command): void {
     .option(
       '--update-to <newId>',
       'rewrite all references to point at this new attachment ID (requires WP-CLI)',
-      (v) => Number.parseInt(v, 10),
+      parseIntOption('--update-to'),
     )
     .action(async (idStr: string, options) => {
       const parentOpts = program.opts();

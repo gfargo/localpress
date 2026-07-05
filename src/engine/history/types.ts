@@ -23,6 +23,8 @@ export interface SnapshotMeta {
   title?: string;
   caption?: string;
   description?: string;
+  /** WP slug / post_name before the change. Only set by ops that touch the slug (e.g. rename). */
+  slug?: string;
   width?: number;
   height?: number;
   sizeBytes?: number;

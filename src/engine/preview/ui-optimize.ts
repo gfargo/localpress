@@ -246,6 +246,7 @@ export function buildOptimizeHtml(): string {
   </div>
 </div>
 <script>
+  const PREVIEW_TOKEN = location.hash.slice(1);
   let meta = null, hasResult = false, processing = false, viewMode = 'source';
   let comparePos = 0.5, dragging = false;
   const canvas = document.getElementById('canvas');
@@ -259,13 +260,13 @@ export function buildOptimizeHtml(): string {
   let ws = null;
   function connectWs() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(proto + '//' + location.host + '/ws');
+    ws = new WebSocket(proto + '//' + location.host + '/ws?token=' + encodeURIComponent(PREVIEW_TOKEN));
     ws.onopen = () => { setInterval(() => { if (ws.readyState === 1) ws.send('ping'); }, 5000); };
   }
 
   async function init() {
     connectWs();
-    const res = await fetch('/api/meta');
+    const res = await fetch('/api/meta', { headers: { 'X-Preview-Token': PREVIEW_TOKEN } });
     meta = await res.json();
     document.getElementById('filename').textContent = meta.filename;
     document.getElementById('meta').textContent = [
@@ -327,24 +328,24 @@ export function buildOptimizeHtml(): string {
   function showSourceImage() {
     clearCanvas();
     const img = document.createElement('img');
-    img.src = '/api/source'; img.alt = 'Original'; img.className = 'single-view';
+    img.src = '/api/source?token=' + encodeURIComponent(PREVIEW_TOKEN); img.alt = 'Original'; img.className = 'single-view';
     img.onload = () => { loadingOverlay.style.display = 'none'; };
     canvas.appendChild(img); addViewToggle();
   }
   function showResultImage() {
     clearCanvas();
     const img = document.createElement('img');
-    img.src = '/api/result?t=' + Date.now(); img.alt = 'Optimized'; img.className = 'single-view';
+    img.src = '/api/result?t=' + Date.now() + '&token=' + encodeURIComponent(PREVIEW_TOKEN); img.alt = 'Optimized'; img.className = 'single-view';
     canvas.appendChild(img); addViewToggle();
   }
   function showCompareView() {
     clearCanvas();
     const w = document.createElement('div'); w.className = 'compare-wrapper';
     const rImg = document.createElement('img');
-    rImg.src = '/api/result?t=' + Date.now(); rImg.alt = 'Optimized'; rImg.className = 'compare-result';
+    rImg.src = '/api/result?t=' + Date.now() + '&token=' + encodeURIComponent(PREVIEW_TOKEN); rImg.alt = 'Optimized'; rImg.className = 'compare-result';
     w.appendChild(rImg);
     const clip = document.createElement('div'); clip.className = 'compare-clip';
-    const sImg = document.createElement('img'); sImg.src = '/api/source'; sImg.alt = 'Original';
+    const sImg = document.createElement('img'); sImg.src = '/api/source?token=' + encodeURIComponent(PREVIEW_TOKEN); sImg.alt = 'Original';
     clip.appendChild(sImg); w.appendChild(clip);
     const div = document.createElement('div'); div.className = 'compare-divider'; w.appendChild(div);
     const lL = document.createElement('div'); lL.className = 'compare-label left'; lL.textContent = 'Original'; w.appendChild(lL);
@@ -401,7 +402,7 @@ export function buildOptimizeHtml(): string {
       maxHeight: parseInt(document.getElementById('max-height').value, 10) || null,
     };
     try {
-      const res = await fetch('/api/process', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(params) });
+      const res = await fetch('/api/process', { method: 'POST', headers: {'Content-Type':'application/json', 'X-Preview-Token': PREVIEW_TOKEN}, body: JSON.stringify(params) });
       const data = await res.json();
       if (data.error) { showToast(data.error, 'error'); return; }
       hasResult = true; btnApply.disabled = false; btnProcess.textContent = 'Re-generate Preview';
@@ -426,7 +427,7 @@ export function buildOptimizeHtml(): string {
   async function applyResult() {
     if (!hasResult) return; btnApply.disabled = true; btnApply.textContent = 'Uploading...';
     try {
-      const res = await fetch('/api/apply', { method: 'POST' }); const data = await res.json();
+      const res = await fetch('/api/apply', { method: 'POST', headers: { 'X-Preview-Token': PREVIEW_TOKEN } }); const data = await res.json();
       if (data.error) { showToast(data.error, 'error'); btnApply.disabled = false; btnApply.textContent = 'Apply & Upload to WordPress'; return; }
       showToast('Uploaded as #' + data.wpId, 'success'); btnApply.textContent = 'Applied ✓';
       // Build success message with fresh metadata if available
@@ -442,7 +443,7 @@ export function buildOptimizeHtml(): string {
     } catch (err) { showToast('Upload failed: ' + err.message, 'error'); btnApply.disabled = false; btnApply.textContent = 'Apply & Upload to WordPress'; }
   }
   async function cancelPreview() {
-    try { await fetch('/api/cancel', { method: 'POST' }); } catch {}
+    try { await fetch('/api/cancel', { method: 'POST', headers: { 'X-Preview-Token': PREVIEW_TOKEN } }); } catch {}
     document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#e4e6ef;font-family:sans-serif"><h2>Cancelled</h2><p style="color:#8b8fa3">You can close this tab.</p></div>';
   }
 
