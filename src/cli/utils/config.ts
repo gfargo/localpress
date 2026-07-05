@@ -118,6 +118,23 @@ export async function saveConfig(config: Config): Promise<void> {
   }
 }
 
+/**
+ * Merge connection-detail updates into an existing site config, preserving
+ * fields not covered by `updates` (notably `ssh`) and the original
+ * `createdAt`. Used by `init` so re-running it to rotate credentials doesn't
+ * silently drop SSH configuration.
+ */
+export function mergeSiteConfig(
+  existing: SiteConfig | undefined,
+  updates: Pick<SiteConfig, 'name' | 'url' | 'username' | 'appPassword'>,
+): SiteConfig {
+  return {
+    ...existing,
+    ...updates,
+    createdAt: existing?.createdAt ?? new Date().toISOString(),
+  };
+}
+
 /** Resolve which site to act on, given an optional --site override. */
 export function resolveActiveSite(config: Config, override?: string): SiteConfig {
   const name = override ?? config.activeSite;
