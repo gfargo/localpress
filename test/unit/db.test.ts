@@ -409,6 +409,62 @@ describe('processing history', () => {
   });
 });
 
+describe('pruneStaleAttachments', () => {
+  test('removes only rows last seen before the cutoff', () => {
+    const db = createTestDb();
+
+    db.upsertAttachment({
+      siteName: 'test-site',
+      wpId: 1,
+      sourceUrl: 'https://example.test/old.jpg',
+      sourceHash: null,
+      sizeBytes: 100,
+      width: null,
+      height: null,
+      mimeType: 'image/jpeg',
+      lastSeenAt: 1000,
+    });
+
+    db.upsertAttachment({
+      siteName: 'test-site',
+      wpId: 2,
+      sourceUrl: 'https://example.test/new.jpg',
+      sourceHash: null,
+      sizeBytes: 100,
+      width: null,
+      height: null,
+      mimeType: 'image/jpeg',
+      lastSeenAt: 2000,
+    });
+
+    const removed = db.pruneStaleAttachments('test-site', 2000);
+    expect(removed).toBe(1);
+    expect(db.getAttachment('test-site', 1)).toBeNull();
+    expect(db.getAttachment('test-site', 2)).not.toBeNull();
+    expect(db.getLibraryOverview('test-site').totalAttachments).toBe(1);
+
+    db.close();
+  });
+
+  test('returns 0 when nothing is stale', () => {
+    const db = createTestDb();
+    db.upsertAttachment({
+      siteName: 'test-site',
+      wpId: 1,
+      sourceUrl: 'https://example.test/img.jpg',
+      sourceHash: null,
+      sizeBytes: 100,
+      width: null,
+      height: null,
+      mimeType: 'image/jpeg',
+      lastSeenAt: 5000,
+    });
+
+    expect(db.pruneStaleAttachments('test-site', 1000)).toBe(0);
+    db.close();
+  });
+});
+
 describe('listProcessedWpIds', () => {
   test('returns IDs with successful processing history', () => {
     const db = createTestDb();

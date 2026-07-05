@@ -378,24 +378,7 @@ export function registerListCommand(program: Command): void {
             lastProcessedId = 'id' in pendingAction ? pendingAction.id : null;
           }
 
-          // Store the ID of the item that was just processed so we can
-          // refresh it after the next page fetch (bypasses REST API cache).
-          const justProcessedId =
-            processingTypes.has(pendingAction.type) && 'id' in pendingAction
-              ? pendingAction.id
-              : null;
-
           process.stdout.write('\x1b[2J\x1b[H');
-
-          // The loop will re-fetch the page at the top. After that fetch,
-          // we patch the specific item with a fresh getMedia() call to ensure
-          // we show updated metadata (mimeType, sizeBytes, dimensions) even
-          // if WordPress's REST API returns a cached page response.
-          if (justProcessedId !== null) {
-            // We'll handle this at the top of the next loop iteration.
-            // Store it in a variable accessible to the next iteration.
-            // (We use a closure variable declared outside the loop.)
-          }
         }
 
         return;

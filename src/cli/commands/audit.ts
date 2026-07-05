@@ -139,6 +139,7 @@ export function registerAuditCommand(program: Command): void {
       }
 
       // -- Fetch all media items -----------------------------------------------
+      const scanStartedAt = Date.now();
       let allItems: MediaItem[] = [];
       let page = 1;
       while (true) {
@@ -160,16 +161,41 @@ export function registerAuditCommand(program: Command): void {
         return;
       }
 
-      // Load processed IDs for --unoptimized check.
+      // Sync the DB's attachment cache to what this full fetch just saw, then
+      // prune rows for attachments that no longer exist remotely — otherwise
+      // `stats`' getLibraryOverview() keeps counting deleted attachments forever.
+      // Also load processed IDs for the --unoptimized check.
       let processedIds = new Set<number>();
-      if (runAll || options.unoptimized) {
-        try {
-          const db = SiteDb.init(getSiteDbPath(site.name));
-          processedIds = db.listProcessedWpIds(site.name);
-          db.close();
-        } catch {
-          // DB doesn't exist yet — all items are unoptimized.
+      let prunedCount = 0;
+      try {
+        const db = SiteDb.init(getSiteDbPath(site.name));
+        db.ensureSite(site.name, site.url);
+        for (const item of allItems) {
+          db.upsertAttachment({
+            siteName: site.name,
+            wpId: item.id,
+            sourceUrl: item.url,
+            sourceHash: null,
+            sizeBytes: item.sizeBytes ?? null,
+            width: item.width ?? null,
+            height: item.height ?? null,
+            mimeType: item.mimeType,
+            lastSeenAt: scanStartedAt,
+          });
         }
+        prunedCount = db.pruneStaleAttachments(site.name, scanStartedAt);
+        if (runAll || options.unoptimized) {
+          processedIds = db.listProcessedWpIds(site.name);
+        }
+        db.close();
+      } catch (err) {
+        warn(
+          `Failed to sync attachment records: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      if (prunedCount > 0) {
+        info(`Pruned ${prunedCount} attachment record(s) no longer present remotely.`);
       }
 
       for (const item of allItems) {
@@ -266,6 +292,7 @@ export function registerAuditCommand(program: Command): void {
         printJson({
           site: site.name,
           totalItems: allItems.length,
+          prunedAttachments: prunedCount,
           findings,
           summary: {
             unoptimized: findings.filter((f) => f.type === 'unoptimized').length,
