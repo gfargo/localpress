@@ -7,132 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- **`watch --delete` no longer fails on every removal** (#102). It called
-  `delete()` with no options, which always hit the same `rest_trash_not_supported`
-  501 that stock WordPress (no `MEDIA_TRASH`) returns for non-force deletes.
-  `watch --delete` now deliberately force-deletes (documented in `--help` and
-  the module docblock) and captures a time-machine snapshot first, so
-  `localpress undo --apply` can restore the file.
-- Added integration test coverage for a non-force `delete()` call against a
-  stock WordPress install, asserting the actionable `MEDIA_TRASH`/`--force`
-  error message instead of a raw 501.
-- **`watch --optimize` no longer aborts on SVG/unsupported files** (#94 follow-up)
-  — unsupported formats are now uploaded as-is with a warning instead of erroring
-  out, matching `import --optimize`'s existing behavior. The bulk-path MIME
-  whitelist (`OPTIMIZABLE_MIME_TYPES`) is now exported and directly unit-tested.
-- **`resize`, `convert`, and `watch` now report animation-preservation skips
-  consistently with `optimize`** (#93 follow-up). Animated sources refused
-  because the target format can't hold animation are counted/emitted as
-  `skipped` instead of `failures`/`error`, matching `optimize`'s handling.
-### Fixed — data safety
-- **`undo` verifies a binary snapshot's blob before restoring it** (#92).
-  `SnapshotStore.readBlob` now checks the blob file exists, that its size
-  matches the recorded `blob_size`, and (when `beforeHash` was captured) that
-  its SHA-256 matches, refusing with a clear error instead of restoring
-  missing/truncated/corrupted bytes over a live attachment. Snapshots written
-  by pre-2.1.0 versions (before the fire-and-forget write bug was fixed) may
-  now correctly fail this check if their blob was never fully flushed to disk.
-### Fixed
-- **`optimize` idempotency is correct in both directions** (#97): re-running
-  `optimize` after a successful replace-in-place now compares the live file's
-  hash against the *previous run's output* (not its original source hash), so
-  a second `--all --apply` skips already-optimized files instead of
-  re-compressing and double-counting `stats` savings. `undo` now marks the
-  reversed `processing_history` row so a restored attachment is eligible for
-  re-optimizing again (previously permanently "skipped"), and stats no longer
-  count savings that were later undone. Changed options (`--to`, `--quality`,
-  `--target-size`, etc.) are now compared too, so a follow-up run with
-  different settings always re-processes instead of being silently skipped.
-  Added `optimize --force` to bypass the skip explicitly, and a distinct
-  `'skipped'` processing status (the "result would be larger" case is no
-  longer recorded as `'success'`).
-- **`sites run` forwards `--apply`/`--dry-run`/`--strict` to child processes**
-  (#104). Previously these parent-level flags were silently dropped, so bulk
-  ops ran as no-op dry-runs while the parent reported success.
-- **`sites run` tokenizer no longer drops empty quoted arguments or treats
-  mid-word apostrophes as quotes** (#104) — `--alt-text ""` is preserved and
-  `don't-stop` is no longer mangled into `dont-stop`.
-- **`sites run` children get a 30-minute default timeout** (#104), separate
-  from the 5-minute MCP-tool-call default, and are now escalated to `SIGKILL`
-  if they don't exit within a grace period after `SIGTERM`. Configurable via
-  `--timeout <ms>`.
-- **`update` verifies the downloaded tarball's SHA256 checksum before
-  extracting** (#121) — the release workflow now publishes a `checksums.txt`
-  asset; `update` downloads it alongside the archive and hard-fails if the
-  digest doesn't match or `checksums.txt` is missing from the release. Any
-  non-`https:` download URL is rejected outright.
-- **`update`'s install swap is now atomic** (#121) — the new install is staged
-  in a sibling directory and swapped into place with two `rename()` calls
-  (`targetDir → backup`, `staging → targetDir`) instead of deleting the old
-  install and copying over it, so a crash mid-update can't leave a broken
-  install. On failure after the first rename, the backup is renamed back.
-- **`a11y` no longer reports a false "No accessibility issues found" success**
-  when the scan failed or was truncated (#103). HTTP/network errors during
-  pagination or `--id` lookups are now recorded and surfaced (human output +
-  `errors: []` in `--json`), and the command exits with `ExitCode.NetworkError`
-  instead of `0`. Hitting `--limit` before all pages are checked is now
-  reported as an incomplete scan rather than silently treated as exhaustive.
-  `--json` output adds `errors` and `complete` fields (additive).
-
 ## [2.1.0] - 2026-07-05
 
-Trust & correctness release — hardens the safety primitives (dry-run, undo,
-idempotency, reference tracking) surfaced by a full-codebase audit. No new
-command surface; every change makes an existing operation safer or more correct.
+The first release since v2.0.0 — a large **trust, correctness, and security**
+release that hardens nearly every existing command against the failure modes
+surfaced by a full-codebase audit, plus a few new features. No breaking changes.
+
+### Added
+- **`sites run <command>`** — run any localpress command across multiple sites
+  (`--all-sites` or `--sites a,b,c`), with per-site JSON aggregation and
+  per-site failure isolation (#88).
+- **`optimize --target-size <size>`** — binary-searches the quality parameter to
+  hit a file-size budget (e.g. `100kb`, `1mb`) for jpeg/webp/avif (#87).
+- **`optimize --force`** — bypass the idempotency skip and re-process an
+  attachment even when the output is already up to date (#97).
+- VHS-based screenshot/GIF generation pipeline for docs (#86).
 
 ### Fixed — data safety (critical)
-- **`references --update-to` no longer mutates the database under `--dry-run`**
-  (#89). The featured-image (`_thumbnail_id`) update previously ran
-  unconditionally; it is now gated and reports a count in dry-run mode.
-- **`references --update-to` block-ID rewrite is boundary-anchored** (#89) — a
-  regex-anchored replace scoped to `post_content` so rewriting attachment `12`
-  can no longer corrupt `123`. URL replacement now runs across all tables
-  (serialize-safe) instead of `wp_posts` only, resolves the real table prefix,
-  and reports partial-failure state.
-- **Global `--dry-run` is honored by `delete`, `posts delete`, `posts update`,
-  and `metadata`** (#90) via a shared `resolveDryRun` helper — these destructive
-  commands previously ignored it and executed for real.
-- **Animated GIF/WebP are preserved, not flattened** (#93). Multi-frame sources
-  stay animated for gif/webp targets and are skipped (with a warning) for
-  formats that can't hold animation, instead of being silently reduced to frame 1.
-- **SVG and other unencodable formats are skipped, not rasterized** (#94).
-  `optimize --all` filters to a MIME whitelist and the engine throws rather than
-  writing PNG bytes under a `.svg` name.
-- **Snapshots are written synchronously before the history row is committed**
-  (#92) — an interrupted run can no longer leave `undo` pointing at a missing
-  or truncated blob.
+- **`references --update-to` is safe under `--dry-run`** and no longer corrupts
+  unrelated attachments: the `_thumbnail_id` update is gated, the Gutenberg
+  block-ID rewrite is boundary-anchored (so rewriting `12` can't mangle `123`),
+  URL replacement runs serialize-safe across all tables, and the real table
+  prefix is resolved (#89).
+- **Global `--dry-run` is honored** by `delete`, `posts delete`, `posts update`,
+  `metadata`, `rename`, `caption`, `tag`, `title`, and `describe` — these
+  previously ignored it and executed for real (#90, #128).
+- **`undo` restores correctly and safely**: format-changing operations restore
+  the original extension/MIME/thumbnails (#91); rename restores the pre-rename
+  slug (#109); snapshots are written synchronously and their blobs are
+  integrity-checked (size + SHA-256) before restore (#92); an interrupted bulk
+  command's session is now the one `undo` targets (#108).
+- **`optimize` idempotency is correct in both directions** (#97): re-runs skip
+  already-optimized files (comparing against the previous *output* hash) instead
+  of re-compressing and double-counting savings; undone attachments become
+  re-optimizable again; changed options always re-process.
+- **Animated GIF/WebP are preserved, not flattened to one frame**, and are
+  skipped with a warning when the target format can't hold animation —
+  consistently across `optimize`, `convert`, `resize`, and `watch` (#93).
+- **SVG and other unencodable formats are skipped, not rasterized** into PNG
+  bytes under the wrong extension (#94).
 
-### Fixed — correctness (high)
-- **`remove-bg` replace-in-place sets the PNG MIME/extension and regenerates
-  thumbnails** (#95) so thumbnails show the cutout and WordPress serves the
-  right content type.
-- **`remove-bg` batch no longer aborts on a per-item `getMedia` failure** (#96) —
-  failure recording is FK-safe and self-contained.
-- **`optimize --unoptimized` is filtered to compression operations** (#98), so a
-  `caption`/`classify`/`rename` pass no longer makes images look "already
-  optimized".
-- **jsquash encoder honors the raw buffer's `byteOffset`** (#100), fixing
-  out-of-bounds pixel reads that could corrupt output mid-bulk-run.
-- **REST reference scan finds Gutenberg embeds** (#101): posts are fetched with
-  `context=edit` and raw block content is scanned (with a `wp-image-<id>`
-  rendered fallback). `getMedia` also returns raw fields so `tag`/`vision`
-  no longer flatten formatted captions.
-- **`delete` without `--force` returns actionable guidance** when a site lacks
-  `MEDIA_TRASH` (previously an opaque 501) (#102).
+### Fixed — security
+- **WP-CLI/SSH command construction is fully shell-hardened** — every
+  interpolated value (titles, alt text, paths, JSON metadata) is escaped, temp
+  paths are collision-proof, and the broken metadata-JSON escaping that silently
+  corrupted attachments on apostrophes is fixed (#112).
+- **Preview server requires a per-session token and validates the `Host`
+  header** on every mutating endpoint, defeating other local processes,
+  cross-origin pages, and DNS rebinding; the apply/cancel lifecycle no longer
+  misreports a successful apply as cancelled (#105, #106).
+- **`update` verifies the release tarball's SHA-256** against a published
+  `checksums.txt` before extracting, rejects non-HTTPS URLs, and swaps the
+  install atomically so a mid-update crash can't brick the binary (#121).
+- **Config files are created `0600` atomically**, site names are validated
+  against path traversal, and `import` has a Zip Slip guard (#118, #107).
 
-### Fixed — robustness (medium)
-- **SQLite `busy_timeout` + conditional version stamp** (#114) so `watch` and a
-  foreground command sharing a site DB no longer crash with "database is locked".
-- **Config file is created `0600` atomically** (#118) — Application Passwords are
-  never briefly world-readable; a failed chmod now warns instead of being
-  swallowed. Site names are validated to reject path traversal.
-- **Zip Slip guard on `import`** (#107) rejects archive entries that resolve
-  outside the extraction directory.
-- **Transparent PNG → JPEG is flattened onto white** (not black), EXIF
-  orientation is always baked in (even when metadata is kept), and the
-  `--target-size` "at q=1" warning is only shown when a quality search ran.
-- **`posts update` can clear a field** with an explicit empty value.
+### Fixed — correctness & robustness
+- **`remove-bg`** sets the PNG MIME/extension + regenerates thumbnails, and its
+  batch no longer aborts on a single item's fetch failure (#95, #96).
+- **REST reference scan finds Gutenberg embeds** (`context=edit` raw content),
+  and `tag`/`vision` no longer flatten formatted captions (#101).
+- **`delete` / `watch --delete`** give actionable guidance (or deliberately
+  force-delete with a snapshot) instead of a raw `MEDIA_TRASH` 501 (#102).
+- **`audit`** no longer crashes on libraries sized at an exact multiple of 100,
+  implements `--unattached`, and reworks `--broken-refs` into an honest
+  missing-file probe (#111).
+- **`sites run`** forwards `--apply`/`--dry-run`/`--strict` to children, fixes
+  its argument tokenizer, and uses a 30-minute child timeout with SIGKILL
+  escalation (#104).
+- **`a11y`** surfaces scan errors/truncation instead of a false "all clear",
+  exiting non-zero on failure (#103).
+- **`export`** fails fast on ZIP32 overflow and streams entries to disk instead
+  of buffering the whole archive (#116); **`import`** fixes manifest matching,
+  supports DEFLATE zips, and deprecates `--preserve-ids` → `--preserve-metadata`
+  (#117).
+- **`pull`** no longer silently overwrites on basename collisions (#126);
+  **`watch`/`edit`** no longer drop saves that land during an in-flight sync
+  (#120); the interactive TUI clamps a stale persisted page and wires up
+  bulk convert/pull (#125).
+- **`posts`** resolves custom-post-type REST routes via `rest_base` (#122);
+  **`list`** does global size sorting and exact MIME filtering (#123);
+  **`init`** preserves SSH config on re-run (#124); the MCP `optimize` tool's
+  params match the CLI flags (#110).
+- **SQLite `busy_timeout`** so `watch` + a foreground command sharing a DB no
+  longer crash with "database is locked" (#114); WP-CLI `getMedia` distinguishes
+  absent meta keys from real failures (#127); model downloads verify integrity,
+  and stats math excludes failed/undone operations (#130).
+- AI-command robustness (Ollama timeouts, classify, `--fields`, extensions)
+  (#129); MCP delete confirm gate + generated shell completions (#134); jsquash
+  byteOffset out-of-bounds read (#100); transparent PNG→JPEG flatten + EXIF
+  orientation; top-level errors honor `--json` and map to exit codes (#128).
+
+### Docs & tests
+- Fixed `SKILL.md` JSON-schema drift (the `list --json` shape, missing commands,
+  exit codes) and brought `CLAUDE.md`/`README` up to date (#131, #132).
+- Large test-coverage expansion: FK-safety, Zip Slip, jsquash, context=edit,
+  preview auth, idempotency, and structural coverage-gap closure (#133) — the
+  unit suite grew from 212 to ~590 tests.
 
 ## [2.0.0] - 2026-05-22
 
