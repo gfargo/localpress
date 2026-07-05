@@ -17,7 +17,10 @@ const DEFAULT_TYPING_SPEED = 30;
  * @param recipe - The scene to capture
  * @param opts.localPressBin - Path to the localpress binary/entrypoint
  */
-export function buildTape(recipe: Recipe, opts: { localPressBin: string; projectRoot: string }): string {
+export function buildTape(
+  recipe: Recipe,
+  opts: { localPressBin: string; projectRoot: string },
+): string {
   const lines: string[] = [];
   const fontSize = recipe.fontSize ?? DEFAULT_FONT_SIZE;
   const theme = recipe.theme ?? DEFAULT_THEME;
