@@ -222,6 +222,26 @@ const GIFS: Recipe[] = [
   // ─── Interactive browser workflows (the star of the show) ─────────────────
 
   {
+    name: 'demo-browser-readme',
+    description: 'README GIF: full TUI with sidebar, quick browse (compact)',
+    command: 'localpress list -i',
+    emitGif: true,
+    hideCommand: true,
+    settleMs: 3000,
+    width: 1300,
+    height: 650,
+    fontSize: 17,
+    actions: [
+      { kind: 'key', key: 'Down', count: 4 },
+      { kind: 'sleep', ms: 1000 },
+      { kind: 'key', key: 'Down', count: 3 },
+      { kind: 'sleep', ms: 1000 },
+      { kind: 'key', key: 'Up', count: 5 },
+      { kind: 'sleep', ms: 1200 },
+    ],
+  },
+
+  {
     name: 'demo-browser-hero',
     description: 'Compact hero GIF: browse → details → optimize overlay (no sidebar, fast)',
     command: 'localpress list -i',

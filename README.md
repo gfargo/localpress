@@ -20,6 +20,9 @@ Local-compute WordPress management CLI. Optimize media, manage posts and pages, 
 <p align="center">
   <img src="assets/demo-full-workflow.gif" alt="localpress in action — doctor check, list media, stats dashboard" width="700" />
 </p>
+<p align="center">
+  <img src="assets/demo-browser-readme.gif" alt="localpress interactive media browser — full TUI with sidebar navigation" width="700" />
+</p>
 
 ---
 
