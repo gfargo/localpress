@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`a11y` no longer reports a false "No accessibility issues found" success**
+  when the scan failed or was truncated (#103). HTTP/network errors during
+  pagination or `--id` lookups are now recorded and surfaced (human output +
+  `errors: []` in `--json`), and the command exits with `ExitCode.NetworkError`
+  instead of `0`. Hitting `--limit` before all pages are checked is now
+  reported as an incomplete scan rather than silently treated as exhaustive.
+  `--json` output adds `errors` and `complete` fields (additive).
+
 ## [2.1.0] - 2026-07-05
 
 Trust & correctness release — hardens the safety primitives (dry-run, undo,
