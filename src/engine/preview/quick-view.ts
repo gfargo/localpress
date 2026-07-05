@@ -34,10 +34,16 @@ export interface QuickViewOptions {
  * the browser tab is closed.
  */
 export async function quickViewInBrowser(options: QuickViewOptions): Promise<void> {
+  let resolved = false;
   let resolvePromise: () => void;
   const done = new Promise<void>((resolve) => {
     resolvePromise = resolve;
   });
+  const resolveOnce = () => {
+    if (resolved) return;
+    resolved = true;
+    resolvePromise();
+  };
 
   const state: {
     server: ReturnType<typeof Bun.serve> | null;
@@ -92,11 +98,17 @@ export async function quickViewInBrowser(options: QuickViewOptions): Promise<voi
       return new Response('Not Found', { status: 404 });
     },
     websocket: {
-      open() {},
+      open() {
+        // The tab connected — cancel the "never connected" timeout.
+        if (state.timeoutId) {
+          clearTimeout(state.timeoutId);
+          state.timeoutId = null;
+        }
+      },
       message() {},
       close() {
         shutdown();
-        resolvePromise();
+        resolveOnce();
       },
     },
   });
@@ -108,7 +120,7 @@ export async function quickViewInBrowser(options: QuickViewOptions): Promise<voi
   state.timeoutId = setTimeout(
     () => {
       shutdown();
-      resolvePromise();
+      resolveOnce();
     },
     5 * 60 * 1000,
   );
