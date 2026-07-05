@@ -195,6 +195,40 @@ describe('mcp server', () => {
     }
   }, 30_000);
 
+  test('delete tool rejects force:true without confirm:true', async () => {
+    const { client, close } = await connectClient();
+    try {
+      const result = await client.callTool({
+        name: 'delete',
+        arguments: { ids: [1], force: true },
+      });
+      expect(result.isError).toBe(true);
+      const text = (result.content as Array<{ type: string; text?: string }>)
+        .map((c) => c.text ?? '')
+        .join('\n');
+      expect(text).toContain('confirm');
+    } finally {
+      await close();
+    }
+  }, 30_000);
+
+  test('posts_delete tool rejects force:true without confirm:true', async () => {
+    const { client, close } = await connectClient();
+    try {
+      const result = await client.callTool({
+        name: 'posts_delete',
+        arguments: { id: 1, force: true },
+      });
+      expect(result.isError).toBe(true);
+      const text = (result.content as Array<{ type: string; text?: string }>)
+        .map((c) => c.text ?? '')
+        .join('\n');
+      expect(text).toContain('confirm');
+    } finally {
+      await close();
+    }
+  }, 30_000);
+
   test('optimize tool exposes `to` (not `format`) — regression for #50', async () => {
     // Bug: the optimize MCP tool used to advertise a `format` field that got
     // mapped to `--format`, but the CLI takes `--to`. Verify the rename to `to`.
