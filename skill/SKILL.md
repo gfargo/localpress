@@ -414,7 +414,7 @@ localpress export --all --type image/jpeg --since 2026-01-01 --json
 localpress import ./product-photos/ --optimize --to webp --json
 
 # Import a previous export, preserving metadata
-localpress import ./backup.zip --preserve-ids --json
+localpress import ./backup.zip --preserve-metadata --json
 
 # Import with resize constraints
 localpress import ./raw-photos/ --optimize --max-width 1920 --json
@@ -450,10 +450,15 @@ localpress import ./photos/ --dry-run --json
   "totalUploadedBytes": 12582912,
   "totalOriginalBytes": 25165824,
   "items": [
-    { "file": "hero.jpg", "attachmentId": 847, "filename": "hero.jpg", "sizeBytes": 142301, "optimized": true, "originalSize": 524288 }
+    { "file": "hero.jpg", "attachmentId": 847, "filename": "hero.jpg", "sizeBytes": 142301, "optimized": true, "originalSize": 524288, "oldId": 123 }
+  ],
+  "idMappings": [
+    { "oldId": 123, "newId": 847 }
   ]
 }
 ```
+
+When `idMappings` is non-empty (only populated with `--preserve-metadata` against a manifest), run `localpress references <oldId> --update-to <newId>` for each mapping to rewrite references from the old site to the new attachment IDs.
 
 ### Low-level
 
