@@ -17,6 +17,10 @@ Local-compute WordPress management CLI. Optimize media, manage posts and pages, 
 
 **[Website](https://localpress.griffen.codes)** · **[Docs](https://localpress.griffen.codes/docs)** · **[Wiki](https://github.com/gfargo/localpress/wiki)** · **[Releases](https://github.com/gfargo/localpress/releases)**
 
+<p align="center">
+  <img src="assets/demo-full-workflow.gif" alt="localpress in action — doctor check, list media, stats dashboard" width="700" />
+</p>
+
 ---
 
 ## Install

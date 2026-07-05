@@ -445,6 +445,7 @@ const GIFS: Recipe[] = [
     command: 'localpress stats',
     emitGif: true,
     settleMs: 1500,
+    height: 750,
     actions: [
       { kind: 'sleep', ms: 5000 }, // hold on the full dashboard
     ],
@@ -479,11 +480,12 @@ const GIFS: Recipe[] = [
     emitGif: true,
     settleMs: 1500,
     fontSize: 18,
+    height: 700,
     actions: [
       { kind: 'sleep', ms: 3500 }, // let doctor output render
-      { kind: 'type', text: 'localpress list --limit 5' },
+      { kind: 'type', text: 'clear && localpress list --limit 5' },
       { kind: 'sleep', ms: 4000 }, // let list render
-      { kind: 'type', text: 'localpress stats' },
+      { kind: 'type', text: 'clear && localpress stats' },
       { kind: 'sleep', ms: 4000 }, // hold on stats
     ],
   },
