@@ -51,6 +51,21 @@ mkdir -p /var/www/html/wp-content/mu-plugins
 echo '<?php add_filter("wp_is_application_passwords_available", "__return_true");' \
   > /var/www/html/wp-content/mu-plugins/enable-app-passwords.php
 
+# Register a custom post type with a non-default rest_base, so integration
+# tests can verify typeEndpoint() resolves custom types correctly (not just
+# slug-based defaults).
+cat > /var/www/html/wp-content/mu-plugins/register-lp-item-cpt.php <<'PHP'
+<?php
+add_action('init', function () {
+    register_post_type('lp_item', [
+        'public' => true,
+        'show_in_rest' => true,
+        'rest_base' => 'lp-items',
+        'supports' => ['title', 'editor', 'custom-fields'],
+    ]);
+});
+PHP
+
 # Ensure Apache passes the Authorization header to PHP.
 # Some Apache+mod_php builds strip it before PHP sees it; SetEnvIf copies it back.
 echo 'SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1' \
