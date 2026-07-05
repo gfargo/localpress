@@ -24,6 +24,9 @@ export const SCHEMA_VERSION = 4;
 export const INITIAL_SCHEMA = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
+-- Wait (up to 5s) for a competing writer instead of throwing SQLITE_BUSY, so a
+-- background \`watch\` and a foreground command can share the same site DB.
+PRAGMA busy_timeout = 5000;
 
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY

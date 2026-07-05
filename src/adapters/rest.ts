@@ -145,7 +145,12 @@ export class RestAdapter implements WpBackend {
   }
 
   async getMedia(id: number): Promise<MediaItem> {
-    const raw = await this.request<WpMediaResponse>(this.apiUrl(`/media/${id}`));
+    // Request context=edit so title/caption/description come back as `.raw`
+    // (unrendered). Read-modify-write flows (tag/vision) must not round-trip
+    // through stripped, entity-encoded rendered HTML, which flattens captions.
+    const raw = await this.request<WpMediaResponse>(
+      this.apiUrl(`/media/${id}`, { context: 'edit' }),
+    );
     return mapWpMediaToItem(raw);
   }
 
@@ -205,9 +210,22 @@ export class RestAdapter implements WpBackend {
     if (options?.force) {
       params.force = 'true';
     }
-    await this.request<unknown>(this.apiUrl(`/media/${id}`, params), {
-      method: 'DELETE',
-    });
+    try {
+      await this.request<unknown>(this.apiUrl(`/media/${id}`, params), {
+        method: 'DELETE',
+      });
+    } catch (err) {
+      // Stock WordPress can't trash attachments unless MEDIA_TRASH is defined,
+      // so a non-force delete returns 501 rest_trash_not_supported. Translate
+      // that into actionable guidance instead of an opaque REST error.
+      const message = err instanceof Error ? err.message : String(err);
+      if (!options?.force && /rest_trash_not_supported|\b501\b/.test(message)) {
+        throw new Error(
+          `Attachment ${id} cannot be moved to trash: this WordPress site does not have MEDIA_TRASH enabled. Re-run with --force to delete it permanently (localpress captures an undo snapshot first).`,
+        );
+      }
+      throw err;
+    }
   }
 
   // Server-side ops -----------------------------------------------------------
@@ -257,40 +275,28 @@ export class RestAdapter implements WpBackend {
     }
 
     // 2. Gutenberg block references: search content for wp:image {"id":N}.
+    //    The `wp:image` block marker lives in the RAW block comment, which is
+    //    stripped from rendered HTML — so we must request context=edit to get
+    //    content.raw. Without it, embedded images are never found.
     for (const postType of ['posts', 'pages'] as const) {
       const posts = await this.paginateAll<WpPostResponse>(
         this.apiUrl(`/${postType}`, {
           per_page: 100,
+          context: 'edit',
           _fields: 'id,title,type,content',
         }),
       );
 
       for (const post of posts) {
-        const content = post.content?.rendered ?? post.content?.raw ?? '';
-        const occurrences = countBlockReferences(content, id);
+        const occurrences = countPostImageReferences(post, id);
         if (occurrences > 0) {
-          // Avoid duplicating if we already have a featured-image ref for this post.
-          const alreadyReferenced = references.some(
-            (r) => r.postId === post.id && r.type === 'featured-image',
-          );
-          if (!alreadyReferenced) {
-            references.push({
-              type: 'gutenberg-block',
-              postId: post.id,
-              postTitle: renderTitle(post.title),
-              postType: post.type,
-              occurrences,
-            });
-          } else {
-            // Add as a separate gutenberg-block reference anyway — both are valid.
-            references.push({
-              type: 'gutenberg-block',
-              postId: post.id,
-              postTitle: renderTitle(post.title),
-              postType: post.type,
-              occurrences,
-            });
-          }
+          references.push({
+            type: 'gutenberg-block',
+            postId: post.id,
+            postTitle: renderTitle(post.title),
+            postType: post.type,
+            occurrences,
+          });
         }
       }
     }
@@ -453,8 +459,23 @@ function stripHtml(html: string | undefined): string | undefined {
 }
 
 /**
- * Count occurrences of a Gutenberg block referencing a specific attachment ID.
- * Matches patterns like: wp:image {"id":123  or  "id": 123
+ * Count how many times a post references a specific attachment ID via a
+ * Gutenberg block.
+ *
+ * Prefers the raw block content (`content.raw`, available with context=edit),
+ * where blocks carry an explicit `"id":N` attribute. Falls back to the rendered
+ * HTML's `wp-image-<id>` class when raw content isn't available (e.g. the auth
+ * user lacks edit rights), so embeds are still detected.
+ */
+function countPostImageReferences(post: WpPostResponse, attachmentId: number): number {
+  const raw = post.content?.raw;
+  if (raw) return countBlockReferences(raw, attachmentId);
+  return countRenderedImageReferences(post.content?.rendered ?? '', attachmentId);
+}
+
+/**
+ * Count occurrences of a Gutenberg block referencing a specific attachment ID
+ * in RAW block content. Matches patterns like: wp:image {"id":123 or "id": 123
  */
 function countBlockReferences(content: string, attachmentId: number): number {
   // Match wp:image/gallery/cover/media-text blocks that reference this ID.
@@ -463,5 +484,15 @@ function countBlockReferences(content: string, attachmentId: number): number {
     'g',
   );
   const matches = content.match(pattern);
+  return matches?.length ?? 0;
+}
+
+/**
+ * Fallback for rendered HTML: WordPress emits `class="... wp-image-<id> ..."`
+ * on `<img>` tags produced from image blocks.
+ */
+function countRenderedImageReferences(html: string, attachmentId: number): number {
+  const pattern = new RegExp(`wp-image-${attachmentId}\\b`, 'g');
+  const matches = html.match(pattern);
   return matches?.length ?? 0;
 }

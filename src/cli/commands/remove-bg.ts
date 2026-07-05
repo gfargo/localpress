@@ -200,7 +200,18 @@ export function registerRemoveBgCommand(program: Command): void {
               const replaceAdapter = resolver.tryResolve('replace-in-place');
               if (replaceAdapter) {
                 try {
-                  await replaceAdapter.replaceInPlace(id, resultBytes);
+                  const formatChanged = item.mimeType !== 'image/png';
+                  await replaceAdapter.replaceInPlace(
+                    id,
+                    resultBytes,
+                    formatChanged
+                      ? {
+                          newMimeType: 'image/png',
+                          newExtension: '.png',
+                          regenerateThumbnails: true,
+                        }
+                      : { regenerateThumbnails: true },
+                  );
                   resultWpId = id;
                 } catch (err) {
                   if (!(err instanceof CapabilityUnavailableError) || parentOpts.strict) {
@@ -400,7 +411,21 @@ export function registerRemoveBgCommand(program: Command): void {
             const replaceAdapter = resolver.tryResolve('replace-in-place');
             if (replaceAdapter) {
               try {
-                await replaceAdapter.replaceInPlace(id, resultBytes);
+                // Output is always PNG (alpha channel). When the source wasn't
+                // PNG, change the file extension + MIME and regenerate thumbnails
+                // so WP serves the right type and thumbnails show the cutout.
+                const formatChanged = item.mimeType !== 'image/png';
+                await replaceAdapter.replaceInPlace(
+                  id,
+                  resultBytes,
+                  formatChanged
+                    ? {
+                        newMimeType: 'image/png',
+                        newExtension: '.png',
+                        regenerateThumbnails: true,
+                      }
+                    : { regenerateThumbnails: true },
+                );
                 resultWpId = id;
               } catch (err) {
                 if (err instanceof CapabilityUnavailableError && !parentOpts.strict) {
@@ -475,21 +500,39 @@ export function registerRemoveBgCommand(program: Command): void {
           error(`    ✗ #${id}: ${message}`);
           failures++;
 
-          db.recordProcessing({
-            siteName: site.name,
-            wpId: id,
-            operation: 'remove-bg',
-            paramsJson: JSON.stringify({ model: modelName }),
-            sourceHash: null,
-            resultHash: null,
-            bytesBefore: null,
-            bytesAfter: null,
-            resultWpId: null,
-            ranAt: Date.now(),
-            durationMs: Date.now() - startTime,
-            status: 'failure',
-            errorMessage: message,
-          });
+          // Recording a failure must never abort the batch. If getMedia() failed
+          // above, no attachments row exists yet — ensure one (FK), then record,
+          // and swallow any error from the recording itself.
+          try {
+            db.upsertAttachment({
+              siteName: site.name,
+              wpId: id,
+              sourceUrl: '',
+              sourceHash: null,
+              sizeBytes: null,
+              width: null,
+              height: null,
+              mimeType: null,
+              lastSeenAt: Date.now(),
+            });
+            db.recordProcessing({
+              siteName: site.name,
+              wpId: id,
+              operation: 'remove-bg',
+              paramsJson: JSON.stringify({ model: modelName }),
+              sourceHash: null,
+              resultHash: null,
+              bytesBefore: null,
+              bytesAfter: null,
+              resultWpId: null,
+              ranAt: Date.now(),
+              durationMs: Date.now() - startTime,
+              status: 'failure',
+              errorMessage: message,
+            });
+          } catch {
+            // Best-effort — never let failure bookkeeping kill the remaining items.
+          }
         }
       }
 

@@ -69,12 +69,15 @@ export class SiteDb {
       }
     }
 
-    // Upsert the schema version.
-    db.run(
-      `INSERT INTO schema_version (version) VALUES (?)
-       ON CONFLICT (version) DO UPDATE SET version = excluded.version`,
-      [SCHEMA_VERSION],
-    );
+    // Stamp the schema version only when it actually changed, so read-only
+    // commands (stats, history) don't take a write lock just by opening the DB.
+    if (stored !== SCHEMA_VERSION) {
+      db.run(
+        `INSERT INTO schema_version (version) VALUES (?)
+         ON CONFLICT (version) DO UPDATE SET version = excluded.version`,
+        [SCHEMA_VERSION],
+      );
+    }
 
     return new SiteDb(db);
   }
@@ -155,15 +158,25 @@ export class SiteDb {
     return rows.map(mapAttachmentRow);
   }
 
-  /** List attachment IDs that have been processed (have processing_history). */
-  listProcessedWpIds(siteName: string): Set<number> {
-    const rows = this.db
-      .query(
-        `SELECT DISTINCT wp_id FROM processing_history
-         WHERE site_name = ? AND status = 'success'`,
-      )
-      .all(siteName) as Array<{ wp_id: number }>;
+  /**
+   * List attachment IDs that have been successfully processed.
+   *
+   * Pass `operations` to restrict to specific operation types — e.g.
+   * `['optimize', 'convert', 'resize']` so that a caption/classify/rename pass
+   * doesn't make an image look "already optimized" to `optimize --unoptimized`.
+   */
+  listProcessedWpIds(siteName: string, operations?: readonly string[]): Set<number> {
+    let sql = `SELECT DISTINCT wp_id FROM processing_history
+               WHERE site_name = ? AND status = 'success'`;
+    const params: Array<string> = [siteName];
 
+    if (operations && operations.length > 0) {
+      const placeholders = operations.map(() => '?').join(', ');
+      sql += ` AND operation IN (${placeholders})`;
+      params.push(...operations);
+    }
+
+    const rows = this.db.query(sql).all(...params) as Array<{ wp_id: number }>;
     return new Set(rows.map((r) => r.wp_id));
   }
 

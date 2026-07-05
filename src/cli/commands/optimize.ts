@@ -23,12 +23,27 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
-import { optimizeImage } from '../../engine/image/optimize.ts';
+import {
+  AnimatedImageError,
+  UnsupportedFormatError,
+  optimizeImage,
+} from '../../engine/image/optimize.ts';
 import type { ImageFormat, OptimizeOptions } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { getCachedClassification } from './classify.ts';
+
+/** Source MIME types the optimize pipeline can safely handle. Anything else
+ * (e.g. image/svg+xml) is skipped so it can't be rasterized in place. */
+const OPTIMIZABLE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/avif',
+  'image/gif',
+]);
 
 interface OptimizeResultRecord {
   id: number;
@@ -352,11 +367,13 @@ export function registerOptimizeCommand(program: Command): void {
           items = items.filter((item) => (item.sizeBytes ?? 0) >= options.largerThan);
         }
 
-        // Apply --unoptimized filter.
+        // Apply --unoptimized filter. Only compression operations count as
+        // "optimized" — a caption/classify/rename pass must not exclude an
+        // image that has never actually been compressed.
         if (options.unoptimized) {
           try {
             const db = SiteDb.init(getSiteDbPath(site.name));
-            const processed = db.listProcessedWpIds(site.name);
+            const processed = db.listProcessedWpIds(site.name, ['optimize', 'convert', 'resize']);
             items = items.filter((item) => !processed.has(item.id));
             db.close();
           } catch {
@@ -364,8 +381,9 @@ export function registerOptimizeCommand(program: Command): void {
           }
         }
 
-        // Only process images.
-        items = items.filter((item) => item.mimeType?.startsWith('image/'));
+        // Only process image types the engine can safely re-encode. SVG and
+        // other vector/unknown types are skipped rather than rasterized.
+        items = items.filter((item) => OPTIMIZABLE_MIME_TYPES.has(item.mimeType ?? ''));
       }
 
       if (items.length === 0) {
@@ -475,8 +493,12 @@ export function registerOptimizeCommand(program: Command): void {
           const resultHash = createHash('sha256').update(result.bytes).digest('hex');
           const durationMs = Date.now() - startTime;
 
-          // Skip if the result is larger than the source (unless format conversion was requested).
-          if (result.bytes.length >= sourceBytes.length && !options.to) {
+          // Skip if the result is larger than the source, unless a real format
+          // conversion was requested (via --to, a profile, or a smart default).
+          const conversionRequested = Boolean(
+            perItemOpts.toFormat && perItemOpts.toFormat !== result.before.format,
+          );
+          if (result.bytes.length >= sourceBytes.length && !conversionRequested) {
             info(
               `    ↳ Skipped (optimized size ${formatBytes(result.bytes.length)} ≥ original ${formatBytes(sourceBytes.length)}).`,
             );
@@ -571,9 +593,14 @@ export function registerOptimizeCommand(program: Command): void {
             info(`      Steps: ${result.appliedSteps.join(' → ')}`);
           }
           if (options.targetSize && result.after.sizeBytes > options.targetSize) {
+            // Only claim "at q=1" when a quality search actually ran; PNG/GIF
+            // (and lossless modes) don't have a quality knob to turn down.
+            const detail =
+              result.finalQuality !== undefined
+                ? `smallest achievable is ${formatBytes(result.after.sizeBytes)} at q=1`
+                : `target-size is not supported for ${result.after.format} — try --to webp`;
             warn(
-              `    ⚠ Could not reach target size ${formatBytes(options.targetSize)}; ` +
-                `smallest achievable is ${formatBytes(result.after.sizeBytes)} at q=1.`,
+              `    ⚠ Could not reach target size ${formatBytes(options.targetSize)}; ${detail}.`,
             );
           }
 
@@ -611,6 +638,12 @@ export function registerOptimizeCommand(program: Command): void {
             finalQuality: result.finalQuality,
           });
         } catch (err) {
+          // Animated-source and unsupported-format cases are deliberate skips,
+          // not failures — never flatten an animation or rasterize a vector.
+          if (err instanceof AnimatedImageError || err instanceof UnsupportedFormatError) {
+            warn(`    ↳ Skipped #${item.id} (${item.filename}): ${err.message}`);
+            continue;
+          }
           const message = err instanceof Error ? err.message : String(err);
           error(`    ✗ #${item.id}: ${message}`);
           failures++;

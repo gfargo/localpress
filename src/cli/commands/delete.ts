@@ -27,7 +27,8 @@ import {
 } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
-import { error, info, printJson } from '../utils/output.ts';
+import { error, info, printJson, warn } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 interface DeleteResultRecord {
   id: number;
@@ -60,6 +61,22 @@ export function registerDeleteCommand(program: Command): void {
       const site = resolveActiveSite(config, parentOpts.site);
       const resolver = new AdapterResolver(site);
       const getAdapter = resolver.resolve('get');
+
+      // Deletion is destructive; honor an explicit --dry-run by previewing only.
+      const dryRun = resolveDryRun(parentOpts, false);
+      if (dryRun) {
+        warn(
+          `[dry-run] would delete ${ids.length} attachment(s); pass without --dry-run to execute:`,
+        );
+        for (const id of ids) {
+          info(`  would delete #${id}${options.force ? ' (permanent)' : ' (to trash)'}`);
+        }
+        if (parentOpts.json) {
+          printJson({ dryRun: true, force: Boolean(options.force), ids });
+        }
+        return;
+      }
+
       const deleteAdapter = resolver.resolve('delete');
 
       const db = SiteDb.init(getSiteDbPath(site.name));

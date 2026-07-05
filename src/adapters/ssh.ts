@@ -16,6 +16,17 @@ export interface SshExecResult {
 }
 
 /**
+ * POSIX shell-quote a value for safe interpolation into a remote command.
+ *
+ * Wraps in single quotes and escapes embedded single quotes via the `'\''`
+ * idiom, so filenames/paths/metadata containing spaces, quotes, `$`, backticks,
+ * or `;` can't break the command or inject shell execution.
+ */
+export function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
  * Execute a command on a remote host via SSH.
  */
 export async function sshExec(ssh: SshConfig, command: string): Promise<SshExecResult> {
