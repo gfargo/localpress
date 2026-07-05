@@ -6,9 +6,9 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import {
   type ExportManifest,
@@ -200,6 +200,96 @@ describe('ZIP round-trip', () => {
 
     expect(parsed).toHaveLength(1);
     expect(parsed[0].path).toBe('日本語/画像.png');
+  });
+});
+
+describe('Zip Slip guard', () => {
+  /**
+   * Mirrors the containment check in `extractZip` (src/cli/commands/import.ts):
+   * every entry is resolved against the temp extraction root, and rejected if
+   * it would land outside that root.
+   */
+  function extractZipGuarded(zipBuffer: Buffer, tempDir: string): string[] {
+    const written: string[] = [];
+    const tempRoot = resolve(tempDir);
+
+    for (const entry of parseZip(zipBuffer)) {
+      const destPath = resolve(tempRoot, entry.path);
+      if (destPath !== tempRoot && !destPath.startsWith(tempRoot + sep)) {
+        continue;
+      }
+
+      mkdirSync(dirname(destPath), { recursive: true });
+      writeFileSync(destPath, entry.data);
+      written.push(destPath);
+    }
+
+    return written;
+  }
+
+  test('rejects relative traversal entries', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'localpress-zipslip-'));
+
+    try {
+      const zip = buildZipSync([
+        { path: '../../../../tmp/localpress-zipslip-poc.txt', data: Buffer.from('pwned') },
+        { path: '2026/01/hero.jpg', data: Buffer.from('safe-image-data') },
+      ]);
+
+      const written = extractZipGuarded(zip, tempDir);
+
+      expect(written.every((p) => p.startsWith(resolve(tempDir) + sep))).toBe(true);
+      expect(written.some((p) => p.endsWith('hero.jpg'))).toBe(true);
+      expect(written.some((p) => p.includes('localpress-zipslip-poc.txt'))).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects absolute-path entries', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'localpress-zipslip-'));
+    const maliciousAbsPath = join(tmpdir(), 'localpress-zipslip-abs-poc.txt');
+
+    try {
+      // Confirm path.resolve's documented behavior: an absolute second segment
+      // wins outright, which is exactly what the guard must catch.
+      expect(resolve(resolve(tempDir), maliciousAbsPath)).toBe(maliciousAbsPath);
+
+      const zip = buildZipSync([
+        { path: maliciousAbsPath, data: Buffer.from('pwned') },
+        { path: '2026/01/hero.jpg', data: Buffer.from('safe-image-data') },
+      ]);
+
+      const written = extractZipGuarded(zip, tempDir);
+
+      expect(written.every((p) => p.startsWith(resolve(tempDir) + sep))).toBe(true);
+      expect(written.some((p) => p === maliciousAbsPath)).toBe(false);
+      expect(() =>
+        readdirSync(dirname(maliciousAbsPath)).includes('localpress-zipslip-abs-poc.txt'),
+      ).not.toThrow();
+      expect(readdirSync(tmpdir()).includes('localpress-zipslip-abs-poc.txt')).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+      rmSync(maliciousAbsPath, { force: true });
+    }
+  });
+
+  test('still extracts nested benign paths', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'localpress-zipslip-'));
+
+    try {
+      const zip = buildZipSync([
+        { path: '2026/01/hero.jpg', data: Buffer.from('safe-image-data') },
+      ]);
+
+      const written = extractZipGuarded(zip, tempDir);
+
+      expect(written).toHaveLength(1);
+      expect(written[0]).toBe(join(resolve(tempDir), '2026', '01', 'hero.jpg'));
+      expect(readFileSync(written[0], 'utf-8')).toBe('safe-image-data');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 
