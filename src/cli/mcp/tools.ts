@@ -468,7 +468,8 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--max-height', a.maxHeight);
       opt(argv, '--encoder', a.encoder);
       opt(argv, '--profile', a.profile);
-      flag(argv, '--strip-metadata', a.stripMetadata);
+      if (a.stripMetadata === true) argv.push('--strip-metadata');
+      else if (a.stripMetadata === false) argv.push('--no-strip-metadata');
       flag(argv, '--apply', a.apply);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
@@ -482,7 +483,6 @@ export function registerTools(server: McpServer): void {
       inputSchema: {
         ...commonSiteArg,
         ids: z.array(z.number().int().positive()).optional(),
-        all: z.boolean().optional(),
         to: z.enum(['webp', 'avif', 'jpeg', 'png']).describe('Target format'),
         quality: z.number().int().min(1).max(100).optional(),
         apply: z.boolean().optional(),
@@ -493,7 +493,6 @@ export function registerTools(server: McpServer): void {
       const a = args as ArgMap;
       const argv = ['convert'];
       ids(argv, a.ids);
-      flag(argv, '--all', a.all);
       opt(argv, '--to', a.to);
       opt(argv, '--quality', a.quality);
       flag(argv, '--apply', a.apply);
@@ -510,7 +509,6 @@ export function registerTools(server: McpServer): void {
       inputSchema: {
         ...commonSiteArg,
         ids: z.array(z.number().int().positive()).optional(),
-        all: z.boolean().optional(),
         maxWidth: z.number().int().positive().optional(),
         maxHeight: z.number().int().positive().optional(),
         apply: z.boolean().optional(),
@@ -521,7 +519,6 @@ export function registerTools(server: McpServer): void {
       const a = args as ArgMap;
       const argv = ['resize'];
       ids(argv, a.ids);
-      flag(argv, '--all', a.all);
       opt(argv, '--max-width', a.maxWidth);
       opt(argv, '--max-height', a.maxHeight);
       flag(argv, '--apply', a.apply);
@@ -923,7 +920,7 @@ export function registerTools(server: McpServer): void {
       const argv = ['push', a.file as string];
       opt(argv, '--replace', a.replace);
       opt(argv, '--title', a.title);
-      opt(argv, '--alt-text', a.altText);
+      opt(argv, '--alt', a.altText);
       opt(argv, '--caption', a.caption);
       return runCli(argv, a.site as string | undefined);
     },

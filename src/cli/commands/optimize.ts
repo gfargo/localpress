@@ -99,6 +99,14 @@ export function registerOptimizeCommand(program: Command): void {
       'encoder: sharp (default) or jsquash (WASM codecs, better PNG via OxiPNG)',
       'sharp',
     )
+    .option('--max-width <n>', 'resize: maximum width in pixels (aspect preserved)', (v) =>
+      Number.parseInt(v, 10),
+    )
+    .option('--max-height <n>', 'resize: maximum height in pixels (aspect preserved)', (v) =>
+      Number.parseInt(v, 10),
+    )
+    .option('--strip-metadata', 'strip EXIF/metadata from the output (default: true)')
+    .option('--no-strip-metadata', 'keep EXIF/metadata in the output')
     .option('--preview', 'open a browser preview to adjust settings before applying')
     .option(
       '--preview-port <port>',
@@ -114,7 +122,7 @@ export function registerOptimizeCommand(program: Command): void {
       '--force',
       'bypass the idempotency skip and re-process even if the output is already up to date',
     )
-    .action(async (idStrs: string[], options) => {
+    .action(async (idStrs: string[], options, cmd: Command) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
@@ -431,9 +439,12 @@ export function registerOptimizeCommand(program: Command): void {
         toFormat: (options.to as ImageFormat | undefined) ?? profileFormat,
         mode: options.mode,
         quality: options.quality ?? profileQuality,
-        maxWidth: profileMaxWidth,
-        maxHeight: profileMaxHeight,
-        stripMetadata: profileStripMetadata ?? true,
+        maxWidth: options.maxWidth ?? profileMaxWidth,
+        maxHeight: options.maxHeight ?? profileMaxHeight,
+        stripMetadata:
+          cmd.getOptionValueSource('stripMetadata') === 'cli'
+            ? options.stripMetadata
+            : (profileStripMetadata ?? true),
         encoder: options.encoder === 'jsquash' ? 'jsquash' : (profileEncoder ?? 'sharp'),
         targetSizeBytes: options.targetSize,
       };
