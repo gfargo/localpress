@@ -23,6 +23,7 @@ import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { UploadMetadata } from '../../adapters/types.ts';
 import { optimizeImage } from '../../engine/image/optimize.ts';
 import type { ImageFormat } from '../../engine/image/types.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -191,13 +192,13 @@ export function registerImportCommand(program: Command): void {
     .command('import <paths...>')
     .description('Import local files or directories into the WordPress media library')
     .option('--optimize', 'run the optimization pipeline before uploading')
-    .option('--quality <n>', 'optimization quality (1-100)', (v) => Number.parseInt(v, 10))
+    .option('--quality <n>', 'optimization quality (1-100)', parseIntOption('--quality'))
     .option('--to <format>', 'convert to format before uploading (webp, avif, jpeg, png)')
-    .option('--max-width <n>', 'max width in pixels', (v) => Number.parseInt(v, 10))
-    .option('--max-height <n>', 'max height in pixels', (v) => Number.parseInt(v, 10))
+    .option('--max-width <n>', 'max width in pixels', parseIntOption('--max-width'))
+    .option('--max-height <n>', 'max height in pixels', parseIntOption('--max-height'))
     .option('--title <title>', 'default title for imported items (overridden by manifest)')
     .option('--alt <text>', 'default alt text for imported items')
-    .option('--post <id>', 'attach all imports to this post', (v) => Number.parseInt(v, 10))
+    .option('--post <id>', 'attach all imports to this post', parseIntOption('--post'))
     .option(
       '--preserve-metadata',
       'use manifest metadata (alt, title, caption) from a previous export',

@@ -14,6 +14,7 @@ import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { ListFilters, MediaItem } from '../../adapters/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { ExitCode } from '../../types.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -69,7 +70,7 @@ export function registerExportCommand(program: Command): void {
     .option('--unoptimized', "only items localpress hasn't processed yet")
     .option('--type <mime>', 'MIME type filter (e.g. image/jpeg)')
     .option('--since <date>', 'only items uploaded since this ISO date')
-    .option('--larger-than <bytes>', 'minimum size in bytes', (v) => Number.parseInt(v, 10))
+    .option('--larger-than <bytes>', 'minimum size in bytes', parseIntOption('--larger-than'))
     .option('--include-sizes', 'also export generated thumbnail/medium/large variants')
     .option('--flat', 'export all files into a single flat directory (no subdirectories)')
     .action(async (idStrs: string[], options) => {

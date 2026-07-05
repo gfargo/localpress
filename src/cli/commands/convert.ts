@@ -19,6 +19,7 @@ import {
 import { optimizeImage } from '../../engine/image/optimize.ts';
 import type { ImageFormat } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -29,7 +30,7 @@ export function registerConvertCommand(program: Command): void {
     .command('convert <ids...>')
     .description('Convert attachments to a different format (webp, avif, jpeg, png)')
     .requiredOption('--to <format>', 'target format: webp, avif, jpeg, or png')
-    .option('--quality <n>', 'quality value 0-100 (codec-specific)', (v) => Number.parseInt(v, 10))
+    .option('--quality <n>', 'quality value 0-100 (codec-specific)', parseIntOption('--quality'))
     .option('--keep-original', 'upload as a new attachment instead of replacing')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();

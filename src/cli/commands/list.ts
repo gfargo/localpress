@@ -11,6 +11,7 @@ import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { ListFilters, MediaItem, SortField, SortOrder } from '../../adapters/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import type { MediaBrowserAction } from '../components/MediaBrowser.tsx';
+import { parseIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { buildDispatchArgs } from '../utils/dispatch.ts';
 import { error, info, printJson } from '../utils/output.ts';
@@ -39,14 +40,12 @@ export function registerListCommand(program: Command): void {
     .description("List media in the active site's library")
     .option('--unoptimized', "only items localpress hasn't processed yet")
     .option('--type <mime>', 'MIME type filter (e.g. image/jpeg)')
-    .option('--post <id>', 'attachments associated with a specific post', (v) =>
-      Number.parseInt(v, 10),
-    )
+    .option('--post <id>', 'attachments associated with a specific post', parseIntOption('--post'))
     .option('--since <date>', 'only items uploaded since this ISO date')
-    .option('--larger-than <bytes>', 'minimum size in bytes', (v) => Number.parseInt(v, 10))
+    .option('--larger-than <bytes>', 'minimum size in bytes', parseIntOption('--larger-than'))
     .option('--search <term>', 'free-text search across filename and title')
-    .option('--limit <n>', 'items per page (max 100)', (v) => Number.parseInt(v, 10))
-    .option('--page <n>', 'page number (default 1)', (v) => Number.parseInt(v, 10))
+    .option('--limit <n>', 'items per page (max 100)', parseIntOption('--limit'))
+    .option('--page <n>', 'page number (default 1)', parseIntOption('--page'))
     .option('--sort <field>', 'sort by: date (default), name, size, id')
     .option('--order <dir>', 'sort direction: desc (default) or asc')
     .option('-i, --interactive', 'browse with keyboard navigation')
