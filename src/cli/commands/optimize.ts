@@ -796,19 +796,26 @@ export function registerOptimizeCommand(program: Command): void {
 
 /**
  * Decide whether an item can be skipped because we've already produced this
- * exact output. Skip only when:
- *   - not forced,
- *   - a prior run exists and didn't fail,
- *   - the CURRENT file's hash matches the prior run's RESULT hash (not its
- *     source hash — after a successful replace-in-place, the live file IS
- *     the previous result, so comparing against sourceHash never matched and
- *     every re-run re-compressed from scratch), and
- *   - the requested options are byte-for-byte the same as last time (so a
- *     changed --to/--quality/--target-size always re-runs).
+ * exact output. Skip only when not forced, a prior non-failed run exists, the
+ * requested options are byte-for-byte the same as last time (so a changed
+ * --to/--quality/--target-size always re-runs), AND one of the two write paths
+ * proves nothing would change:
  *
- * After `undo` restores the original bytes, the live file's hash reverts to
- * the old sourceHash, which differs from resultHash (real compression changed
- * the bytes) — so this naturally returns false and re-optimization proceeds.
+ *   - Replace-in-place (recorded resultWpId === null): after a successful
+ *     in-place write the live file IS the previous run's result, so the current
+ *     download hash equals the prior RESULT hash. (Comparing against sourceHash
+ *     here never matched, so every re-run used to re-compress from scratch —
+ *     localpress#97.)
+ *
+ *   - Upload-as-new fallback (recorded resultWpId !== null, e.g. REST-only sites
+ *     with no replace-in-place capability): the source attachment is never
+ *     touched, so its live hash still equals the prior run's SOURCE hash.
+ *     Without this branch every re-run re-optimized and uploaded yet another
+ *     duplicate attachment. Skip when the source bytes are unchanged.
+ *
+ * After `undo` restores the original bytes, an in-place file's hash reverts to
+ * the old sourceHash (≠ resultHash), so the replace-in-place branch naturally
+ * returns false and re-optimization proceeds.
  */
 export function shouldSkipOptimize(
   lastProcessing: ProcessingHistoryRecord | null,
@@ -818,8 +825,17 @@ export function shouldSkipOptimize(
 ): boolean {
   if (force) return false;
   if (!lastProcessing || lastProcessing.status === 'failure') return false;
-  if (lastProcessing.resultHash !== currentSourceHash) return false;
-  return lastProcessing.paramsJson === JSON.stringify(perItemOpts);
+  if (lastProcessing.paramsJson !== JSON.stringify(perItemOpts)) return false;
+
+  if (lastProcessing.resultWpId === null) {
+    // Replace-in-place (or a size-based "skipped" record where resultHash ===
+    // sourceHash): the live file equals the recorded result.
+    return lastProcessing.resultHash === currentSourceHash;
+  }
+
+  // Upload-as-new fallback: the untouched source still equals the recorded
+  // source hash, so re-running would just duplicate the same new attachment.
+  return lastProcessing.sourceHash === currentSourceHash;
 }
 
 function recordSuccess(

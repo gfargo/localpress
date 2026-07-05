@@ -97,6 +97,11 @@ surfaced by a full-codebase audit, plus a few new features. No breaking changes.
   (#129); MCP delete confirm gate + generated shell completions (#134); jsquash
   byteOffset out-of-bounds read (#100); transparent PNG→JPEG flatten + EXIF
   orientation; top-level errors honor `--json` and map to exit codes (#128).
+- **`optimize` idempotency now holds on REST-only sites**: a re-run of an
+  already-optimized attachment whose optimized copy landed as a *new*
+  attachment (the upload-as-new fallback, when replace-in-place isn't available)
+  now skips instead of re-optimizing and uploading yet another duplicate on
+  every invocation.
 
 ### Docs & tests
 - Fixed `SKILL.md` JSON-schema drift (the `list --json` shape, missing commands,
