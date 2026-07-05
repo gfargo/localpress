@@ -526,3 +526,77 @@ describe('listProcessedWpIds', () => {
     db.close();
   });
 });
+
+describe('failure recording FK-safety (regression for #96)', () => {
+  test('recordProcessing throws when no attachments row exists for the wpId', () => {
+    // Documents the hazard: PRAGMA foreign_keys=ON (schema.ts) rejects a
+    // processing_history row whose wpId has no corresponding attachments row.
+    // Bulk commands must never call recordProcessing directly in a failure
+    // path without first ensuring the attachment row exists.
+    const db = createTestDb();
+
+    expect(() =>
+      db.recordProcessing({
+        siteName: 'test-site',
+        wpId: 999,
+        operation: 'remove-bg',
+        paramsJson: null,
+        sourceHash: null,
+        resultHash: null,
+        bytesBefore: null,
+        bytesAfter: null,
+        resultWpId: null,
+        ranAt: Date.now(),
+        durationMs: null,
+        status: 'failure',
+        errorMessage: 'getMedia failed: 404',
+      }),
+    ).toThrow();
+
+    db.close();
+  });
+
+  test('upsertAttachment (nulled fields) before recordProcessing records a failure without throwing', () => {
+    // Mirrors the catch-block sequence in remove-bg.ts / caption.ts: when
+    // getMedia() fails before any attachments row exists, upsert a
+    // placeholder attachment first so the FK is satisfied, then record the
+    // failure.
+    const db = createTestDb();
+    const now = Date.now();
+
+    expect(() => {
+      db.upsertAttachment({
+        siteName: 'test-site',
+        wpId: 999,
+        sourceUrl: '',
+        sourceHash: null,
+        sizeBytes: null,
+        width: null,
+        height: null,
+        mimeType: null,
+        lastSeenAt: now,
+      });
+      db.recordProcessing({
+        siteName: 'test-site',
+        wpId: 999,
+        operation: 'remove-bg',
+        paramsJson: null,
+        sourceHash: null,
+        resultHash: null,
+        bytesBefore: null,
+        bytesAfter: null,
+        resultWpId: null,
+        ranAt: now,
+        durationMs: 50,
+        status: 'failure',
+        errorMessage: 'getMedia failed: 404',
+      });
+    }).not.toThrow();
+
+    const record = db.getLastProcessing('test-site', 999);
+    expect(record?.status).toBe('failure');
+    expect(record?.errorMessage).toBe('getMedia failed: 404');
+
+    db.close();
+  });
+});

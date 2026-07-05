@@ -232,9 +232,9 @@ bun run build:all        # build tarballs for all 5 platforms
 
 - [Website & docs](https://localpress.griffen.codes)
 - [Wiki](https://github.com/gfargo/localpress/wiki)
-- [Competitive brief](docs/localpress-competitive-brief.md)
+- [v2.0 announcement](docs/blog-post-v2.md)
 - [Roadmap ideas](docs/roadmap-ideas.md)
-- [Homebrew tap setup](docs/homebrew-tap.md)
+- [Homebrew formula](Formula/localpress.rb)
 - [CLAUDE.md](CLAUDE.md) — implementation status and conventions
 
 ---
