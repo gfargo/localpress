@@ -62,7 +62,7 @@ export function registerVisionCommand(program: Command): void {
     )
     .option(
       '--fields <list>',
-      "comma-separated subset of fields (default: alt,title,description,tags,classify). Use 'none' to skip writes and only return classifications, etc.",
+      `comma-separated subset of: ${ALL_FIELDS.join(', ')} (default: all of them)`,
     )
     .option(
       '--model <name>',
@@ -80,12 +80,21 @@ export function registerVisionCommand(program: Command): void {
 
       const ids = parseAttachmentIds(idStrs);
 
-      const fields: Field[] = options.fields
-        ? options.fields
-            .split(',')
-            .map((s: string) => s.trim().toLowerCase())
-            .filter((f: string): f is Field => (ALL_FIELDS as readonly string[]).includes(f))
-        : [...ALL_FIELDS];
+      let fields: Field[] = [...ALL_FIELDS];
+      if (options.fields) {
+        const requested: string[] = options.fields
+          .split(',')
+          .map((s: string) => s.trim().toLowerCase())
+          .filter((s: string) => s.length > 0);
+        const unknown = requested.filter((f) => !(ALL_FIELDS as readonly string[]).includes(f));
+        if (unknown.length > 0) {
+          error(
+            `Unrecognized --fields value(s): ${unknown.join(', ')}. Valid fields: ${ALL_FIELDS.join(', ')}.`,
+          );
+          process.exit(2);
+        }
+        fields = requested as Field[];
+      }
 
       if (fields.length === 0) {
         error(`--fields must be a comma-separated subset of: ${ALL_FIELDS.join(', ')}`);

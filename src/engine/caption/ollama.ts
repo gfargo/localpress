@@ -33,6 +33,9 @@ const MAX_OUTPUT_TOKENS = 200;
 /** Soft cap on the final caption length; truncate at a word boundary if exceeded. */
 const MAX_CAPTION_CHARS = 240;
 
+/** Hard timeout on a single /api/generate call — bounds a wedged Ollama. */
+const GENERATE_TIMEOUT_MS = 120_000;
+
 const DEFAULT_PROMPT =
   'Write concise alt-text for this image. Describe only what is visually present. ' +
   'Be factual and specific. Keep it under 125 characters. ' +
@@ -114,19 +117,31 @@ export async function generateCaption(
   const downscaled = await downscaleForVision(imageBuffer);
   const b64 = downscaled.toString('base64');
 
-  const res = await fetch(`${baseUrl}/api/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      prompt,
-      images: [b64],
-      stream: false,
-      // Hard cap on response length — defense against models that ignore
-      // "keep it short" instructions in the prompt.
-      options: { num_predict: MAX_OUTPUT_TOKENS },
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        prompt,
+        images: [b64],
+        stream: false,
+        // Hard cap on response length — defense against models that ignore
+        // "keep it short" instructions in the prompt.
+        options: { num_predict: MAX_OUTPUT_TOKENS },
+      }),
+      // Bound a wedged/overloaded Ollama so a bulk run can't hang forever.
+      signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error(
+        `Ollama did not respond within ${GENERATE_TIMEOUT_MS / 1000}s (model may be wedged or too slow for this hardware).`,
+      );
+    }
+    throw err;
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -185,19 +200,48 @@ export function cleanTitle(raw: string): string {
   return s.trim();
 }
 
-/** Classify: one label from a closed set, case-insensitive match. */
-export function cleanClassify(raw: string): string {
-  const labels = ['screenshot', 'photo', 'illustration', 'diagram'] as const;
-  const lower = raw.toLowerCase();
-  for (const l of labels) {
-    if (lower.includes(l)) return l;
+/** Word-boundary patterns per label, including common word forms (plurals, "photograph"). */
+const CLASSIFY_LABEL_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
+  ['screenshot', /\bscreenshots?\b/i],
+  ['photo', /\bphotos?\b|\bphotographs?\b/i],
+  ['illustration', /\billustrations?\b/i],
+  ['diagram', /\bdiagrams?\b/i],
+];
+
+/** Finds whichever label pattern matches earliest in `text`, or undefined if none match. */
+function earliestClassifyLabel(text: string): string | undefined {
+  let bestLabel: string | undefined;
+  let bestIndex = Number.POSITIVE_INFINITY;
+  for (const [label, pattern] of CLASSIFY_LABEL_PATTERNS) {
+    const match = pattern.exec(text);
+    if (match && match.index < bestIndex) {
+      bestIndex = match.index;
+      bestLabel = label;
+    }
   }
+  return bestLabel;
+}
+
+/**
+ * Classify: one label from a closed set.
+ *
+ * Picks whichever label is mentioned first/most authoritatively in the
+ * model's own reply, rather than an `includes` scan of the whole text —
+ * that scan let a hedge like "This is a photograph, not a screenshot" match
+ * `screenshot` just because the word appears somewhere, even when it's the
+ * label being denied.
+ */
+export function cleanClassify(raw: string): string {
+  const firstLine = raw.trim().split(/\r?\n/, 1)[0] ?? '';
+  const found = earliestClassifyLabel(firstLine) ?? earliestClassifyLabel(raw);
+  if (found) return found;
+
   // Fallback: return the first word.
   return (
     raw
       .trim()
       .split(/\s+/)[0]
-      .toLowerCase()
+      ?.toLowerCase()
       .replace(/[^a-z]/g, '') || 'unknown'
   );
 }
