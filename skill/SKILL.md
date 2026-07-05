@@ -319,6 +319,8 @@ localpress remove-bg 123 --rembg --rembg-model isnet-general-use --json
 }
 ```
 
+When a result changed the file's format via WP-CLI replace-in-place (e.g. PNG → WebP), `results[].rewrittenUrls` reports how many post-content/meta URL occurrences were rewritten to the new filename (only present when WP-CLI is available; `convert` and `remove-bg` include the same field). If the rewrite itself failed, a warning is printed and `rewrittenUrls` is omitted — run `localpress references <id> --scope full` to check for stale embeds.
+
 #### Dry-run output (bulk operations)
 
 ```json

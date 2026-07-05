@@ -56,6 +56,7 @@ interface OptimizeResultRecord {
   durationMs: number;
   appliedSteps: string[];
   finalQuality?: number;
+  rewrittenUrls?: number;
 }
 
 export function registerOptimizeCommand(program: Command): void {
@@ -258,17 +259,27 @@ export function registerOptimizeCommand(program: Command): void {
             const newExtension = formatChanged ? mimeToExtension(resultMimeType) : undefined;
 
             let resultWpId: number | null = null;
+            let rewriteMessage = '';
 
             if (!options.keepOriginal && options.replaceInPlace !== false) {
               const replaceAdapter = resolver.tryResolve('replace-in-place');
               if (replaceAdapter) {
                 try {
-                  await replaceAdapter.replaceInPlace(id, resultBytes, {
+                  const replaced = await replaceAdapter.replaceInPlace(id, resultBytes, {
                     regenerateThumbnails: Boolean(options.regenerateThumbnails),
                     newMimeType: formatChanged ? resultMimeType : undefined,
                     newExtension,
                   });
                   resultWpId = id;
+
+                  const rewrite = replaced.formatChangeRewrite;
+                  if (rewrite?.warning) {
+                    warn(`    ⚠ ${rewrite.warning}`);
+                    rewriteMessage = ` (⚠ ${rewrite.warning})`;
+                  } else if (rewrite && rewrite.rewrittenUrls > 0) {
+                    info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
+                    rewriteMessage = ` (rewrote ${rewrite.rewrittenUrls} reference(s))`;
+                  }
                 } catch (err) {
                   if (!(err instanceof CapabilityUnavailableError) || parentOpts.strict) {
                     throw err;
@@ -311,7 +322,11 @@ export function registerOptimizeCommand(program: Command): void {
               // Best effort — UI will show basic success without fresh metadata.
             }
 
-            return { wpId: resultWpId, message: `Uploaded as #${resultWpId}`, freshItem };
+            return {
+              wpId: resultWpId,
+              message: `Uploaded as #${resultWpId}${rewriteMessage}`,
+              freshItem,
+            };
           },
         });
 
@@ -537,6 +552,7 @@ export function registerOptimizeCommand(program: Command): void {
 
           // 3. Upload the result.
           let resultWpId: number | null = null;
+          let rewrittenUrls: number | undefined;
 
           if (!options.keepOriginal && options.replaceInPlace !== false) {
             // Try replace-in-place.
@@ -548,12 +564,22 @@ export function registerOptimizeCommand(program: Command): void {
               const newExt = formatChanged ? mimeToExtension(outputMime) : undefined;
 
               try {
-                await replaceAdapter.replaceInPlace(item.id, result.bytes, {
+                const replaced = await replaceAdapter.replaceInPlace(item.id, result.bytes, {
                   regenerateThumbnails: Boolean(options.regenerateThumbnails),
                   newMimeType: formatChanged ? outputMime : undefined,
                   newExtension: newExt,
                 });
                 resultWpId = item.id;
+
+                const rewrite = replaced.formatChangeRewrite;
+                if (rewrite) {
+                  rewrittenUrls = rewrite.rewrittenUrls;
+                  if (rewrite.warning) {
+                    warn(`    ⚠ ${rewrite.warning}`);
+                  } else if (rewrite.rewrittenUrls > 0) {
+                    info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
+                  }
+                }
               } catch (err) {
                 if (err instanceof CapabilityUnavailableError) {
                   if (parentOpts.strict) throw err;
@@ -636,6 +662,7 @@ export function registerOptimizeCommand(program: Command): void {
             durationMs,
             appliedSteps: result.appliedSteps,
             finalQuality: result.finalQuality,
+            rewrittenUrls,
           });
         } catch (err) {
           // Animated-source and unsupported-format cases are deliberate skips,

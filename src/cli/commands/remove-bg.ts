@@ -195,13 +195,14 @@ export function registerRemoveBgCommand(program: Command): void {
             });
 
             let resultWpId: number | null = null;
+            let rewriteMessage = '';
 
             if (!options.keepOriginal) {
               const replaceAdapter = resolver.tryResolve('replace-in-place');
               if (replaceAdapter) {
                 try {
                   const formatChanged = item.mimeType !== 'image/png';
-                  await replaceAdapter.replaceInPlace(
+                  const replaced = await replaceAdapter.replaceInPlace(
                     id,
                     resultBytes,
                     formatChanged
@@ -213,6 +214,15 @@ export function registerRemoveBgCommand(program: Command): void {
                       : { regenerateThumbnails: true },
                   );
                   resultWpId = id;
+
+                  const rewrite = replaced.formatChangeRewrite;
+                  if (rewrite?.warning) {
+                    warn(`    ⚠ ${rewrite.warning}`);
+                    rewriteMessage = ` (⚠ ${rewrite.warning})`;
+                  } else if (rewrite && rewrite.rewrittenUrls > 0) {
+                    info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
+                    rewriteMessage = ` (rewrote ${rewrite.rewrittenUrls} reference(s))`;
+                  }
                 } catch (err) {
                   if (!(err instanceof CapabilityUnavailableError) || parentOpts.strict) {
                     throw err;
@@ -250,7 +260,7 @@ export function registerRemoveBgCommand(program: Command): void {
             });
 
             db.close();
-            return { wpId: resultWpId, message: `Uploaded as #${resultWpId}` };
+            return { wpId: resultWpId, message: `Uploaded as #${resultWpId}${rewriteMessage}` };
           },
         });
 
@@ -321,6 +331,7 @@ export function registerRemoveBgCommand(program: Command): void {
         inferenceMs: number;
         totalMs: number;
         resultWpId: number | null;
+        rewrittenUrls?: number;
       }> = [];
       let failures = 0;
 
@@ -406,6 +417,7 @@ export function registerRemoveBgCommand(program: Command): void {
 
           // Upload the result.
           let resultWpId: number | null = null;
+          let rewrittenUrls: number | undefined;
 
           if (!options.keepOriginal) {
             const replaceAdapter = resolver.tryResolve('replace-in-place');
@@ -415,7 +427,7 @@ export function registerRemoveBgCommand(program: Command): void {
                 // PNG, change the file extension + MIME and regenerate thumbnails
                 // so WP serves the right type and thumbnails show the cutout.
                 const formatChanged = item.mimeType !== 'image/png';
-                await replaceAdapter.replaceInPlace(
+                const replaced = await replaceAdapter.replaceInPlace(
                   id,
                   resultBytes,
                   formatChanged
@@ -427,6 +439,16 @@ export function registerRemoveBgCommand(program: Command): void {
                     : { regenerateThumbnails: true },
                 );
                 resultWpId = id;
+
+                const rewrite = replaced.formatChangeRewrite;
+                if (rewrite) {
+                  rewrittenUrls = rewrite.rewrittenUrls;
+                  if (rewrite.warning) {
+                    warn(`    ⚠ ${rewrite.warning}`);
+                  } else if (rewrite.rewrittenUrls > 0) {
+                    info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
+                  }
+                }
               } catch (err) {
                 if (err instanceof CapabilityUnavailableError && !parentOpts.strict) {
                   // Fall through.
@@ -494,6 +516,7 @@ export function registerRemoveBgCommand(program: Command): void {
             inferenceMs,
             totalMs,
             resultWpId,
+            rewrittenUrls,
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
