@@ -5,6 +5,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   aggregateExitCode,
+  buildForwardedTopLevelFlags,
   resolveSiteNames,
   tokenizeCommand,
 } from '../../src/cli/commands/sites.ts';
@@ -41,6 +42,26 @@ describe('tokenizeCommand', () => {
 
   test('trims extra spaces between tokens', () => {
     expect(tokenizeCommand('audit  --json')).toEqual(['audit', '--json']);
+  });
+
+  test('preserves an empty quoted argument as an empty-string token', () => {
+    expect(tokenizeCommand('metadata 42 --alt-text "" --title Cat')).toEqual([
+      'metadata',
+      '42',
+      '--alt-text',
+      '',
+      '--title',
+      'Cat',
+    ]);
+  });
+
+  test('does not treat a mid-word apostrophe as a quote-open', () => {
+    expect(tokenizeCommand("rename 5 --to don't-stop")).toEqual([
+      'rename',
+      '5',
+      '--to',
+      "don't-stop",
+    ]);
   });
 });
 
@@ -105,5 +126,33 @@ describe('resolveSiteNames', () => {
     const result = resolveSiteNames({ allSites: true }, []);
     expect('error' in result).toBe(true);
     if ('error' in result) expect(result.exitCode).toBe(ExitCode.ConfigError);
+  });
+});
+
+// -- buildForwardedTopLevelFlags ----------------------------------------------
+
+describe('buildForwardedTopLevelFlags', () => {
+  test('forwards --apply when set', () => {
+    expect(buildForwardedTopLevelFlags({ apply: true })).toEqual(['--apply']);
+  });
+
+  test('forwards --dry-run when set', () => {
+    expect(buildForwardedTopLevelFlags({ dryRun: true })).toEqual(['--dry-run']);
+  });
+
+  test('forwards --strict when set', () => {
+    expect(buildForwardedTopLevelFlags({ strict: true })).toEqual(['--strict']);
+  });
+
+  test('forwards all three when all set', () => {
+    expect(buildForwardedTopLevelFlags({ apply: true, dryRun: true, strict: true })).toEqual([
+      '--apply',
+      '--dry-run',
+      '--strict',
+    ]);
+  });
+
+  test('forwards nothing when none set', () => {
+    expect(buildForwardedTopLevelFlags({})).toEqual([]);
   });
 });

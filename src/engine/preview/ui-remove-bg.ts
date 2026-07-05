@@ -412,6 +412,7 @@ export function buildRemoveBgHtml(): string {
 </div>
 
 <script>
+  const PREVIEW_TOKEN = location.hash.slice(1);
   let meta = null;
   let hasResult = false;
   let processing = false;
@@ -438,14 +439,14 @@ export function buildRemoveBgHtml(): string {
   let ws = null;
   function connectWs() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(proto + '//' + location.host + '/ws');
+    ws = new WebSocket(proto + '//' + location.host + '/ws?token=' + encodeURIComponent(PREVIEW_TOKEN));
     ws.onopen = () => { setInterval(() => { if (ws.readyState === 1) ws.send('ping'); }, 5000); };
     ws.onclose = () => { /* server will detect the close */ };
   }
 
   async function init() {
     connectWs();
-    const res = await fetch('/api/meta');
+    const res = await fetch('/api/meta', { headers: { 'X-Preview-Token': PREVIEW_TOKEN } });
     meta = await res.json();
     filenameEl.textContent = meta.filename;
     metaEl.textContent = [
@@ -465,7 +466,7 @@ export function buildRemoveBgHtml(): string {
   function showSourceImage() {
     clearCanvas();
     const img = document.createElement('img');
-    img.src = '/api/source';
+    img.src = '/api/source?token=' + encodeURIComponent(PREVIEW_TOKEN);
     img.alt = 'Original image';
     img.className = 'single-view';
     img.onload = () => { loadingOverlay.style.display = 'none'; };
@@ -476,7 +477,7 @@ export function buildRemoveBgHtml(): string {
   function showResultImage() {
     clearCanvas();
     const img = document.createElement('img');
-    img.src = '/api/result?t=' + Date.now();
+    img.src = '/api/result?t=' + Date.now() + '&token=' + encodeURIComponent(PREVIEW_TOKEN);
     img.alt = 'Processed result';
     img.className = 'single-view';
     canvas.appendChild(img);
@@ -491,7 +492,7 @@ export function buildRemoveBgHtml(): string {
 
     // Bottom layer: result image (sets the layout size)
     const resultImg = document.createElement('img');
-    resultImg.src = '/api/result?t=' + Date.now();
+    resultImg.src = '/api/result?t=' + Date.now() + '&token=' + encodeURIComponent(PREVIEW_TOKEN);
     resultImg.alt = 'Result';
     resultImg.className = 'compare-result';
     wrapper.appendChild(resultImg);
@@ -500,7 +501,7 @@ export function buildRemoveBgHtml(): string {
     const clipDiv = document.createElement('div');
     clipDiv.className = 'compare-clip';
     const sourceImg = document.createElement('img');
-    sourceImg.src = '/api/source';
+    sourceImg.src = '/api/source?token=' + encodeURIComponent(PREVIEW_TOKEN);
     sourceImg.alt = 'Original';
     clipDiv.appendChild(sourceImg);
     wrapper.appendChild(clipDiv);
@@ -609,7 +610,7 @@ export function buildRemoveBgHtml(): string {
     try {
       const res = await fetch('/api/process', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Preview-Token': PREVIEW_TOKEN },
         body: JSON.stringify(params),
       });
       const data = await res.json();
@@ -642,7 +643,7 @@ export function buildRemoveBgHtml(): string {
     btnApply.disabled = true;
     btnApply.textContent = 'Uploading...';
     try {
-      const res = await fetch('/api/apply', { method: 'POST' });
+      const res = await fetch('/api/apply', { method: 'POST', headers: { 'X-Preview-Token': PREVIEW_TOKEN } });
       const data = await res.json();
       if (data.error) {
         showToast(data.error, 'error');
@@ -663,7 +664,7 @@ export function buildRemoveBgHtml(): string {
   }
 
   async function cancelPreview() {
-    try { await fetch('/api/cancel', { method: 'POST' }); } catch {}
+    try { await fetch('/api/cancel', { method: 'POST', headers: { 'X-Preview-Token': PREVIEW_TOKEN } }); } catch {}
     document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#e4e6ef;font-family:sans-serif"><h2>Preview cancelled</h2><p style="color:#8b8fa3">You can close this tab.</p></div>';
   }
 

@@ -23,7 +23,9 @@ import { pipeline } from 'node:stream/promises';
 import type { Command } from 'commander';
 
 import packageJson from '../../../package.json' with { type: 'json' };
-import { error, info, printJson } from '../utils/output.ts';
+import { parseChecksums, verifyChecksum } from '../../engine/update/checksum.ts';
+import { performAtomicSwap } from '../../engine/update/swap.ts';
+import { error, info, printJson, warn } from '../utils/output.ts';
 import { promptYesNo } from '../utils/prompt.ts';
 
 const GITHUB_REPO = 'gfargo/localpress';
@@ -44,6 +46,7 @@ interface UpdateCheckResult {
   latestVersion: string;
   updateAvailable: boolean;
   downloadUrl: string | null;
+  checksumsUrl: string | null;
   releaseUrl: string;
   assetName: string | null;
   assetSize: number | null;
@@ -121,7 +124,13 @@ export function registerUpdateCommand(program: Command): void {
         }
       }
 
-      await downloadAndReplace(result.downloadUrl, installDir, isJson);
+      await downloadAndReplace(
+        result.downloadUrl,
+        result.checksumsUrl,
+        result.assetName,
+        installDir,
+        isJson,
+      );
     });
 }
 
@@ -163,27 +172,65 @@ async function checkForUpdate(): Promise<UpdateCheckResult> {
   const latestVersion = release.tag_name.replace(/^v/, '');
   const updateAvailable = isNewerVersion(latestVersion, currentVersion);
 
+  // Only trust https:// asset URLs — GitHub always serves these, but don't
+  // blindly follow whatever the API response contains.
+  const httpsAssets = release.assets.filter((a) => a.browser_download_url.startsWith('https://'));
+
   const assetName = getAssetName();
-  const asset = release.assets.find((a) => a.name === assetName);
+  const asset = httpsAssets.find((a) => a.name === assetName);
+  const checksumsAsset = httpsAssets.find((a) => a.name === 'checksums.txt');
 
   return {
     currentVersion,
     latestVersion,
     updateAvailable,
     downloadUrl: asset?.browser_download_url ?? null,
+    checksumsUrl: checksumsAsset?.browser_download_url ?? null,
     releaseUrl: release.html_url,
     assetName: asset?.name ?? assetName,
     assetSize: asset?.size ?? null,
   };
 }
 
+/**
+ * Download and parse a `checksums.txt` release asset into a
+ * `filename → sha256hex` map.
+ */
+async function downloadChecksums(url: string): Promise<Map<string, string>> {
+  const response = await fetch(url, {
+    headers: { 'User-Agent': `localpress/${packageJson.version}` },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to download checksums.txt: ${response.status} ${response.statusText}`);
+  }
+
+  return parseChecksums(await response.text());
+}
+
 async function downloadAndReplace(
   downloadUrl: string,
+  checksumsUrl: string | null,
+  assetName: string | null,
   installDir: string,
   isJson: boolean,
 ): Promise<void> {
+  if (!downloadUrl.startsWith('https://')) {
+    error(`Refusing to download from a non-HTTPS URL: ${downloadUrl}`);
+    process.exit(1);
+  }
+  if (checksumsUrl && !checksumsUrl.startsWith('https://')) {
+    error(`Refusing to download checksums from a non-HTTPS URL: ${checksumsUrl}`);
+    process.exit(1);
+  }
+
   const tmpArchive = join(tmpdir(), `localpress-update-${Date.now()}.tar.gz`);
   const tmpExtract = join(tmpdir(), `localpress-update-${Date.now()}-extracted`);
+  let stagingDir: string | null = null;
+
+  const onSignalDuringSwap = () => {
+    warn('Update in progress — waiting for the current step to finish before exiting...');
+  };
 
   try {
     // Download the tarball.
@@ -205,6 +252,24 @@ async function downloadAndReplace(
     const fileStream = createWriteStream(tmpArchive);
     await pipeline(nodeStream, fileStream);
 
+    // Verify checksum before touching anything on disk beyond the temp archive.
+    if (!checksumsUrl) {
+      throw new Error(
+        'No checksums.txt found in the release — refusing to install an unverified update.',
+      );
+    }
+    if (!assetName) {
+      throw new Error('Could not determine the expected asset name for checksum lookup.');
+    }
+
+    if (!isJson) info('Verifying checksum...');
+    const checksums = await downloadChecksums(checksumsUrl);
+    const expectedHash = checksums.get(assetName);
+    if (!expectedHash) {
+      throw new Error(`No checksum entry found for ${assetName} in checksums.txt`);
+    }
+    await verifyChecksum(tmpArchive, expectedHash);
+
     // Extract.
     if (!isJson) info('Extracting...');
     await mkdir(tmpExtract, { recursive: true });
@@ -224,10 +289,6 @@ async function downloadAndReplace(
     }
     const extractedDir = join(tmpExtract, extractedSubdirs[0]);
 
-    // Back up current install, move new in place.
-    if (!isJson) info('Installing...');
-    const backupDir = `${installDir}.bak-${Date.now()}`;
-
     // installDir might be `.../libexec/bin` — we want to replace the parent libexec
     // Find the directory that contains bundle.js
     let targetDir = installDir;
@@ -241,37 +302,30 @@ async function downloadAndReplace(
       }
     }
 
-    // Rename existing → backup, copy new → target
-    if (existsSync(targetDir)) {
-      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
-      await cp(targetDir, backupDir, { recursive: true });
+    // Copy the extracted tree into a staging dir that's a sibling of
+    // targetDir (same filesystem), so the final swap can use atomic renames.
+    if (!isJson) info('Installing...');
+    stagingDir = `${targetDir}-staging-${Date.now()}`;
+    await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+    await cp(extractedDir, stagingDir, { recursive: true });
+
+    // Ensure wrapper script is executable before it goes live.
+    const wrapperPath = join(stagingDir, 'bin', 'localpress');
+    if (existsSync(wrapperPath)) {
+      await chmod(wrapperPath, 0o755);
     }
 
+    // The swap itself is just two renames — near-instantaneous — but catch
+    // signals during the window so we don't exit mid-rename.
+    process.once('SIGINT', onSignalDuringSwap);
+    process.once('SIGTERM', onSignalDuringSwap);
     try {
-      // Remove old contents, copy new
-      const entries = readdirSync(targetDir);
-      for (const entry of entries) {
-        await rm(join(targetDir, entry), { recursive: true, force: true });
-      }
-      await cp(extractedDir, targetDir, { recursive: true });
-
-      // Ensure wrapper script is executable
-      const wrapperPath = join(targetDir, 'bin', 'localpress');
-      if (existsSync(wrapperPath)) {
-        await chmod(wrapperPath, 0o755);
-      }
-
-      // Clean up backup
-      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
-    } catch (err) {
-      // Restore backup on failure
-      if (existsSync(backupDir)) {
-        await rm(targetDir, { recursive: true, force: true }).catch(() => {});
-        await cp(backupDir, targetDir, { recursive: true });
-        await rm(backupDir, { recursive: true, force: true }).catch(() => {});
-      }
-      throw err;
+      await performAtomicSwap(targetDir, stagingDir);
+    } finally {
+      process.off('SIGINT', onSignalDuringSwap);
+      process.off('SIGTERM', onSignalDuringSwap);
     }
+    stagingDir = null;
 
     if (isJson) {
       printJson({ success: true, path: targetDir });
@@ -288,6 +342,9 @@ async function downloadAndReplace(
     // Clean up temp files.
     await rm(tmpArchive, { force: true }).catch(() => {});
     await rm(tmpExtract, { recursive: true, force: true }).catch(() => {});
+    if (stagingDir) {
+      await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 }
 
