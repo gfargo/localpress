@@ -6,10 +6,25 @@
  * deserve filesystem-level protection.
  */
 
-import { chmodSync, mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Config, SiteConfig } from '../../types.ts';
+import { warn } from './output.ts';
+
+/**
+ * Site names become filesystem path components (`<name>.db`, snapshot blob
+ * dirs), so they must not contain path separators or traversal sequences.
+ */
+export function isValidSiteName(name: string): boolean {
+  return /^[A-Za-z0-9._-]+$/.test(name) && name !== '.' && name !== '..';
+}
+
+export function assertValidSiteName(name: string): void {
+  if (!isValidSiteName(name)) {
+    throw new Error(`Invalid site name '${name}'. Use only letters, numbers, '.', '_' and '-'.`);
+  }
+}
 
 /**
  * Resolve the localpress config directory, respecting XDG on Linux/macOS
@@ -84,16 +99,22 @@ export async function saveConfig(config: Config): Promise<void> {
   mkdirSync(dirname(configPath), { recursive: true });
   mkdirSync(getSitesDir(), { recursive: true });
 
-  // Write JSON with 2-space indent.
-  await Bun.write(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  // Write JSON with 2-space indent, creating the file 0600 from the outset so
+  // Application Passwords are never briefly world-readable between write and
+  // chmod. `mode` only applies on creation, so re-chmod existing files below.
+  const data = `${JSON.stringify(config, null, 2)}\n`;
+  if (process.platform === 'win32') {
+    writeFileSync(configPath, data);
+    return;
+  }
 
-  // Restrict permissions on POSIX (Application Passwords are sensitive).
-  if (process.platform !== 'win32') {
-    try {
-      chmodSync(configPath, 0o600);
-    } catch {
-      // Best-effort; some filesystems don't support chmod.
-    }
+  writeFileSync(configPath, data, { mode: 0o600 });
+  try {
+    // Enforce 0600 even when the file already existed (mode is ignored then).
+    chmodSync(configPath, 0o600);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    warn(`Could not set 0600 permissions on ${configPath}: ${message}`);
   }
 }
 

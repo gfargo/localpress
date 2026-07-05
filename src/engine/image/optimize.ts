@@ -24,6 +24,38 @@ import type {
   OptimizeResult,
 } from './types.ts';
 
+/** Formats the engine can actually encode. Anything else (e.g. svg) must not
+ * be silently rasterized — sharp would emit PNG bytes under the wrong label. */
+const ENCODABLE_FORMATS: readonly ImageFormat[] = ['jpeg', 'png', 'webp', 'avif', 'gif'];
+
+/** Formats that can hold multi-frame animation. */
+const ANIMATION_CAPABLE_FORMATS: readonly ImageFormat[] = ['gif', 'webp'];
+
+/**
+ * Thrown when the requested output format is not one the engine can encode
+ * (e.g. SVG). Callers should skip the item rather than corrupt it.
+ */
+export class UnsupportedFormatError extends Error {
+  constructor(public readonly format: string) {
+    super(`Unsupported image format: ${format}`);
+    this.name = 'UnsupportedFormatError';
+  }
+}
+
+/**
+ * Thrown when an animated source would be flattened by converting to a format
+ * that cannot preserve animation (jpeg/png/avif). Callers should skip and warn.
+ */
+export class AnimatedImageError extends Error {
+  constructor(
+    public readonly sourceFormat: string,
+    public readonly targetFormat: string,
+  ) {
+    super(`Cannot convert animated ${sourceFormat} to ${targetFormat} without losing animation`);
+    this.name = 'AnimatedImageError';
+  }
+}
+
 /**
  * Optimize an image buffer according to the given options.
  *
@@ -42,6 +74,7 @@ export async function optimizeImage(
 
   // Probe the source image for metadata.
   const metadata = await sharp(sourceBytes).metadata();
+  const isAnimated = (metadata.pages ?? 1) > 1;
   const before: ImageInfo = {
     format: mimeToFormat(sourceMimeType) ?? (metadata.format as ImageFormat) ?? 'jpeg',
     width: metadata.width ?? 0,
@@ -51,6 +84,18 @@ export async function optimizeImage(
   };
 
   const targetFormat = opts.toFormat ?? before.format;
+
+  // Guard: never silently rasterize an unencodable format (e.g. svg → png bytes).
+  if (!ENCODABLE_FORMATS.includes(targetFormat)) {
+    throw new UnsupportedFormatError(targetFormat);
+  }
+
+  // Guard: don't flatten animation into a single frame. Preserve it where the
+  // target can hold it; otherwise refuse so the caller can skip and warn.
+  if (isAnimated && !ANIMATION_CAPABLE_FORMATS.includes(targetFormat)) {
+    throw new AnimatedImageError(before.format, targetFormat);
+  }
+
   const mode: CompressionMode = opts.mode ?? defaultMode(targetFormat);
   const supportsQualityTuning =
     targetFormat === 'jpeg' || targetFormat === 'webp' || targetFormat === 'avif';
@@ -59,7 +104,11 @@ export async function optimizeImage(
   let appliedSteps: string[];
   let finalQuality: number | undefined;
 
-  if (opts.targetSizeBytes && supportsQualityTuning) {
+  // Lossless formats don't respond to the quality knob, so a target-size
+  // binary search would just burn encodes and return an oversized result.
+  const canSearchTargetSize = supportsQualityTuning && mode !== 'lossless';
+
+  if (opts.targetSizeBytes && canSearchTargetSize) {
     // Binary-search quality to hit the target file size.
     const result = await binarySearchQuality(
       sharp,
@@ -67,6 +116,7 @@ export async function optimizeImage(
       opts,
       targetFormat,
       mode,
+      isAnimated,
       opts.targetSizeBytes,
     );
     outputBuffer = result.bytes;
@@ -75,7 +125,15 @@ export async function optimizeImage(
   } else {
     // Normal single-pass encoding.
     const quality = opts.quality ?? defaultQuality(targetFormat, mode);
-    const result = await encodeImage(sharp, sourceBytes, opts, targetFormat, mode, quality);
+    const result = await encodeImage(
+      sharp,
+      sourceBytes,
+      opts,
+      targetFormat,
+      mode,
+      isAnimated,
+      quality,
+    );
     outputBuffer = result.bytes;
     appliedSteps = result.steps;
     finalQuality = supportsQualityTuning ? quality : undefined;
@@ -118,12 +176,20 @@ async function encodeImage(
   opts: OptimizeOptions,
   targetFormat: ImageFormat,
   mode: CompressionMode,
+  animated: boolean,
   quality: number,
 ): Promise<{ bytes: Buffer; steps: string[] }> {
-  let pipeline = sharp(sourceBytes);
+  // Decode every frame when the source is animated so multi-frame output
+  // (gif/webp) preserves the animation instead of keeping only frame 1.
+  let pipeline = animated ? sharp(sourceBytes, { animated: true }) : sharp(sourceBytes);
   const steps: string[] = [];
 
-  // Resize if requested.
+  // Always auto-rotate based on EXIF orientation so pixels are stored upright.
+  // (Doing this unconditionally fixes sideways photos when metadata is kept.)
+  pipeline = pipeline.rotate();
+  steps.push('auto-rotate');
+
+  // Resize if requested (after rotate, so max-width applies to the upright image).
   if (opts.maxWidth || opts.maxHeight) {
     pipeline = pipeline.resize({
       width: opts.maxWidth,
@@ -134,10 +200,12 @@ async function encodeImage(
     steps.push(`resize(${opts.maxWidth ?? 'auto'}×${opts.maxHeight ?? 'auto'})`);
   }
 
-  // Auto-rotate based on EXIF orientation, then strip metadata.
-  if (opts.stripMetadata !== false) {
-    pipeline = pipeline.rotate();
-    steps.push('auto-rotate');
+  // Sharp strips metadata by default. When the caller explicitly asks to keep
+  // it, preserve it (orientation is already baked into pixels by .rotate()).
+  if (opts.stripMetadata === false) {
+    pipeline = pipeline.keepMetadata();
+    steps.push('keep-metadata');
+  } else {
     steps.push('strip-metadata');
   }
 
@@ -148,7 +216,19 @@ async function encodeImage(
   if (useJsquash) {
     // Use sharp for transforms then extract raw pixels for jSquash encoding.
     const rawBuffer = await pipeline.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-    const pixels = new Uint8ClampedArray(rawBuffer.data.buffer);
+    // The raw Buffer is frequently a view into a larger pooled ArrayBuffer, so
+    // honor byteOffset/byteLength — viewing from offset 0 reads unrelated heap.
+    const pixels = new Uint8ClampedArray(
+      rawBuffer.data.buffer,
+      rawBuffer.data.byteOffset,
+      rawBuffer.data.byteLength,
+    );
+    const expected = rawBuffer.info.width * rawBuffer.info.height * 4;
+    if (pixels.length !== expected) {
+      throw new Error(
+        `jsquash: raw pixel length ${pixels.length} != expected ${expected} (w=${rawBuffer.info.width} h=${rawBuffer.info.height})`,
+      );
+    }
 
     const jsResult = await jsquashEncode(
       pixels,
@@ -163,8 +243,13 @@ async function encodeImage(
     // Apply format-specific encoding via sharp.
     switch (targetFormat) {
       case 'jpeg':
-        bytes = await pipeline.jpeg({ quality, mozjpeg: true }).toBuffer();
-        steps.push(`jpeg(q=${quality}, mozjpeg)`);
+        // JPEG has no alpha; flatten transparency onto white so previously
+        // transparent regions don't render as solid black.
+        bytes = await pipeline
+          .flatten({ background: '#ffffff' })
+          .jpeg({ quality, mozjpeg: true })
+          .toBuffer();
+        steps.push(`jpeg(q=${quality}, mozjpeg, flatten)`);
         break;
       case 'png':
         bytes = await pipeline.png({ compressionLevel: 9, effort: 10 }).toBuffer();
@@ -184,11 +269,7 @@ async function encodeImage(
         break;
       case 'gif':
         bytes = await pipeline.gif().toBuffer();
-        steps.push('gif(passthrough)');
-        break;
-      default:
-        bytes = await pipeline.toBuffer();
-        steps.push(`passthrough(${targetFormat})`);
+        steps.push(animated ? 'gif(animated)' : 'gif');
         break;
     }
   }
@@ -214,6 +295,7 @@ async function binarySearchQuality(
   opts: OptimizeOptions,
   targetFormat: ImageFormat,
   mode: CompressionMode,
+  animated: boolean,
   targetSizeBytes: number,
   maxIterations = 8,
   tolerance = 0.05,
@@ -224,7 +306,15 @@ async function binarySearchQuality(
 
   for (let i = 0; i < maxIterations && lo <= hi; i++) {
     const mid = Math.floor((lo + hi) / 2);
-    const candidate = await encodeImage(sharp, sourceBytes, opts, targetFormat, mode, mid);
+    const candidate = await encodeImage(
+      sharp,
+      sourceBytes,
+      opts,
+      targetFormat,
+      mode,
+      animated,
+      mid,
+    );
 
     if (candidate.bytes.length <= targetSizeBytes) {
       best = { bytes: candidate.bytes, quality: mid, steps: candidate.steps };
@@ -239,7 +329,7 @@ async function binarySearchQuality(
 
   // If no quality satisfied the target, return quality=1 (smallest achievable).
   if (!best) {
-    const candidate = await encodeImage(sharp, sourceBytes, opts, targetFormat, mode, 1);
+    const candidate = await encodeImage(sharp, sourceBytes, opts, targetFormat, mode, animated, 1);
     best = { bytes: candidate.bytes, quality: 1, steps: candidate.steps };
   }
 

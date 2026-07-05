@@ -8,10 +8,11 @@
 
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
-import { sshExec } from '../../adapters/ssh.ts';
+import { shellQuote, sshExec } from '../../adapters/ssh.ts';
 import type { ReferenceScope } from '../../adapters/types.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 export function registerReferencesCommand(program: Command): void {
   program
@@ -47,6 +48,7 @@ export function registerReferencesCommand(program: Command): void {
           error('--update-to requires WP-CLI over SSH. Configure SSH access for this site.');
           process.exit(6);
         }
+        const ssh = site.ssh;
 
         // Get the old and new attachment URLs.
         const getAdapter = resolver.resolve('get');
@@ -55,35 +57,67 @@ export function registerReferencesCommand(program: Command): void {
 
         info(`Rewriting references from #${id} → #${newId}...`);
 
-        const isDryRun = parentOpts.dryRun && !parentOpts.apply;
+        const isDryRun = resolveDryRun(parentOpts, false);
         const dryRunFlag = isDryRun ? '--dry-run' : '';
+        const cd = `cd ${shellQuote(ssh.wpPath)}`;
 
-        // 1. Update featured images (_thumbnail_id).
-        await sshExec(
-          site.ssh,
-          `cd ${site.ssh.wpPath} && wp db query "UPDATE wp_postmeta SET meta_value='${newId}' WHERE meta_key='_thumbnail_id' AND meta_value='${id}'" --allow-root`,
-        );
-        if (!isDryRun) {
+        // Fails the whole step loudly if a remote command errors, and reports
+        // which steps had already completed (this flow is not transactional).
+        const completed: string[] = [];
+        const run = async (label: string, command: string): Promise<string> => {
+          const res = await sshExec(ssh, `${cd} && ${command} --allow-root`);
+          if (res.exitCode !== 0) {
+            const applied = completed.length
+              ? `Already applied: ${completed.join(', ')} — the rewrite is now partial.`
+              : 'No changes were applied.';
+            throw new Error(
+              `${label} failed (exit ${res.exitCode}): ${res.stderr || res.stdout}\n${applied}`,
+            );
+          }
+          completed.push(label);
+          return res.stdout.trim();
+        };
+
+        // Resolve the real table prefix ($table_prefix may not be wp_).
+        const prefixRes = await sshExec(ssh, `${cd} && wp db prefix --allow-root`);
+        const prefix = prefixRes.stdout.trim() || 'wp_';
+
+        // 1. Featured images (_thumbnail_id) — a raw UPDATE with no --dry-run
+        //    switch, so in dry-run mode we only COUNT the affected rows.
+        if (isDryRun) {
+          const countRes = await sshExec(
+            ssh,
+            `${cd} && wp db query "SELECT COUNT(*) FROM ${prefix}postmeta WHERE meta_key='_thumbnail_id' AND meta_value='${id}'" --skip-column-names --allow-root`,
+          );
+          info(`  Would update ${countRes.stdout.trim() || 0} featured-image reference(s).`);
+        } else {
+          await run(
+            'featured-image update',
+            `wp db query "UPDATE ${prefix}postmeta SET meta_value='${newId}' WHERE meta_key='_thumbnail_id' AND meta_value='${id}'"`,
+          );
           info('  ✓ Updated _thumbnail_id references.');
         }
 
-        // 2. Search-replace the old URL with the new URL in post content.
+        // 2. URL replacement across ALL tables (page builders store URLs in
+        //    postmeta/options too). --precise keeps serialized data valid.
         if (oldItem.url && newItem.url) {
-          const replaceResult = await sshExec(
-            site.ssh,
-            `cd ${site.ssh.wpPath} && wp search-replace "${oldItem.url}" "${newItem.url}" wp_posts --precise ${dryRunFlag} --allow-root`,
+          const out = await run(
+            'URL replacement',
+            `wp search-replace ${shellQuote(oldItem.url)} ${shellQuote(newItem.url)} --precise ${dryRunFlag}`,
           );
-          info(`  ✓ URL replacement: ${replaceResult.stdout.trim()}`);
+          info(`  ✓ URL replacement: ${out}`);
         }
 
-        // 3. Replace Gutenberg block IDs.
-        const blockOld = `"id":${id}`;
-        const blockNew = `"id":${newId}`;
-        const blockResult = await sshExec(
-          site.ssh,
-          `cd ${site.ssh.wpPath} && wp search-replace '${blockOld}' '${blockNew}' wp_posts --precise ${dryRunFlag} --allow-root`,
+        // 3. Gutenberg block IDs — regex-anchored so rewriting id 12 can't
+        //    corrupt 123. Restricted to post_content (regex isn't serialize-safe,
+        //    and block markup only lives there).
+        const blockPattern = `"id":${id}(?![0-9])`;
+        const blockReplace = `"id":${newId}`;
+        const out = await run(
+          'block ID replacement',
+          `wp search-replace ${shellQuote(blockPattern)} ${shellQuote(blockReplace)} ${prefix}posts --include-columns=post_content --regex ${dryRunFlag}`,
         );
-        info(`  ✓ Block ID replacement: ${blockResult.stdout.trim()}`);
+        info(`  ✓ Block ID replacement: ${out}`);
 
         if (isDryRun) {
           info('\n  Dry-run complete. Pass --apply to execute the rewrites.');

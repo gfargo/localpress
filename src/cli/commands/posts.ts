@@ -8,7 +8,8 @@
 import { readFileSync } from 'node:fs';
 import type { Command } from 'commander';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
-import { error, info, printJson } from '../utils/output.ts';
+import { error, info, printJson, warn } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 interface WpPost {
   id: number;
@@ -328,12 +329,14 @@ export function registerPostsCommand(program: Command): void {
       const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}/${id}`;
       const auth = `Basic ${btoa(`${site.username}:${site.appPassword}`)}`;
 
+      // Use !== undefined so an explicit empty string (e.g. --excerpt "") can
+      // clear a field, rather than being silently dropped by a truthiness check.
       const body: Record<string, unknown> = {};
-      if (options.title) body.title = options.title;
-      if (content) body.content = content;
-      if (options.status) body.status = options.status;
-      if (options.slug) body.slug = options.slug;
-      if (options.excerpt) body.excerpt = options.excerpt;
+      if (options.title !== undefined) body.title = options.title;
+      if (content !== undefined) body.content = content;
+      if (options.status !== undefined) body.status = options.status;
+      if (options.slug !== undefined) body.slug = options.slug;
+      if (options.excerpt !== undefined) body.excerpt = options.excerpt;
       if (options.featuredImage) body.featured_media = options.featuredImage;
       if (options.category) body.categories = options.category.split(',').map(Number);
       if (options.tag) body.tags = options.tag.split(',').map(Number);
@@ -341,6 +344,14 @@ export function registerPostsCommand(program: Command): void {
       if (Object.keys(body).length === 0) {
         error('At least one field to update is required (--title, --content, --status, etc.).');
         process.exit(2);
+      }
+
+      if (resolveDryRun(parentOpts, false)) {
+        warn(`[dry-run] would update ${options.type} #${id}: ${Object.keys(body).join(', ')}`);
+        if (parentOpts.json) {
+          printJson({ dryRun: true, action: 'update', id, fields: body });
+        }
+        return;
       }
 
       try {
@@ -386,6 +397,16 @@ export function registerPostsCommand(program: Command): void {
       if (Number.isNaN(id)) {
         error('ID must be a valid integer.');
         process.exit(2);
+      }
+
+      if (resolveDryRun(parentOpts, false)) {
+        warn(
+          `[dry-run] would ${options.force ? 'permanently delete' : 'trash'} ${options.type} #${id}`,
+        );
+        if (parentOpts.json) {
+          printJson({ dryRun: true, action: options.force ? 'delete' : 'trash', id });
+        }
+        return;
       }
 
       const endpoint = typeEndpoint(options.type);

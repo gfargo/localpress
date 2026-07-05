@@ -365,10 +365,20 @@ async function extractZip(zipPath: string): Promise<ExtractedZip> {
   const files: string[] = [];
   let manifest: ExportManifest | null = null;
 
+  const { mkdirSync } = await import('node:fs');
+  const { dirname, resolve, sep } = await import('node:path');
+  const tempRoot = resolve(tempDir);
+
   for (const entry of entries) {
-    const destPath = join(tempDir, entry.path);
-    const { mkdirSync } = await import('node:fs');
-    mkdirSync(join(tempDir, entry.path.split('/').slice(0, -1).join('/')), { recursive: true });
+    // Zip Slip guard: reject entries that would resolve outside the temp dir
+    // (absolute paths or `../` traversal in a malicious archive).
+    const destPath = resolve(tempRoot, entry.path);
+    if (destPath !== tempRoot && !destPath.startsWith(tempRoot + sep)) {
+      warn(`Skipping unsafe archive entry outside extraction dir: ${entry.path}`);
+      continue;
+    }
+
+    mkdirSync(dirname(destPath), { recursive: true });
     await Bun.write(destPath, entry.data);
 
     if (entry.path === 'manifest.json') {

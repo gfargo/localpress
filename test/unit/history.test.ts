@@ -6,7 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SnapshotStore } from '../../src/engine/history/store.ts';
@@ -59,6 +59,28 @@ describe('SnapshotStore', () => {
     expect(snaps[0].blobPath).not.toBeNull();
     const onDisk = readFileSync(snaps[0].blobPath as string);
     expect(onDisk.toString()).toBe('hello world content');
+  });
+
+  test('blob is written synchronously before capture() returns (durability)', () => {
+    // Regression for the fire-and-forget bug: the DB row must never point at a
+    // blob that isn't on disk yet. capture() writes synchronously, so the file
+    // exists the instant it returns — no event-loop tick required.
+    const session = store.openSession('testsite', 'optimize', { quality: 80 });
+    const bytes = Buffer.from('durable snapshot bytes');
+    store.capture({
+      siteName: 'testsite',
+      sessionId: session.id,
+      attachmentId: 7,
+      operation: 'optimize',
+      sourceBytes: bytes,
+      beforeMeta: { filename: 'a.jpg', mimeType: 'image/jpeg' },
+    });
+
+    const snap = store.listSnapshots('testsite').find((s) => s.wpId === 7);
+    expect(snap?.blobPath).not.toBeNull();
+    // No await between capture() and this read.
+    expect(existsSync(snap?.blobPath as string)).toBe(true);
+    expect(readFileSync(snap?.blobPath as string).toString()).toBe('durable snapshot bytes');
   });
 
   test('metadata-only capture stores no blob', () => {

@@ -21,7 +21,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type {
   HistoryStats,
@@ -177,8 +177,12 @@ export class SnapshotStore {
       const ext = pickExtension(opts.beforeMeta);
       blobPath = join(this.blobRoot, opts.siteName, opts.sessionId, `${opts.attachmentId}${ext}`);
       mkdirSync(dirname(blobPath), { recursive: true });
-      // Bun.write returns a number of bytes written; cast to satisfy the void return.
-      void Bun.write(blobPath, opts.sourceBytes);
+      // Write the blob synchronously BEFORE inserting the DB row. A detached
+      // async write can leave a committed snapshot row pointing at a missing or
+      // truncated file if the process exits first — and its rejection would be
+      // an uncatchable unhandled rejection. If this throws, no row is created
+      // and the best-effort caller (captureSnapshot) swallows it.
+      writeFileSync(blobPath, opts.sourceBytes);
       blobSize = opts.sourceBytes.length;
     }
 

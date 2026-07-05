@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-07-05
+
+Trust & correctness release — hardens the safety primitives (dry-run, undo,
+idempotency, reference tracking) surfaced by a full-codebase audit. No new
+command surface; every change makes an existing operation safer or more correct.
+
+### Fixed — data safety (critical)
+- **`references --update-to` no longer mutates the database under `--dry-run`**
+  (#89). The featured-image (`_thumbnail_id`) update previously ran
+  unconditionally; it is now gated and reports a count in dry-run mode.
+- **`references --update-to` block-ID rewrite is boundary-anchored** (#89) — a
+  regex-anchored replace scoped to `post_content` so rewriting attachment `12`
+  can no longer corrupt `123`. URL replacement now runs across all tables
+  (serialize-safe) instead of `wp_posts` only, resolves the real table prefix,
+  and reports partial-failure state.
+- **Global `--dry-run` is honored by `delete`, `posts delete`, `posts update`,
+  and `metadata`** (#90) via a shared `resolveDryRun` helper — these destructive
+  commands previously ignored it and executed for real.
+- **Animated GIF/WebP are preserved, not flattened** (#93). Multi-frame sources
+  stay animated for gif/webp targets and are skipped (with a warning) for
+  formats that can't hold animation, instead of being silently reduced to frame 1.
+- **SVG and other unencodable formats are skipped, not rasterized** (#94).
+  `optimize --all` filters to a MIME whitelist and the engine throws rather than
+  writing PNG bytes under a `.svg` name.
+- **Snapshots are written synchronously before the history row is committed**
+  (#92) — an interrupted run can no longer leave `undo` pointing at a missing
+  or truncated blob.
+
+### Fixed — correctness (high)
+- **`remove-bg` replace-in-place sets the PNG MIME/extension and regenerates
+  thumbnails** (#95) so thumbnails show the cutout and WordPress serves the
+  right content type.
+- **`remove-bg` batch no longer aborts on a per-item `getMedia` failure** (#96) —
+  failure recording is FK-safe and self-contained.
+- **`optimize --unoptimized` is filtered to compression operations** (#98), so a
+  `caption`/`classify`/`rename` pass no longer makes images look "already
+  optimized".
+- **jsquash encoder honors the raw buffer's `byteOffset`** (#100), fixing
+  out-of-bounds pixel reads that could corrupt output mid-bulk-run.
+- **REST reference scan finds Gutenberg embeds** (#101): posts are fetched with
+  `context=edit` and raw block content is scanned (with a `wp-image-<id>`
+  rendered fallback). `getMedia` also returns raw fields so `tag`/`vision`
+  no longer flatten formatted captions.
+- **`delete` without `--force` returns actionable guidance** when a site lacks
+  `MEDIA_TRASH` (previously an opaque 501) (#102).
+
+### Fixed — robustness (medium)
+- **SQLite `busy_timeout` + conditional version stamp** (#114) so `watch` and a
+  foreground command sharing a site DB no longer crash with "database is locked".
+- **Config file is created `0600` atomically** (#118) — Application Passwords are
+  never briefly world-readable; a failed chmod now warns instead of being
+  swallowed. Site names are validated to reject path traversal.
+- **Zip Slip guard on `import`** (#107) rejects archive entries that resolve
+  outside the extraction directory.
+- **Transparent PNG → JPEG is flattened onto white** (not black), EXIF
+  orientation is always baked in (even when metadata is kept), and the
+  `--target-size` "at q=1" warning is only shown when a quality search ran.
+- **`posts update` can clear a field** with an explicit empty value.
+
 ## [2.0.0] - 2026-05-22
 
 ### Added

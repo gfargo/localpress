@@ -27,7 +27,8 @@ import {
 } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
-import { error, info, printJson } from '../utils/output.ts';
+import { error, info, printJson, warn } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 interface MetadataResultRecord {
   id: number;
@@ -74,6 +75,17 @@ export function registerMetadataCommand(program: Command): void {
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
       const resolver = new AdapterResolver(site);
+
+      // Writing metadata mutates the live site; honor an explicit --dry-run.
+      if (resolveDryRun(parentOpts, false)) {
+        const fields = Object.keys(incoming).join(', ');
+        warn(`[dry-run] would set ${fields} on ${ids.length} attachment(s): ${ids.join(', ')}`);
+        if (parentOpts.json) {
+          printJson({ dryRun: true, ids, changes: incoming });
+        }
+        return;
+      }
+
       const getAdapter = resolver.resolve('get');
       const metaAdapter = resolver.resolve('update-meta');
 

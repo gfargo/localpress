@@ -12,7 +12,7 @@ import { rmSync } from 'node:fs';
 import type { Command } from 'commander';
 import { ExitCode } from '../../types.ts';
 import { invokeCli } from '../mcp/invoke.ts';
-import { getSiteDbPath, loadConfig, saveConfig } from '../utils/config.ts';
+import { getSiteDbPath, isValidSiteName, loadConfig, saveConfig } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 /**
@@ -139,6 +139,13 @@ export function registerSitesCommand(program: Command): void {
       normalizedUrl = normalizedUrl.replace(/\/+$/, '');
 
       const siteName = options.name ?? new URL(normalizedUrl).hostname;
+
+      if (!isValidSiteName(siteName)) {
+        error(
+          `Invalid site name '${siteName}'. Use only letters, numbers, '.', '_' and '-' (pass --name to override the hostname-derived default).`,
+        );
+        process.exit(2);
+      }
 
       if (!options.username || !options.appPassword) {
         error(
