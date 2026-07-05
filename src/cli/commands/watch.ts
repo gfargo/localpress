@@ -22,7 +22,11 @@ import { watch } from 'chokidar';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { CapabilityUnavailableError } from '../../adapters/types.ts';
-import { optimizeImage } from '../../engine/image/optimize.ts';
+import {
+  AnimatedImageError,
+  UnsupportedFormatError,
+  optimizeImage,
+} from '../../engine/image/optimize.ts';
 import type { ImageFormat } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
@@ -234,6 +238,16 @@ export function registerWatchCommand(program: Command): void {
             }
           }
         } catch (err) {
+          // Animated-source and unsupported-format cases are deliberate skips,
+          // not failures — never flatten an animation or rasterize a vector.
+          if (err instanceof AnimatedImageError || err instanceof UnsupportedFormatError) {
+            if (parentOpts.json) {
+              printJson({ event: 'skipped', file: relPath, reason: err.message });
+            } else {
+              warn(`↳ Skipped ${relPath}: ${err.message}`);
+            }
+            return;
+          }
           const msg = err instanceof Error ? err.message : String(err);
           if (parentOpts.json) {
             printJson({ event: 'error', file: relPath, error: msg });

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`resize`, `convert`, and `watch` now report animation-preservation skips
+  consistently with `optimize`** (#93 follow-up). Animated sources refused
+  because the target format can't hold animation are counted/emitted as
+  `skipped` instead of `failures`/`error`, matching `optimize`'s handling.
+
 ## [2.1.0] - 2026-07-05
 
 Trust & correctness release — hardens the safety primitives (dry-run, undo,

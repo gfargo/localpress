@@ -16,7 +16,11 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
-import { optimizeImage } from '../../engine/image/optimize.ts';
+import {
+  AnimatedImageError,
+  UnsupportedFormatError,
+  optimizeImage,
+} from '../../engine/image/optimize.ts';
 import type { ImageFormat } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
@@ -85,6 +89,7 @@ export function registerConvertCommand(program: Command): void {
         savedBytes: number;
       }> = [];
       let failures = 0;
+      let skipped = 0;
 
       for (const id of ids) {
         const startTime = Date.now();
@@ -218,6 +223,13 @@ export function registerConvertCommand(program: Command): void {
             savedBytes: saved,
           });
         } catch (err) {
+          // Animated-source and unsupported-format cases are deliberate skips,
+          // not failures — never flatten an animation or rasterize a vector.
+          if (err instanceof AnimatedImageError || err instanceof UnsupportedFormatError) {
+            warn(`    ↳ Skipped #${id}: ${err.message}`);
+            skipped++;
+            continue;
+          }
           error(`    ✗ #${id}: ${err instanceof Error ? err.message : String(err)}`);
           failures++;
         }
@@ -232,11 +244,11 @@ export function registerConvertCommand(program: Command): void {
       db.close();
 
       if (parentOpts.json) {
-        printJson({ converted: results.length, failures, results });
+        printJson({ converted: results.length, failures, skipped, results });
       } else if (results.length > 0) {
         const totalSaved = results.reduce((sum, r) => sum + r.savedBytes, 0);
         info(
-          `\n  Done: ${results.length} converted, ${failures} failed. Saved ${formatBytes(totalSaved)}.`,
+          `\n  Done: ${results.length} converted, ${failures} failed, ${skipped} skipped. Saved ${formatBytes(totalSaved)}.`,
         );
       }
 
