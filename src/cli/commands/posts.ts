@@ -7,6 +7,7 @@
 
 import { readFileSync } from 'node:fs';
 import type { Command } from 'commander';
+import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { resolveDryRun } from '../utils/run-mode.ts';
@@ -98,11 +99,11 @@ export function registerPostsCommand(program: Command): void {
       'post type slug: post, page, or any custom post type (e.g. portfolio, event)',
       'post',
     )
-    .option('--author <id>', 'filter by author ID', (v) => Number.parseInt(v, 10))
+    .option('--author <id>', 'filter by author ID', parseIntOption('--author'))
     .option('--search <query>', 'search posts by keyword')
-    .option('--category <id>', 'filter by category ID', (v) => Number.parseInt(v, 10))
-    .option('--per-page <n>', 'results per page (max 100)', (v) => Number.parseInt(v, 10))
-    .option('--page <n>', 'page number', (v) => Number.parseInt(v, 10))
+    .option('--category <id>', 'filter by category ID', parseIntOption('--category'))
+    .option('--per-page <n>', 'results per page (max 100)', parseIntOption('--per-page'))
+    .option('--page <n>', 'page number', parseIntOption('--page'))
     .option('--orderby <field>', 'sort by: date, title, id, modified, slug', 'date')
     .option('--order <dir>', 'sort direction: asc or desc', 'desc')
     .action(async (options) => {
@@ -228,7 +229,11 @@ export function registerPostsCommand(program: Command): void {
     .option('--type <type>', 'post type: post, page, or custom (e.g. portfolio)', 'post')
     .option('--slug <slug>', 'URL slug')
     .option('--excerpt <text>', 'post excerpt')
-    .option('--featured-image <id>', 'featured image attachment ID', (v) => Number.parseInt(v, 10))
+    .option(
+      '--featured-image <id>',
+      'featured image attachment ID',
+      parseIntOption('--featured-image'),
+    )
     .option('--category <ids>', 'comma-separated category IDs')
     .option('--tag <ids>', 'comma-separated tag IDs')
     .action(async (options) => {
@@ -301,7 +306,11 @@ export function registerPostsCommand(program: Command): void {
     .option('--type <type>', 'post type: post, page, or custom (e.g. portfolio)', 'post')
     .option('--slug <slug>', 'new URL slug')
     .option('--excerpt <text>', 'new excerpt')
-    .option('--featured-image <id>', 'featured image attachment ID', (v) => Number.parseInt(v, 10))
+    .option(
+      '--featured-image <id>',
+      'featured image attachment ID',
+      parseIntOption('--featured-image'),
+    )
     .option('--category <ids>', 'comma-separated category IDs')
     .option('--tag <ids>', 'comma-separated tag IDs')
     .action(async (idStr: string, options) => {

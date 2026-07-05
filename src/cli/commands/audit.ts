@@ -18,6 +18,7 @@ import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { MediaItem } from '../../adapters/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -55,8 +56,10 @@ export function registerAuditCommand(program: Command): void {
     .description('Find optimization opportunities across the media library')
     .option('--unoptimized', 'flag images that have never been processed')
     .option('--large', 'flag images larger than --threshold (default 1MB)')
-    .option('--threshold <bytes>', 'size threshold for --large in bytes (default 1048576)', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--threshold <bytes>',
+      'size threshold for --large in bytes (default 1048576)',
+      parseIntOption('--threshold'),
     )
     .option('--unattached', 'flag attachments not associated with any post')
     .option('--missing-alt', 'flag images without alt text')

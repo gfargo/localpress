@@ -25,6 +25,7 @@ import { CapabilityUnavailableError } from '../../adapters/types.ts';
 import { openSnapshotStore } from '../../engine/history/index.ts';
 import type { SnapshotRecord } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -41,11 +42,11 @@ export function registerUndoCommand(program: Command): void {
   program
     .command('undo [sessionId]')
     .description('Restore from a snapshot (last session by default). Dry-run unless --apply.')
-    .option('--snapshot <id>', 'restore a specific snapshot by ID', (v) => Number.parseInt(v, 10))
+    .option('--snapshot <id>', 'restore a specific snapshot by ID', parseIntOption('--snapshot'))
     .option(
       '--attachment <id>',
       'restore the most recent un-restored snapshot for an attachment',
-      (v) => Number.parseInt(v, 10),
+      parseIntOption('--attachment'),
     )
     .action(async (sessionIdArg: string | undefined, options) => {
       const parentOpts = program.opts();
