@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`sites run` forwards `--apply`/`--dry-run`/`--strict` to child processes**
+  (#104). Previously these parent-level flags were silently dropped, so bulk
+  ops ran as no-op dry-runs while the parent reported success.
+- **`sites run` tokenizer no longer drops empty quoted arguments or treats
+  mid-word apostrophes as quotes** (#104) — `--alt-text ""` is preserved and
+  `don't-stop` is no longer mangled into `dont-stop`.
+- **`sites run` children get a 30-minute default timeout** (#104), separate
+  from the 5-minute MCP-tool-call default, and are now escalated to `SIGKILL`
+  if they don't exit within a grace period after `SIGTERM`. Configurable via
+  `--timeout <ms>`.
 - **`update` verifies the downloaded tarball's SHA256 checksum before
   extracting** (#121) — the release workflow now publishes a `checksums.txt`
   asset; `update` downloads it alongside the archive and hard-fails if the
