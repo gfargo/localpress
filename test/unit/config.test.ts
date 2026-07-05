@@ -175,3 +175,50 @@ describe('resolveActiveSite', () => {
     expect(() => resolveActiveSite(config)).toThrow("Unknown site 'nonexistent'");
   });
 });
+
+describe('mergeSiteConfig', () => {
+  test('preserves ssh and original createdAt when updating an existing site', async () => {
+    const { mergeSiteConfig } = await getConfigModule();
+
+    const existing = {
+      name: 'prod',
+      url: 'https://old.example.com',
+      username: 'old-admin',
+      appPassword: 'old-password',
+      ssh: {
+        host: 'prod.example.com',
+        user: 'deploy',
+        wpPath: '/var/www/html',
+      },
+      createdAt: '2024-01-01T00:00:00.000Z',
+    };
+
+    const merged = mergeSiteConfig(existing, {
+      name: 'prod',
+      url: 'https://new.example.com',
+      username: 'new-admin',
+      appPassword: 'new-password',
+    });
+
+    expect(merged.url).toBe('https://new.example.com');
+    expect(merged.username).toBe('new-admin');
+    expect(merged.appPassword).toBe('new-password');
+    expect(merged.ssh).toEqual(existing.ssh);
+    expect(merged.createdAt).toBe('2024-01-01T00:00:00.000Z');
+  });
+
+  test('creates a fresh config with no ssh when there is no existing site', async () => {
+    const { mergeSiteConfig } = await getConfigModule();
+
+    const merged = mergeSiteConfig(undefined, {
+      name: 'new-site',
+      url: 'https://new-site.example.com',
+      username: 'admin',
+      appPassword: 'password',
+    });
+
+    expect(merged.ssh).toBeUndefined();
+    expect(merged.createdAt).toBeTruthy();
+    expect(merged.url).toBe('https://new-site.example.com');
+  });
+});
