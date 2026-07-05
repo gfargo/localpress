@@ -114,20 +114,24 @@ describe.skipIf(!canRun)('CLI subprocess integration', () => {
         expect(undoResult.exitCode).toBe(0);
         const undoJson = JSON.parse(undoResult.stdout) as {
           restored: number;
+          partial: number;
           failures: number;
-          results: Array<{ status: string; attachmentId: number }>;
+          results: Array<{ status: string; attachmentId: number; newAttachmentId?: number }>;
         };
         expect(undoJson.failures).toBe(0);
-        expect(undoJson.restored).toBe(1);
-        expect(undoJson.results[0].status).toBe('restored');
+        // REST-only site: no replace-in-place, so undo of a binary snapshot
+        // uploads the original as a NEW attachment and reports 'partial' — the
+        // snapshot is intentionally kept un-restored for a later retry (#119).
+        expect(undoJson.restored).toBe(0);
+        expect(undoJson.partial).toBe(1);
+        expect(undoJson.results[0].status).toBe('partial');
         expect(undoJson.results[0].attachmentId).toBe(uploaded.id);
+        expect(undoJson.results[0].newAttachmentId).toBeGreaterThan(0);
 
-        // The restore itself also falls back to upload-as-new on REST-only
-        // sites — capture that attachment ID from the warn() line for cleanup.
-        const warnLines = parseStderrLines(undoResult.stderr);
-        const restoreWarn = warnLines.find((l) => /uploaded as new attachment/i.test(l.message));
-        const match = restoreWarn?.message.match(/#(\d+)/);
-        if (match) restoredAttachmentIds.push(Number(match[1]));
+        // Capture the upload-as-new attachment ID (surfaced in the JSON) for cleanup.
+        if (undoJson.results[0].newAttachmentId) {
+          restoredAttachmentIds.push(undoJson.results[0].newAttachmentId);
+        }
       } finally {
         await adapter.delete(uploaded.id, { force: true }).catch(() => {});
         for (const id of restoredAttachmentIds) {
