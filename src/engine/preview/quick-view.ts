@@ -54,6 +54,13 @@ export async function quickViewInBrowser(options: QuickViewOptions): Promise<voi
     hostname: '127.0.0.1',
     fetch(req, server) {
       const url = new URL(req.url);
+      // Only serve the loopback origin (defeats DNS rebinding). quick-view is
+      // read-only (no mutation endpoint), so no token is needed beyond this.
+      const host = req.headers.get('host') ?? '';
+      const listenPort = server.port ?? state.server?.port;
+      if (host !== `127.0.0.1:${listenPort}` && host !== `localhost:${listenPort}`) {
+        return new Response('Forbidden', { status: 403 });
+      }
       if (url.pathname === '/ws' && req.headers.get('upgrade') === 'websocket') {
         const upgraded = server.upgrade(req, { data: {} });
         return upgraded ? undefined : new Response('Upgrade failed', { status: 500 });
@@ -176,5 +183,11 @@ function openBrowser(url: string): void {
   const cmd =
     process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
   const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
-  spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
+  try {
+    const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+    child.on('error', () => {});
+    child.unref();
+  } catch {
+    // ignore — best-effort browser launch
+  }
 }

@@ -203,11 +203,6 @@ async function restoreSnapshot(
   }
 
   // Binary snapshot: load blob bytes and replace-in-place.
-  const { SnapshotStore } = await import('../../engine/history/store.ts');
-  // We need the underlying store to read the blob. The resolver doesn't own it,
-  // but we passed it indirectly via the path on the snapshot record. Reuse via
-  // a fresh SnapshotStore is overkill — read the blob directly.
-  void SnapshotStore;
   const { readFileSync } = await import('node:fs');
   if (!snap.blobPath) {
     throw new Error('Binary snapshot is missing its blob path');
@@ -217,8 +212,33 @@ async function restoreSnapshot(
   const replaceAdapter = resolver.tryResolve('replace-in-place');
   if (replaceAdapter) {
     try {
+      // Detect whether the forward operation changed the file format (e.g.
+      // optimize --to webp turned photo.png into photo.webp). If so, undo must
+      // pass newExtension so the adapter renames the file back, restores the
+      // MIME, deletes the wrong-format file, and regenerates thumbnails from
+      // the original bytes — otherwise the original bytes get written under the
+      // new extension and the attachment is left internally inconsistent.
+      const getAdapter = resolver.tryResolve('get');
+      let newExtension: string | undefined;
+      let formatChanged = false;
+      if (getAdapter) {
+        try {
+          const current = await getAdapter.getMedia(snap.wpId);
+          if (current.mimeType !== snap.beforeMeta.mimeType) {
+            formatChanged = true;
+            const { extname } = await import('node:path');
+            const origExt = extname(snap.beforeMeta.filename);
+            if (origExt) newExtension = origExt;
+          }
+        } catch {
+          // Couldn't read current state — fall back to a same-format restore.
+        }
+      }
+
       await replaceAdapter.replaceInPlace(snap.wpId, bytes, {
         newMimeType: snap.beforeMeta.mimeType,
+        newExtension,
+        regenerateThumbnails: formatChanged,
       });
       // Also restore metadata fields that may have changed.
       const metaAdapter = resolver.tryResolve('update-meta');
@@ -229,6 +249,11 @@ async function restoreSnapshot(
           caption: snap.beforeMeta.caption,
           description: snap.beforeMeta.description,
         });
+      }
+      if (formatChanged) {
+        warn(
+          `    ⚠ Restored to ${snap.beforeMeta.filename}. If the original optimize rewrote post references to the new URL, re-check them (references --update-to).`,
+        );
       }
       return;
     } catch (err) {

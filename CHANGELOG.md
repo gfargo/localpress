@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-07-05
+
+Completes the trust story started in 2.1.0 — the three deferred safety items
+that needed careful, tested implementations: undo after a format change, correct
+optimize idempotency, and preview-server hardening.
+
+### Fixed — undo correctness (critical)
+- **`undo` after a format-changing optimize restores the file correctly** (#91).
+  It now detects that the forward op changed the format (e.g. png→webp), fetches
+  the current attachment, and passes `newExtension` + thumbnail regeneration so
+  the file is renamed back, the MIME is restored, the wrong-format file is
+  removed, and thumbnails are rebuilt from the original bytes — instead of
+  writing the original bytes under the new extension. Warns to re-check
+  references when the forward op changed the URL.
+
+### Fixed — idempotency (high)
+- **`optimize` is safe to re-run** (#97). The skip now compares the current file
+  against the previous run's OUTPUT hash (`resultHash`) with matching params,
+  instead of the previous source hash. Re-running with the same settings is a
+  true no-op (no re-compression, no generational quality loss, no double-counted
+  stats), a restored/undone file re-optimizes correctly, and changing any param
+  re-runs. Adds **`optimize --force`** to bypass the skip.
+
+### Fixed — preview server (high / security)
+- **Preview "Apply" reports success** (#105). A `resolveOnce` guard plus
+  resolving before shutdown fixes the WebSocket-close race that made every
+  successful apply report "Preview cancelled". Reloading the preview tab (F5) no
+  longer kills the session (a short reconnect grace window was added).
+- **Preview endpoints are authenticated** (#106). A per-session token (delivered
+  via the URL fragment, never sent to the server or logged) is required on every
+  mutating endpoint, and a `Host`-header check rejects DNS-rebinding. No other
+  local process or web page can drive `/api/apply` to overwrite an attachment.
+  Injected client-side with zero changes to the UI code. quick-view gets the
+  same Host check.
+- Browser launch is now best-effort and never throws in headless environments.
+
 ## [2.1.0] - 2026-07-05
 
 Trust & correctness release — hardens the safety primitives (dry-run, undo,

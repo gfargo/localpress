@@ -103,6 +103,7 @@ export function registerOptimizeCommand(program: Command): void {
       'regenerate WordPress thumbnails after replace-in-place (slower)',
     )
     .option('--profile <name>', 'use a named optimization profile (from localpress config)')
+    .option('--force', 'reprocess even if the attachment was already optimized with these settings')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -462,13 +463,6 @@ export function registerOptimizeCommand(program: Command): void {
           const sourceBytes = Buffer.from(await response.arrayBuffer());
           const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
 
-          // Check idempotency: skip if source hasn't changed since last processing.
-          const lastProcessing = db.getLastProcessing(site.name, item.id, 'optimize');
-          if (lastProcessing?.sourceHash === sourceHash && lastProcessing.status === 'success') {
-            info('    ↳ Skipped (source unchanged since last optimization).');
-            continue;
-          }
-
           // Smart format default: if the user didn't pick a format (no --to,
           // no --profile format) and we have a cached `classify` result for
           // this attachment, route to a sensible default:
@@ -486,6 +480,18 @@ export function registerOptimizeCommand(program: Command): void {
               perItemOpts.toFormat = 'webp';
               info(`    ↳ Smart default: WebP (classified as ${classification})`);
             }
+          }
+
+          // Idempotency: skip only when the current file IS already the output
+          // of a prior successful run with these exact params (see
+          // shouldSkipOptimize). --force bypasses.
+          const lastProcessing = db.getLastProcessing(site.name, item.id, 'optimize');
+          if (
+            !options.force &&
+            shouldSkipOptimize(lastProcessing, sourceHash, JSON.stringify(perItemOpts))
+          ) {
+            info('    ↳ Skipped (already optimized with these settings; use --force to redo).');
+            continue;
           }
 
           // 2. Process through the image engine.
@@ -730,6 +736,28 @@ function formatToMime(format: string): string {
     gif: 'image/gif',
   };
   return map[format] ?? `image/${format}`;
+}
+
+/**
+ * Decide whether an attachment can be skipped as already-optimized.
+ *
+ * The current file is skippable only when it IS the OUTPUT of a prior successful
+ * run with the same params — so we compare the current source hash against the
+ * previous run's `resultHash` (after replace-in-place the server file's hash
+ * equals the last result, not the last source). Consequences:
+ *   - re-running with identical settings is a no-op (no re-compression / no
+ *     generational quality loss / no double-counted stats),
+ *   - a restored/undone file (hash back to the original) re-optimizes,
+ *   - changing any param re-runs.
+ */
+export function shouldSkipOptimize(
+  last: { status: string; resultHash: string | null; paramsJson: string | null } | null,
+  currentHash: string,
+  paramsJson: string,
+): boolean {
+  return (
+    last?.status === 'success' && last.resultHash === currentHash && last.paramsJson === paramsJson
+  );
 }
 
 function recordSuccess(
