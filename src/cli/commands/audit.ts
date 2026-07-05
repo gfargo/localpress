@@ -6,7 +6,7 @@
  *   - --large: images larger than --threshold
  *   - --missing-alt: images without alt text
  *   - --display-size: images significantly larger than their largest registered WP size
- *   - --duplicates: perceptual duplicates (pHash via sharp)
+ *   - --duplicates: perceptual duplicates (dHash via sharp)
  *   - --broken-refs: attachment URLs referenced in content that 404
  *
  * WP-CLI checks:
@@ -16,8 +16,9 @@
 
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
-import type { MediaItem } from '../../adapters/types.ts';
+import type { MediaItem, WpBackend } from '../../adapters/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -55,8 +56,10 @@ export function registerAuditCommand(program: Command): void {
     .description('Find optimization opportunities across the media library')
     .option('--unoptimized', 'flag images that have never been processed')
     .option('--large', 'flag images larger than --threshold (default 1MB)')
-    .option('--threshold <bytes>', 'size threshold for --large in bytes (default 1048576)', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--threshold <bytes>',
+      'size threshold for --large in bytes (default 1048576)',
+      parseIntOption('--threshold'),
     )
     .option('--unattached', 'flag attachments not associated with any post')
     .option('--missing-alt', 'flag images without alt text')
@@ -138,21 +141,27 @@ export function registerAuditCommand(program: Command): void {
         }
       }
 
-      // -- Fetch all media items -----------------------------------------------
-      let allItems: MediaItem[] = [];
-      let page = 1;
-      while (true) {
-        try {
-          const batch = await adapter.listMedia({ perPage: 100, page });
-          if (batch.length === 0) break;
-          allItems = allItems.concat(batch);
-          if (batch.length < 100) break;
-          page++;
-        } catch (err) {
-          error(err instanceof Error ? err.message : String(err));
-          process.exit(4);
-          return;
+      // -- Unattached scan capability check (WP-CLI only) ----------------------
+      // The actual scan runs after allItems is fetched (needs it for filename
+      // lookups), but we fail fast here if WP-CLI isn't configured.
+      let unattachedAdapter: WpBackend | null = null;
+      if (options.unattached) {
+        unattachedAdapter = resolver.tryResolve('find-unattached');
+        if (!unattachedAdapter) {
+          error('--unattached requires WP-CLI over SSH. Configure SSH access for this site.');
+          process.exit(6);
         }
+      }
+
+      // -- Fetch all media items -----------------------------------------------
+      const scanStartedAt = Date.now();
+      let allItems: MediaItem[];
+      try {
+        allItems = await fetchAllMedia(adapter);
+      } catch (err) {
+        error(err instanceof Error ? err.message : String(err));
+        process.exit(4);
+        return;
       }
 
       if (allItems.length === 0 && findings.length === 0) {
@@ -160,16 +169,41 @@ export function registerAuditCommand(program: Command): void {
         return;
       }
 
-      // Load processed IDs for --unoptimized check.
+      // Sync the DB's attachment cache to what this full fetch just saw, then
+      // prune rows for attachments that no longer exist remotely — otherwise
+      // `stats`' getLibraryOverview() keeps counting deleted attachments forever.
+      // Also load processed IDs for the --unoptimized check.
       let processedIds = new Set<number>();
-      if (runAll || options.unoptimized) {
-        try {
-          const db = SiteDb.init(getSiteDbPath(site.name));
-          processedIds = db.listProcessedWpIds(site.name);
-          db.close();
-        } catch {
-          // DB doesn't exist yet — all items are unoptimized.
+      let prunedCount = 0;
+      try {
+        const db = SiteDb.init(getSiteDbPath(site.name));
+        db.ensureSite(site.name, site.url);
+        for (const item of allItems) {
+          db.upsertAttachment({
+            siteName: site.name,
+            wpId: item.id,
+            sourceUrl: item.url,
+            sourceHash: null,
+            sizeBytes: item.sizeBytes ?? null,
+            width: item.width ?? null,
+            height: item.height ?? null,
+            mimeType: item.mimeType,
+            lastSeenAt: scanStartedAt,
+          });
         }
+        prunedCount = db.pruneStaleAttachments(site.name, scanStartedAt);
+        if (runAll || options.unoptimized) {
+          processedIds = db.listProcessedWpIds(site.name);
+        }
+        db.close();
+      } catch (err) {
+        warn(
+          `Failed to sync attachment records: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      if (prunedCount > 0) {
+        info(`Pruned ${prunedCount} attachment record(s) no longer present remotely.`);
       }
 
       for (const item of allItems) {
@@ -230,8 +264,30 @@ export function registerAuditCommand(program: Command): void {
         }
       }
 
-      // -- Duplicate detection (pHash via sharp) --------------------------------
-      if (options.duplicates || runAll) {
+      // -- Unattached scan (WP-CLI only) ---------------------------------------
+      if (options.unattached && unattachedAdapter) {
+        info('Scanning for unattached media via WP-CLI (this may be slow)...');
+        try {
+          const unattachedIds = await unattachedAdapter.findUnattached();
+          const itemsById = new Map(allItems.map((i) => [i.id, i]));
+          for (const id of unattachedIds) {
+            const item = itemsById.get(id);
+            findings.push({
+              type: 'unattached',
+              attachmentId: id,
+              filename: item?.filename ?? `(attachment ${id})`,
+              detail: 'No parent post and not referenced anywhere in content',
+            });
+          }
+        } catch (err) {
+          warn(`Unattached scan failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      // -- Duplicate detection (dHash via sharp) --------------------------------
+      // Not part of runAll: it downloads every candidate image's full bytes,
+      // which contradicts runAll's "cheap checks only" contract.
+      if (options.duplicates) {
         const dupeFindings = await detectDuplicates(allItems);
         findings.push(...dupeFindings);
       }
@@ -239,7 +295,7 @@ export function registerAuditCommand(program: Command): void {
       // -- Broken reference detection ------------------------------------------
       if (options.brokenRefs) {
         info('Checking for broken attachment references in post content...');
-        const brokenFindings = await detectBrokenRefs(allItems, site.url);
+        const brokenFindings = await detectBrokenRefs(allItems, adapter);
         findings.push(...brokenFindings);
       }
 
@@ -266,6 +322,7 @@ export function registerAuditCommand(program: Command): void {
         printJson({
           site: site.name,
           totalItems: allItems.length,
+          prunedAttachments: prunedCount,
           findings,
           summary: {
             unoptimized: findings.filter((f) => f.type === 'unoptimized').length,
@@ -276,6 +333,7 @@ export function registerAuditCommand(program: Command): void {
             brokenRefs: findings.filter((f) => f.type === 'broken-ref').length,
             orphan: findings.filter((f) => f.type === 'orphan').length,
             missingFile: findings.filter((f) => f.type === 'missing-file').length,
+            unattached: findings.filter((f) => f.type === 'unattached').length,
             quality: findings.filter((f) => f.type === 'quality').length,
             ocrMatch: findings.filter((f) => f.type === 'ocr-match').length,
           },
@@ -315,6 +373,10 @@ export function registerAuditCommand(program: Command): void {
           missingFile: {
             label: 'Missing files (DB record, no file)',
             items: findings.filter((f) => f.type === 'missing-file'),
+          },
+          unattached: {
+            label: 'Unattached (no parent post, no references)',
+            items: findings.filter((f) => f.type === 'unattached'),
           },
           quality: {
             label: 'Quality issues (blurry, low-contrast, etc.)',
@@ -465,21 +527,30 @@ function hammingDistance(a: bigint, b: bigint): number {
 
 // -- Broken reference detection -----------------------------------------------
 
-async function detectBrokenRefs(items: MediaItem[], _siteUrl: string): Promise<AuditFinding[]> {
-  // Build a set of known attachment URLs for fast lookup.
-  const knownUrls = new Set(items.map((i) => i.url));
+/**
+ * An attachment "has a broken reference" only if it's actually referenced
+ * somewhere in post/page content AND its underlying URL is unreachable.
+ * Attachments with zero references are unattached media, not broken refs —
+ * that's what --unattached is for.
+ */
+async function detectBrokenRefs(items: MediaItem[], adapter: WpBackend): Promise<AuditFinding[]> {
   const findings: AuditFinding[] = [];
 
-  // Check each attachment URL with a HEAD request.
-  // We're looking for attachments that are registered in WP but whose
-  // underlying file returns a non-200 response.
   const CONCURRENCY = 10;
   const chunks = chunkArray(items, CONCURRENCY);
 
   for (const chunk of chunks) {
     await Promise.all(
       chunk.map(async (item) => {
-        if (!knownUrls.has(item.url)) return;
+        let references: Awaited<ReturnType<typeof adapter.findReferences>>;
+        try {
+          references = await adapter.findReferences(item.id, 'fast');
+        } catch {
+          return;
+        }
+        if (references.length === 0) return;
+
+        const referencedIn = references.map((r) => r.postId);
         try {
           const response = await fetch(item.url, { method: 'HEAD' });
           if (response.status === 404 || response.status === 410) {
@@ -488,6 +559,7 @@ async function detectBrokenRefs(items: MediaItem[], _siteUrl: string): Promise<A
               attachmentId: item.id,
               filename: item.filename,
               detail: `URL returns HTTP ${response.status}: ${item.url}`,
+              referencedIn,
             });
           }
         } catch {
@@ -496,6 +568,7 @@ async function detectBrokenRefs(items: MediaItem[], _siteUrl: string): Promise<A
             attachmentId: item.id,
             filename: item.filename,
             detail: `URL unreachable: ${item.url}`,
+            referencedIn,
           });
         }
       }),
@@ -590,6 +663,24 @@ async function detectOcrMatches(
 }
 
 // -- Utilities ----------------------------------------------------------------
+
+/**
+ * Fetch every media item across all pages, driven off `X-WP-TotalPages`
+ * rather than "did the last batch come back short" — a library whose size is
+ * an exact multiple of the page size would otherwise trigger one extra
+ * request past the last page, which WordPress rejects with 400.
+ */
+export async function fetchAllMedia(adapter: WpBackend): Promise<MediaItem[]> {
+  const all: MediaItem[] = [];
+  let page = 1;
+  while (true) {
+    const result = await adapter.listMediaPage({ perPage: 100, page });
+    all.push(...result.items);
+    if (page >= result.totalPages) break;
+    page++;
+  }
+  return all;
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

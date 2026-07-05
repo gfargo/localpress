@@ -57,6 +57,7 @@ const ALL_CAPABILITIES: Capability[] = [
   'prune-orphans',
   'fast-references',
   'full-references',
+  'find-unattached',
 ];
 
 export class AdapterResolver {

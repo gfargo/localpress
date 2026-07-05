@@ -22,12 +22,18 @@ import { watch } from 'chokidar';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { CapabilityUnavailableError } from '../../adapters/types.ts';
-import { optimizeImage } from '../../engine/image/optimize.ts';
+import {
+  AnimatedImageError,
+  UnsupportedFormatError,
+  optimizeImage,
+} from '../../engine/image/optimize.ts';
 import type { ImageFormat } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { createRerunGuard } from '../utils/rerun-guard.ts';
+import { isOptimizableMime } from './optimize.ts';
 
 /** Image extensions we watch for. */
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.avif', '.gif', '.svg']);
@@ -70,13 +76,15 @@ export function registerWatchCommand(program: Command): void {
     .command('watch <directory>')
     .description('Watch a local directory and auto-push new/changed images to WordPress')
     .option('--optimize', 'run the optimization pipeline before uploading')
-    .option('--quality <n>', 'optimization quality (1-100)', (v) => Number.parseInt(v, 10))
+    .option('--quality <n>', 'optimization quality (1-100)', parseIntOption('--quality'))
     .option('--to <format>', 'convert to format before uploading (webp, avif, jpeg, png)')
-    .option('--max-width <n>', 'max width in pixels', (v) => Number.parseInt(v, 10))
-    .option('--max-height <n>', 'max height in pixels', (v) => Number.parseInt(v, 10))
+    .option('--max-width <n>', 'max width in pixels', parseIntOption('--max-width'))
+    .option('--max-height <n>', 'max height in pixels', parseIntOption('--max-height'))
     .option('--delete', 'delete from WordPress when local file is removed')
-    .option('--debounce <ms>', 'debounce interval in ms (default: 800)', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--debounce <ms>',
+      'debounce interval in ms (default: 800)',
+      parseIntOption('--debounce'),
     )
     .action(async (directory: string, options) => {
       const parentOpts = program.opts();
@@ -152,7 +160,16 @@ export function registerWatchCommand(program: Command): void {
 
           // Optimize if requested.
           let optimizeInfo = '';
-          if (options.optimize || options.to) {
+          if ((options.optimize || options.to) && !isOptimizableMime(mime)) {
+            optimizeInfo = ' (unsupported format, uploaded as-is)';
+            if (parentOpts.json) {
+              printJson({ event: 'optimize-skipped', file: relPath, mimeType: mime });
+            } else {
+              warn(
+                `  ⚠ ${relPath}: unsupported format for optimization (${mime}). Uploading as-is.`,
+              );
+            }
+          } else if (options.optimize || options.to) {
             const optimizeOpts = {
               quality: options.quality,
               toFormat: options.to as ImageFormat | undefined,
@@ -242,6 +259,16 @@ export function registerWatchCommand(program: Command): void {
             }
           }
         } catch (err) {
+          // Animated-source and unsupported-format cases are deliberate skips,
+          // not failures — never flatten an animation or rasterize a vector.
+          if (err instanceof AnimatedImageError || err instanceof UnsupportedFormatError) {
+            if (parentOpts.json) {
+              printJson({ event: 'skipped', file: relPath, reason: err.message });
+            } else {
+              warn(`↳ Skipped ${relPath}: ${err.message}`);
+            }
+            return;
+          }
           const msg = err instanceof Error ? err.message : String(err);
           if (parentOpts.json) {
             printJson({ event: 'error', file: relPath, error: msg });
