@@ -7,14 +7,31 @@
  */
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { createWriteStream, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { ListFilters, MediaItem } from '../../adapters/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { ExitCode } from '../../types.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+
+/** ZIP32 (classic ZIP) format limits — 32-bit size/offset fields, 16-bit entry count. */
+export const ZIP32_MAX_ENTRIES = 0xffff;
+export const ZIP32_MAX_SIZE = 0xffffffff;
+
+/** Thrown when an archive would exceed (or does exceed, mid-stream) ZIP32 limits. */
+export class ZipLimitExceededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ZipLimitExceededError';
+  }
+}
+
+function zipLimitMessage(reason: string): string {
+  return `Archive would exceed ZIP32 limits (${reason}) — use directory export instead: --to ./backup-dir`;
+}
 
 /** Metadata written alongside exported files for re-import. */
 interface ExportManifest {
@@ -134,6 +151,26 @@ export function registerExportCommand(program: Command): void {
       const destPath = options.to ?? `localpress-export-${Date.now()}`;
       const isZip = destPath.endsWith('.zip');
 
+      // Fail fast, before downloading anything, if the requested ZIP would
+      // exceed classic ZIP32 limits (32-bit sizes/offsets, 16-bit entry count).
+      if (isZip) {
+        const entryCount = estimateEntryCount(items, options);
+        if (entryCount > ZIP32_MAX_ENTRIES) {
+          error(
+            zipLimitMessage(`${entryCount} entries > ${ZIP32_MAX_ENTRIES.toLocaleString('en-US')}`),
+          );
+          process.exit(ExitCode.InvalidUsage);
+        }
+
+        // Best-effort: MediaItem.sizeBytes isn't always populated by WordPress,
+        // so this can under-count. The streaming writer below is the hard backstop.
+        const totalBytesEstimate = estimateTotalBytes(items, options);
+        if (totalBytesEstimate > ZIP32_MAX_SIZE) {
+          error(zipLimitMessage(`estimated ${formatBytes(totalBytesEstimate)} > 4 GiB`));
+          process.exit(ExitCode.InvalidUsage);
+        }
+      }
+
       if (parentOpts.dryRun) {
         info(`Would export ${items.length} item(s) to ${destPath}`);
         if (parentOpts.json) {
@@ -154,87 +191,101 @@ export function registerExportCommand(program: Command): void {
       let totalBytes = 0;
       let failures = 0;
 
-      // For ZIP mode, collect file entries; for directory mode, write directly.
-      const zipEntries: Array<{ path: string; data: Buffer }> = [];
-
-      // Create output directory if not ZIP.
-      if (!isZip) {
+      // For ZIP mode, stream entries straight to disk as they download (never
+      // buffering the whole archive, or every downloaded file, in memory).
+      // For directory mode, write directly (unchanged).
+      let zipWriter: ZipStreamWriter | null = null;
+      if (isZip) {
+        mkdirSync(dirname(destPath), { recursive: true });
+        zipWriter = new ZipStreamWriter(destPath);
+      } else {
         mkdirSync(destPath, { recursive: true });
       }
 
-      for (const item of items) {
-        try {
-          // Download the source file.
-          const response = await fetch(item.url);
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status} downloading ${item.url}`);
-          }
-          const bytes = Buffer.from(await response.arrayBuffer());
-          const hash = createHash('sha256').update(bytes).digest('hex');
+      try {
+        for (const item of items) {
+          try {
+            // Download the source file.
+            const response = await fetch(item.url);
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status} downloading ${item.url}`);
+            }
+            const bytes = Buffer.from(await response.arrayBuffer());
+            const hash = createHash('sha256').update(bytes).digest('hex');
 
-          // Determine relative path — try to preserve WP uploads structure.
-          const relativePath = options.flat
-            ? item.filename
-            : deriveRelativePath(item.url, item.filename);
+            // Determine relative path — try to preserve WP uploads structure.
+            const relativePath = options.flat
+              ? item.filename
+              : deriveRelativePath(item.url, item.filename);
 
-          if (isZip) {
-            zipEntries.push({ path: relativePath, data: bytes });
-          } else {
-            const fullPath = join(destPath, relativePath);
-            mkdirSync(dirname(fullPath), { recursive: true });
-            await Bun.write(fullPath, bytes);
-          }
+            if (zipWriter) {
+              await zipWriter.writeEntry(relativePath, bytes);
+            } else {
+              const fullPath = join(destPath, relativePath);
+              mkdirSync(dirname(fullPath), { recursive: true });
+              await Bun.write(fullPath, bytes);
+            }
 
-          manifestItems.push({
-            id: item.id,
-            filename: item.filename,
-            relativePath,
-            url: item.url,
-            mimeType: item.mimeType,
-            width: item.width,
-            height: item.height,
-            sizeBytes: bytes.length,
-            altText: item.altText,
-            caption: item.caption,
-            description: item.description,
-            title: item.title,
-            uploadedAt: item.uploadedAt,
-            sha256: hash,
-          });
+            manifestItems.push({
+              id: item.id,
+              filename: item.filename,
+              relativePath,
+              url: item.url,
+              mimeType: item.mimeType,
+              width: item.width,
+              height: item.height,
+              sizeBytes: bytes.length,
+              altText: item.altText,
+              caption: item.caption,
+              description: item.description,
+              title: item.title,
+              uploadedAt: item.uploadedAt,
+              sha256: hash,
+            });
 
-          totalBytes += bytes.length;
-          info(`  ✓ #${item.id}  ${item.filename}  (${formatBytes(bytes.length)})`);
+            totalBytes += bytes.length;
+            info(`  ✓ #${item.id}  ${item.filename}  (${formatBytes(bytes.length)})`);
 
-          // Download variant sizes if requested.
-          if (options.includeSizes && item.sizes) {
-            for (const [sizeName, size] of Object.entries(item.sizes)) {
-              try {
-                const sizeResponse = await fetch(size.url);
-                if (!sizeResponse.ok) continue;
-                const sizeBytes = Buffer.from(await sizeResponse.arrayBuffer());
-                const sizeRelPath = options.flat
-                  ? size.filename
-                  : deriveRelativePath(size.url, size.filename);
+            // Download variant sizes if requested.
+            if (options.includeSizes && item.sizes) {
+              for (const [sizeName, size] of Object.entries(item.sizes)) {
+                try {
+                  const sizeResponse = await fetch(size.url);
+                  if (!sizeResponse.ok) continue;
+                  const sizeBytes = Buffer.from(await sizeResponse.arrayBuffer());
+                  const sizeRelPath = options.flat
+                    ? size.filename
+                    : deriveRelativePath(size.url, size.filename);
 
-                if (isZip) {
-                  zipEntries.push({ path: sizeRelPath, data: sizeBytes });
-                } else {
-                  const sizePath = join(destPath, sizeRelPath);
-                  mkdirSync(dirname(sizePath), { recursive: true });
-                  await Bun.write(sizePath, sizeBytes);
+                  if (zipWriter) {
+                    await zipWriter.writeEntry(sizeRelPath, sizeBytes);
+                  } else {
+                    const sizePath = join(destPath, sizeRelPath);
+                    mkdirSync(dirname(sizePath), { recursive: true });
+                    await Bun.write(sizePath, sizeBytes);
+                  }
+
+                  totalBytes += sizeBytes.length;
+                  info(`    ↳ ${sizeName}: ${size.filename}  (${formatBytes(sizeBytes.length)})`);
+                } catch (err) {
+                  if (err instanceof ZipLimitExceededError) throw err;
+                  warn(`    ↳ ${sizeName}: failed to download`);
                 }
-
-                totalBytes += sizeBytes.length;
-                info(`    ↳ ${sizeName}: ${size.filename}  (${formatBytes(sizeBytes.length)})`);
-              } catch {
-                warn(`    ↳ ${sizeName}: failed to download`);
               }
             }
+          } catch (err) {
+            if (err instanceof ZipLimitExceededError) throw err;
+            error(`  ✗ #${item.id}: ${err instanceof Error ? err.message : String(err)}`);
+            failures++;
           }
-        } catch (err) {
-          error(`  ✗ #${item.id}: ${err instanceof Error ? err.message : String(err)}`);
-          failures++;
         }
+      } catch (err) {
+        if (zipWriter && err instanceof ZipLimitExceededError) {
+          zipWriter.abort();
+          error(err.message);
+          process.exit(ExitCode.InvalidUsage);
+        }
+        throw err;
       }
 
       // Write manifest.
@@ -247,12 +298,21 @@ export function registerExportCommand(program: Command): void {
         totalBytes,
       };
 
-      if (isZip) {
-        // Build ZIP using Bun's built-in zip support (via JSZip-like approach).
-        // We use a simple ZIP implementation with the 'archiver' pattern.
-        const zipBuffer = await buildZip(zipEntries, manifest);
-        mkdirSync(dirname(destPath), { recursive: true });
-        await Bun.write(destPath, zipBuffer);
+      if (zipWriter) {
+        try {
+          await zipWriter.writeEntry(
+            'manifest.json',
+            Buffer.from(JSON.stringify(manifest, null, 2)),
+          );
+          await zipWriter.finalize();
+        } catch (err) {
+          zipWriter.abort();
+          if (err instanceof ZipLimitExceededError) {
+            error(err.message);
+            process.exit(ExitCode.InvalidUsage);
+          }
+          throw err;
+        }
       } else {
         const manifestPath = join(destPath, 'manifest.json');
         writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
@@ -310,28 +370,84 @@ function deriveRelativePath(url: string, fallbackFilename: string): string {
 }
 
 /**
- * Build a ZIP file from entries using Bun's native capabilities.
- * Uses the deflate compression available in Bun's zlib.
+ * Prospective ZIP entry count for a given export selection — exact, since it
+ * doesn't depend on downloads (just item count + requested variants + manifest).
  */
-async function buildZip(
-  entries: Array<{ path: string; data: Buffer }>,
-  manifest: ExportManifest,
-): Promise<Buffer> {
-  // Add manifest to entries.
-  const allEntries = [
-    ...entries,
-    { path: 'manifest.json', data: Buffer.from(JSON.stringify(manifest, null, 2)) },
-  ];
+export function estimateEntryCount(
+  items: MediaItem[],
+  options: { includeSizes?: boolean },
+): number {
+  let count = items.length;
+  if (options.includeSizes) {
+    for (const item of items) {
+      if (item.sizes) count += Object.keys(item.sizes).length;
+    }
+  }
+  return count + 1; // + manifest.json
+}
 
-  // Use a simple ZIP builder (store method for simplicity and speed).
-  // ZIP format: local file headers + data + central directory + end record.
-  const parts: Buffer[] = [];
-  const centralDir: Buffer[] = [];
-  let offset = 0;
+/**
+ * Prospective total archive size in bytes — best-effort, since
+ * `MediaItem.sizeBytes` / `MediaSize.sizeBytes` aren't always populated by
+ * WordPress. The streaming writer's in-stream check is the hard backstop.
+ */
+export function estimateTotalBytes(
+  items: MediaItem[],
+  options: { includeSizes?: boolean },
+): number {
+  let total = 0;
+  for (const item of items) {
+    total += item.sizeBytes ?? 0;
+    if (options.includeSizes && item.sizes) {
+      for (const size of Object.values(item.sizes)) {
+        total += size.sizeBytes ?? 0;
+      }
+    }
+  }
+  return total;
+}
 
-  for (const entry of allEntries) {
-    const pathBuf = Buffer.from(entry.path, 'utf-8');
-    const data = entry.data;
+/**
+ * Streams a classic ZIP32 archive straight to disk (via a `.tmp` file, renamed
+ * on success) instead of buffering entries or the finished archive in memory.
+ * Detects 4 GiB per-file / cumulative-offset overflow and the 65,535 entry cap
+ * while writing, since per-item sizes aren't always known up front.
+ */
+export class ZipStreamWriter {
+  private readonly tmpPath: string;
+  private readonly stream: ReturnType<typeof createWriteStream>;
+  private readonly centralDir: Array<{ path: string; crc: number; size: number; offset: number }> =
+    [];
+  private offset = 0;
+
+  constructor(private readonly destPath: string) {
+    this.tmpPath = `${destPath}.tmp`;
+    this.stream = createWriteStream(this.tmpPath);
+  }
+
+  async writeEntry(path: string, data: Buffer): Promise<void> {
+    if (data.length > ZIP32_MAX_SIZE) {
+      throw new ZipLimitExceededError(
+        zipLimitMessage(
+          `entry "${path}" (${formatBytes(data.length)}) exceeds the 4 GiB per-file limit`,
+        ),
+      );
+    }
+    if (this.offset + data.length > ZIP32_MAX_SIZE) {
+      throw new ZipLimitExceededError(
+        zipLimitMessage(`cumulative archive offset would exceed 4 GiB while writing "${path}"`),
+      );
+    }
+    if (this.centralDir.length + 1 > ZIP32_MAX_ENTRIES) {
+      throw new ZipLimitExceededError(
+        zipLimitMessage(
+          `${this.centralDir.length + 1} entries > ${ZIP32_MAX_ENTRIES.toLocaleString('en-US')}`,
+        ),
+      );
+    }
+
+    const pathBuf = Buffer.from(path, 'utf-8');
+    const crc = crc32(data);
 
     // Local file header (store, no compression for speed).
     const localHeader = Buffer.alloc(30 + pathBuf.length);
@@ -341,7 +457,6 @@ async function buildZip(
     localHeader.writeUInt16LE(0, 8); // compression (store)
     localHeader.writeUInt16LE(0, 10); // mod time
     localHeader.writeUInt16LE(0, 12); // mod date
-    const crc = crc32(data);
     localHeader.writeUInt32LE(crc, 14); // crc-32
     localHeader.writeUInt32LE(data.length, 18); // compressed size
     localHeader.writeUInt32LE(data.length, 22); // uncompressed size
@@ -349,48 +464,78 @@ async function buildZip(
     localHeader.writeUInt16LE(0, 28); // extra field length
     pathBuf.copy(localHeader, 30);
 
-    parts.push(localHeader, data);
+    await this.push(localHeader);
+    await this.push(data);
 
-    // Central directory entry.
-    const cdEntry = Buffer.alloc(46 + pathBuf.length);
-    cdEntry.writeUInt32LE(0x02014b50, 0); // signature
-    cdEntry.writeUInt16LE(20, 4); // version made by
-    cdEntry.writeUInt16LE(20, 6); // version needed
-    cdEntry.writeUInt16LE(0, 8); // flags
-    cdEntry.writeUInt16LE(0, 10); // compression
-    cdEntry.writeUInt16LE(0, 12); // mod time
-    cdEntry.writeUInt16LE(0, 14); // mod date
-    cdEntry.writeUInt32LE(crc, 16); // crc-32
-    cdEntry.writeUInt32LE(data.length, 20); // compressed size
-    cdEntry.writeUInt32LE(data.length, 24); // uncompressed size
-    cdEntry.writeUInt16LE(pathBuf.length, 28); // filename length
-    cdEntry.writeUInt16LE(0, 30); // extra field length
-    cdEntry.writeUInt16LE(0, 32); // comment length
-    cdEntry.writeUInt16LE(0, 34); // disk number start
-    cdEntry.writeUInt16LE(0, 36); // internal attrs
-    cdEntry.writeUInt32LE(0, 38); // external attrs
-    cdEntry.writeUInt32LE(offset, 42); // relative offset of local header
-    pathBuf.copy(cdEntry, 46);
-
-    centralDir.push(cdEntry);
-    offset += localHeader.length + data.length;
+    this.centralDir.push({ path, crc, size: data.length, offset: this.offset });
+    this.offset += localHeader.length + data.length;
   }
 
-  const centralDirBuf = Buffer.concat(centralDir);
-  const centralDirOffset = offset;
+  private push(buf: Buffer): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.stream.write(buf, (err) => (err ? reject(err) : resolve()));
+    });
+  }
 
-  // End of central directory record.
-  const endRecord = Buffer.alloc(22);
-  endRecord.writeUInt32LE(0x06054b50, 0); // signature
-  endRecord.writeUInt16LE(0, 4); // disk number
-  endRecord.writeUInt16LE(0, 6); // disk with central dir
-  endRecord.writeUInt16LE(allEntries.length, 8); // entries on this disk
-  endRecord.writeUInt16LE(allEntries.length, 10); // total entries
-  endRecord.writeUInt32LE(centralDirBuf.length, 12); // central dir size
-  endRecord.writeUInt32LE(centralDirOffset, 16); // central dir offset
-  endRecord.writeUInt16LE(0, 20); // comment length
+  /** Writes the central directory + end-of-central-directory record, then renames `.tmp` → destPath. */
+  async finalize(): Promise<void> {
+    const centralDirStart = this.offset;
 
-  return Buffer.concat([...parts, centralDirBuf, endRecord]);
+    for (const rec of this.centralDir) {
+      const pathBuf = Buffer.from(rec.path, 'utf-8');
+      const cdEntry = Buffer.alloc(46 + pathBuf.length);
+      cdEntry.writeUInt32LE(0x02014b50, 0); // signature
+      cdEntry.writeUInt16LE(20, 4); // version made by
+      cdEntry.writeUInt16LE(20, 6); // version needed
+      cdEntry.writeUInt16LE(0, 8); // flags
+      cdEntry.writeUInt16LE(0, 10); // compression
+      cdEntry.writeUInt16LE(0, 12); // mod time
+      cdEntry.writeUInt16LE(0, 14); // mod date
+      cdEntry.writeUInt32LE(rec.crc, 16); // crc-32
+      cdEntry.writeUInt32LE(rec.size, 20); // compressed size
+      cdEntry.writeUInt32LE(rec.size, 24); // uncompressed size
+      cdEntry.writeUInt16LE(pathBuf.length, 28); // filename length
+      cdEntry.writeUInt16LE(0, 30); // extra field length
+      cdEntry.writeUInt16LE(0, 32); // comment length
+      cdEntry.writeUInt16LE(0, 34); // disk number start
+      cdEntry.writeUInt16LE(0, 36); // internal attrs
+      cdEntry.writeUInt32LE(0, 38); // external attrs
+      cdEntry.writeUInt32LE(rec.offset, 42); // relative offset of local header
+      pathBuf.copy(cdEntry, 46);
+
+      await this.push(cdEntry);
+      this.offset += cdEntry.length;
+    }
+
+    const centralDirSize = this.offset - centralDirStart;
+
+    // End of central directory record.
+    const endRecord = Buffer.alloc(22);
+    endRecord.writeUInt32LE(0x06054b50, 0); // signature
+    endRecord.writeUInt16LE(0, 4); // disk number
+    endRecord.writeUInt16LE(0, 6); // disk with central dir
+    endRecord.writeUInt16LE(this.centralDir.length, 8); // entries on this disk
+    endRecord.writeUInt16LE(this.centralDir.length, 10); // total entries
+    endRecord.writeUInt32LE(centralDirSize, 12); // central dir size
+    endRecord.writeUInt32LE(centralDirStart, 16); // central dir offset
+    endRecord.writeUInt16LE(0, 20); // comment length
+    await this.push(endRecord);
+
+    await new Promise<void>((resolve, reject) => {
+      this.stream.end((err: Error | null | undefined) => (err ? reject(err) : resolve()));
+    });
+    renameSync(this.tmpPath, this.destPath);
+  }
+
+  /** Cleans up the `.tmp` file after an error — the destination is left untouched. */
+  abort(): void {
+    this.stream.destroy();
+    try {
+      unlinkSync(this.tmpPath);
+    } catch {
+      // Nothing to clean up (stream may not have created the file yet).
+    }
+  }
 }
 
 /** CRC-32 computation for ZIP file entries. */

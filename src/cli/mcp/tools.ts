@@ -1002,7 +1002,11 @@ export function registerTools(server: McpServer): void {
           .describe('Default title for imported items (overridden by manifest)'),
         altText: z.string().optional().describe('Default alt text for imported items'),
         post: z.number().int().positive().optional().describe('Attach all imports to this post'),
-        preserveIds: z.boolean().optional(),
+        preserveMetadata: z
+          .boolean()
+          .optional()
+          .describe('Reapply alt/title/caption from a previous export manifest'),
+        preserveIds: z.boolean().optional().describe('Deprecated alias for preserveMetadata'),
         dryRun: z.boolean().optional(),
         concurrency: z.number().int().positive().optional().describe('Parallel uploads'),
       },
@@ -1019,6 +1023,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--title', a.title);
       opt(argv, '--alt', a.altText);
       opt(argv, '--post', a.post);
+      flag(argv, '--preserve-metadata', a.preserveMetadata);
       flag(argv, '--preserve-ids', a.preserveIds);
       flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
