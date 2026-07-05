@@ -52,6 +52,19 @@ jobs:
           echo "linux_arm64=$(sha256sum dist/localpress-linux-arm64.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
           echo "linux_x64=$(sha256sum dist/localpress-linux-x64.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
+          # sha256sum-compatible checksums.txt covering all published archives,
+          # published as its own release asset so `localpress update` can
+          # verify the tarball it downloads before extracting it.
+          cd dist
+          sha256sum \
+            localpress-darwin-arm64.tar.gz \
+            localpress-darwin-x64.tar.gz \
+            localpress-linux-arm64.tar.gz \
+            localpress-linux-x64.tar.gz \
+            localpress-windows-x64.zip \
+            > checksums.txt
+          cd ..
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -61,6 +74,7 @@ jobs:
             dist/localpress-linux-arm64.tar.gz
             dist/localpress-linux-x64.tar.gz
             dist/localpress-windows-x64.zip
+            dist/checksums.txt
           generate_release_notes: true
           make_latest: true
 

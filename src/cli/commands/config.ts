@@ -19,6 +19,7 @@
 
 import type { Command } from 'commander';
 import type { Config, OptimizationProfile } from '../../types.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, saveConfig } from '../utils/config.ts';
 import { error, info, printJson } from '../utils/output.ts';
 
@@ -93,12 +94,14 @@ export function registerConfigCommand(program: Command): void {
     .command('set-profile <name>')
     .description('Create or update a named optimization profile')
     .option('--description <text>', 'human-readable description of this profile')
-    .option('--quality <n>', 'target quality for lossy formats (1–100)', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--quality <n>',
+      'target quality for lossy formats (1–100)',
+      parseIntOption('--quality'),
     )
     .option('--format <fmt>', 'target output format (webp|avif|jpeg|png)')
-    .option('--max-width <px>', 'max width in pixels', (v) => Number.parseInt(v, 10))
-    .option('--max-height <px>', 'max height in pixels', (v) => Number.parseInt(v, 10))
+    .option('--max-width <px>', 'max width in pixels', parseIntOption('--max-width'))
+    .option('--max-height <px>', 'max height in pixels', parseIntOption('--max-height'))
     .option('--encoder <enc>', 'encoding backend (sharp|jsquash)')
     .option('--strip-metadata', 'strip all EXIF/ICC metadata')
     .action(async (name: string, options) => {

@@ -6,12 +6,14 @@
  * thumbnail regeneration, orphan pruning, full content scans.
  */
 
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SiteConfig, SshConfig } from '../types.ts';
-import { scpUpload, sshExec } from './ssh.ts';
+import { scpUpload, shellQuote, sshExec } from './ssh.ts';
 import type {
   Capability,
+  FormatChangeRewrite,
   ListFilters,
   MediaItem,
   PruneResult,
@@ -53,7 +55,7 @@ export class WpCliAdapter implements WpBackend {
   // -- Internal WP-CLI execution ----------------------------------------------
 
   private async wp(command: string): Promise<string> {
-    const fullCommand = `cd ${this.wpPath} && wp ${command} --allow-root`;
+    const fullCommand = `cd ${shellQuote(this.wpPath)} && wp ${command} --allow-root`;
     const result = await sshExec(this.ssh, fullCommand);
 
     if (result.exitCode !== 0) {
@@ -73,25 +75,34 @@ export class WpCliAdapter implements WpBackend {
   }
 
   /**
-   * Get the WordPress uploads base directory, cached after first retrieval.
-   * Saves an SSH round-trip on subsequent replace-in-place operations.
+   * Get the WordPress uploads base directory + base URL, cached after first
+   * retrieval. Saves an SSH round-trip on subsequent replace-in-place operations.
    */
   private cachedUploadsDir: string | null = null;
+  private cachedUploadsBaseUrl: string | null = null;
 
-  private async getUploadsDir(): Promise<string> {
-    if (this.cachedUploadsDir) return this.cachedUploadsDir;
-
-    // Try wp eval first; fall back to conventional path if it fails.
-    // Note: we avoid shell || here because wp() appends --allow-root which
-    // would become part of the echo fallback output.
-    let output: string;
-    try {
-      output = await this.wp(`eval 'echo wp_upload_dir()["basedir"];'`);
-    } catch {
-      output = `${this.wpPath}/wp-content/uploads`;
+  private async getUploadsPaths(): Promise<{ basedir: string; baseurl: string }> {
+    if (this.cachedUploadsDir !== null && this.cachedUploadsBaseUrl !== null) {
+      return { basedir: this.cachedUploadsDir, baseurl: this.cachedUploadsBaseUrl };
     }
-    this.cachedUploadsDir = output.trim();
-    return this.cachedUploadsDir;
+
+    // Try wp eval first; fall back to a conventional path (and empty base URL,
+    // which callers must treat as "unknown") if it fails.
+    let basedir: string;
+    let baseurl: string;
+    try {
+      const output = await this.wp(`eval 'echo json_encode(wp_upload_dir());'`);
+      const parsed = JSON.parse(output) as { basedir?: string; baseurl?: string };
+      basedir = parsed.basedir?.trim() || `${this.wpPath}/wp-content/uploads`;
+      baseurl = parsed.baseurl?.trim() ?? '';
+    } catch {
+      basedir = `${this.wpPath}/wp-content/uploads`;
+      baseurl = '';
+    }
+
+    this.cachedUploadsDir = basedir;
+    this.cachedUploadsBaseUrl = baseurl;
+    return { basedir, baseurl };
   }
 
   // Discovery -----------------------------------------------------------------
@@ -100,7 +111,7 @@ export class WpCliAdapter implements WpBackend {
     const args = ['post list', '--post_type=attachment', '--post_status=inherit'];
 
     if (filters.type) {
-      args.push(`--post_mime_type=${filters.type}`);
+      args.push(`--post_mime_type=${shellQuote(filters.type)}`);
     }
     if (filters.postId) {
       args.push(`--post_parent=${filters.postId}`);
@@ -108,7 +119,7 @@ export class WpCliAdapter implements WpBackend {
     if (filters.search) {
       // WP-CLI passes --s through to WP_Query, which searches post_title +
       // post_content. Shell-escape since this goes through an SSH command.
-      args.push(`--s=${JSON.stringify(filters.search)}`);
+      args.push(`--s=${shellQuote(filters.search)}`);
     }
     if (filters.perPage) {
       args.push(`--posts_per_page=${filters.perPage}`);
@@ -173,6 +184,7 @@ export class WpCliAdapter implements WpBackend {
       id: post.ID,
       title: post.post_title,
       filename: metadata?.file ?? post.post_name,
+      slug: post.post_name,
       url: post.guid,
       mimeType: post.post_mime_type,
       width: metadata?.width,
@@ -187,10 +199,11 @@ export class WpCliAdapter implements WpBackend {
 
   async upload(file: Buffer, metadata: UploadMetadata): Promise<MediaItem> {
     // Write the file to a local temp path, then SCP to remote.
-    const localTmp = join(tmpdir(), `localpress-upload-${Date.now()}-${metadata.filename}`);
+    const uploadId = `${Date.now()}-${randomUUID()}`;
+    const localTmp = join(tmpdir(), `localpress-upload-${uploadId}-${metadata.filename}`);
     await Bun.write(localTmp, file);
 
-    const remoteTmp = `/tmp/localpress-upload-${Date.now()}-${metadata.filename}`;
+    const remoteTmp = `/tmp/localpress-upload-${uploadId}-${metadata.filename}`;
     const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
     if (scpResult.exitCode !== 0) {
       throw new Error(
@@ -199,14 +212,21 @@ export class WpCliAdapter implements WpBackend {
     }
 
     // Import via WP-CLI.
-    const args = [`media import "${remoteTmp}"`, '--porcelain'];
-    if (metadata.title) args.push(`--title="${metadata.title}"`);
-    if (metadata.altText) args.push(`--alt="${metadata.altText}"`);
-    if (metadata.caption) args.push(`--caption="${metadata.caption}"`);
-    if (metadata.description) args.push(`--description="${metadata.description}"`);
+    const args = [`media import ${shellQuote(remoteTmp)}`, '--porcelain'];
+    if (metadata.title) args.push(`--title=${shellQuote(metadata.title)}`);
+    if (metadata.altText) args.push(`--alt=${shellQuote(metadata.altText)}`);
+    if (metadata.caption) args.push(`--caption=${shellQuote(metadata.caption)}`);
+    if (metadata.description) args.push(`--description=${shellQuote(metadata.description)}`);
     if (metadata.postId) args.push(`--post_id=${metadata.postId}`);
 
-    const output = await this.wp(args.join(' '));
+    let output: string;
+    try {
+      output = await this.wp(args.join(' '));
+    } catch (err) {
+      // Remove the uploaded temp file so a failed import doesn't leave litter.
+      await sshExec(this.ssh, `rm -f ${shellQuote(remoteTmp)}`).catch(() => {});
+      throw err;
+    }
     const newId = Number.parseInt(output.trim(), 10);
 
     if (Number.isNaN(newId)) {
@@ -214,7 +234,7 @@ export class WpCliAdapter implements WpBackend {
     }
 
     // Clean up remote temp file.
-    await sshExec(this.ssh, `rm -f "${remoteTmp}"`).catch(() => {});
+    await sshExec(this.ssh, `rm -f ${shellQuote(remoteTmp)}`).catch(() => {});
 
     // Clean up local temp file.
     try {
@@ -234,23 +254,26 @@ export class WpCliAdapter implements WpBackend {
   ): Promise<MediaItem> {
     // Get the current attachment's file path on the server.
     const currentFile = await this.wp(`post meta get ${id} _wp_attached_file`);
-    const uploadsDir = await this.getUploadsDir();
+    const oldFilePath = currentFile.trim();
+    const { basedir: uploadsDir, baseurl: uploadsBaseUrl } = await this.getUploadsPaths();
 
-    let remotePath = `${uploadsDir}/${currentFile.trim()}`;
+    let remotePath = `${uploadsDir}/${oldFilePath}`;
 
     // If the format changed, we need to rename the file and update WP metadata.
-    let newFilePath = currentFile.trim();
+    let newFilePath = oldFilePath;
     if (options?.newExtension) {
       // Change the extension: 2024/12/image.png → 2024/12/image.webp
-      newFilePath = currentFile.trim().replace(/\.[^.]+$/, options.newExtension);
+      newFilePath = oldFilePath.replace(/\.[^.]+$/, options.newExtension);
       remotePath = `${uploadsDir}/${newFilePath}`;
     }
+    const isFormatChange = Boolean(options?.newExtension) && newFilePath !== oldFilePath;
 
     // Write to local temp, SCP to remote, place at the (possibly new) path.
-    const localTmp = join(tmpdir(), `localpress-replace-${Date.now()}`);
+    const replaceId = `${Date.now()}-${randomUUID()}`;
+    const localTmp = join(tmpdir(), `localpress-replace-${replaceId}`);
     await Bun.write(localTmp, file);
 
-    const remoteTmp = `/tmp/localpress-replace-${Date.now()}`;
+    const remoteTmp = `/tmp/localpress-replace-${replaceId}`;
     const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
     if (scpResult.exitCode !== 0) {
       throw new Error(
@@ -260,7 +283,7 @@ export class WpCliAdapter implements WpBackend {
 
     // Ensure the target directory exists, then move the file into place.
     const targetDir = remotePath.substring(0, remotePath.lastIndexOf('/'));
-    const mkdirResult = await sshExec(this.ssh, `mkdir -p "${targetDir}"`);
+    const mkdirResult = await sshExec(this.ssh, `mkdir -p ${shellQuote(targetDir)}`);
     if (mkdirResult.exitCode !== 0) {
       throw new Error(
         `Failed to create target directory "${targetDir}": ${mkdirResult.stderr || 'unknown error'}`,
@@ -269,7 +292,7 @@ export class WpCliAdapter implements WpBackend {
 
     const mvResult = await sshExec(
       this.ssh,
-      `mv "${remoteTmp}" "${remotePath}" && chmod 644 "${remotePath}"`,
+      `mv ${shellQuote(remoteTmp)} ${shellQuote(remotePath)} && chmod 644 ${shellQuote(remotePath)}`,
     );
     if (mvResult.exitCode !== 0) {
       throw new Error(
@@ -277,65 +300,141 @@ export class WpCliAdapter implements WpBackend {
       );
     }
 
-    // If the format changed, delete the old file and update WordPress metadata.
-    if (options?.newExtension && newFilePath !== currentFile.trim()) {
-      const oldRemotePath = `${uploadsDir}/${currentFile.trim()}`;
-      // Delete the old file (it's now at a different path).
-      await sshExec(this.ssh, `rm -f "${oldRemotePath}"`).catch(() => {});
+    let formatChangeRewrite: FormatChangeRewrite | undefined;
 
-      // Update _wp_attached_file meta to the new path.
-      await this.wp(`post meta update ${id} _wp_attached_file "${newFilePath}"`);
+    if (isFormatChange) {
+      const oldRemotePath = `${uploadsDir}/${oldFilePath}`;
+
+      // Capture pre-mutation metadata before anything is changed — we need the
+      // old `sizes` map both to know which thumbnail files to delete and to
+      // diff against the post-regenerate sizes for URL rewriting below.
+      let oldMeta: WpCliAttachmentMeta | null = null;
+      try {
+        const metaJson = await this.wp(`post meta get ${id} _wp_attachment_metadata --format=json`);
+        oldMeta = JSON.parse(metaJson) as WpCliAttachmentMeta;
+      } catch {
+        // No prior metadata available.
+      }
+
+      // Update WordPress's record of the file BEFORE deleting the old bytes,
+      // so a failure partway through this sequence leaves the attachment
+      // pointing at a file that still exists rather than a dangling reference.
+      await this.wp(`post meta update ${id} _wp_attached_file ${shellQuote(newFilePath)}`);
 
       // Update the post MIME type via wp post update (handles quoting correctly).
-      if (options.newMimeType) {
+      if (options?.newMimeType) {
         await sshExec(
           this.ssh,
-          `cd ${this.wpPath} && wp post update ${id} --post_mime_type="${options.newMimeType}" --allow-root`,
+          `cd ${shellQuote(this.wpPath)} && wp post update ${id} --post_mime_type=${shellQuote(options.newMimeType)} --allow-root`,
         );
       }
 
       // Update attachment metadata: file field, filesize, and clear stale sizes.
-      try {
-        const metaJson = await this.wp(`post meta get ${id} _wp_attachment_metadata --format=json`);
-        const meta = JSON.parse(metaJson);
-        if (meta?.file) {
-          // Delete old thumbnail files from disk before clearing metadata.
-          if (meta.sizes && typeof meta.sizes === 'object') {
-            const dirPath = newFilePath.includes('/')
-              ? `${uploadsDir}/${newFilePath.substring(0, newFilePath.lastIndexOf('/'))}`
-              : uploadsDir;
-            const oldThumbFiles = Object.values(meta.sizes)
-              .map((s) => (s as { file?: string })?.file)
-              .filter(Boolean) as string[];
-            for (const thumbFile of oldThumbFiles) {
-              await sshExec(this.ssh, `rm -f "${dirPath}/${thumbFile}"`).catch(() => {});
-            }
-          }
-
-          meta.file = newFilePath;
-          meta.filesize = file.length;
-          // Clear the sizes array — old format thumbnails are now invalid.
-          // WordPress will repopulate this on regenerate.
-          meta.sizes = {};
-          const updatedMeta = JSON.stringify(meta).replace(/'/g, "\\'");
-          await this.wp(
-            `post meta update ${id} _wp_attachment_metadata '${updatedMeta}' --format=json`,
-          );
-        }
-      } catch {
-        // Best effort — metadata update is non-critical.
+      // This is NOT best-effort — a failure here leaves the attachment's
+      // recorded metadata inconsistent with the bytes on disk, so let it throw.
+      if (oldMeta?.file) {
+        oldMeta.file = newFilePath;
+        oldMeta.filesize = file.length;
+        // Clear the sizes array — old format thumbnails are now invalid.
+        // WordPress will repopulate this on regenerate.
+        const updatedMeta = JSON.stringify({ ...oldMeta, sizes: {} });
+        await this.wp(
+          `post meta update ${id} _wp_attachment_metadata ${shellQuote(updatedMeta)} --format=json`,
+        );
       }
 
       // Remove _require_file_renaming flag that WP may have set during the transition.
       await this.wp(`post meta delete ${id} _require_file_renaming`).catch(() => {});
-    }
 
-    // Regenerate thumbnails: always when format changed (old thumbnails are invalid),
-    // or when explicitly requested.
-    if (
-      (options?.newExtension && newFilePath !== currentFile.trim()) ||
-      options?.regenerateThumbnails
-    ) {
+      // Rewrite post-content references to the renamed file so existing embeds
+      // don't 404 the moment the extension changes. Best-effort: the file
+      // replacement above already succeeded, so a rewrite failure here must
+      // not fail the whole operation — only the reference rewrite is at risk.
+      let rewrittenUrls = 0;
+      let warning: string | undefined;
+      if (uploadsBaseUrl) {
+        const oldUrl = buildUploadUrl(uploadsBaseUrl, oldFilePath);
+        const newUrl = buildUploadUrl(uploadsBaseUrl, newFilePath);
+        try {
+          const out = await this.wp(
+            `search-replace ${shellQuote(oldUrl)} ${shellQuote(newUrl)} --precise`,
+          );
+          rewrittenUrls += parseSearchReplaceCount(out) ?? 0;
+        } catch (err) {
+          warning =
+            `Reference rewrite failed: ${err instanceof Error ? err.message : String(err)}. ` +
+            `Run 'localpress references ${id} --scope full' to check for broken embeds, or ` +
+            `manually: wp search-replace ${oldUrl} ${newUrl} --precise`;
+        }
+      } else {
+        warning = `Could not determine the site's uploads base URL — post content referencing the old filename was not rewritten. Run 'localpress references ${id} --scope full' to check for broken embeds.`;
+      }
+
+      // Only now delete the old file bytes: WordPress metadata (and, best
+      // effort, post content) already point at the new file.
+      await sshExec(this.ssh, `rm -f ${shellQuote(oldRemotePath)}`).catch(() => {});
+      if (oldMeta?.sizes && typeof oldMeta.sizes === 'object') {
+        const dirPath = newFilePath.includes('/')
+          ? `${uploadsDir}/${newFilePath.substring(0, newFilePath.lastIndexOf('/'))}`
+          : uploadsDir;
+        const oldThumbFiles = Object.values(oldMeta.sizes)
+          .map((s) => (s as { file?: string })?.file)
+          .filter(Boolean) as string[];
+        for (const thumbFile of oldThumbFiles) {
+          await sshExec(this.ssh, `rm -f ${shellQuote(`${dirPath}/${thumbFile}`)}`).catch(() => {});
+        }
+      }
+
+      // Regenerate thumbnails now — old-format thumbnails are invalid, and we
+      // need the fresh `sizes` map below to rewrite size-variant URLs.
+      await this.wp(`media regenerate ${id} --yes`);
+
+      if (uploadsBaseUrl && oldMeta?.sizes) {
+        try {
+          const newMetaJson = await this.wp(
+            `post meta get ${id} _wp_attachment_metadata --format=json`,
+          );
+          const newMeta = JSON.parse(newMetaJson) as WpCliAttachmentMeta;
+          const newDir = newFilePath.includes('/')
+            ? newFilePath.substring(0, newFilePath.lastIndexOf('/'))
+            : '';
+          // Only keys present in both old and new metadata: a size that no
+          // longer exists post-regenerate (e.g. a theme dropped that
+          // registered size) has nothing to rewrite to, so it's skipped —
+          // that's an expected "this size is gone" case, not a bug.
+          for (const key of Object.keys(oldMeta.sizes)) {
+            const newSize = newMeta.sizes?.[key];
+            const oldSize = oldMeta.sizes[key];
+            if (!newSize?.file || !oldSize?.file) continue;
+
+            const oldSizeUrl = buildUploadUrl(
+              uploadsBaseUrl,
+              newDir ? `${newDir}/${oldSize.file}` : oldSize.file,
+            );
+            const newSizeUrl = buildUploadUrl(
+              uploadsBaseUrl,
+              newDir ? `${newDir}/${newSize.file}` : newSize.file,
+            );
+            if (oldSizeUrl === newSizeUrl) continue;
+
+            try {
+              const out = await this.wp(
+                `search-replace ${shellQuote(oldSizeUrl)} ${shellQuote(newSizeUrl)} --precise`,
+              );
+              rewrittenUrls += parseSearchReplaceCount(out) ?? 0;
+            } catch (err) {
+              warning =
+                warning ??
+                `Size-variant reference rewrite failed for '${key}': ${err instanceof Error ? err.message : String(err)}.`;
+            }
+          }
+        } catch {
+          // Best effort — size-variant rewriting is a bonus, not required.
+        }
+      }
+
+      formatChangeRewrite = { rewrittenUrls, warning };
+    } else if (options?.regenerateThumbnails) {
       await this.wp(`media regenerate ${id} --yes`);
     }
 
@@ -347,21 +446,24 @@ export class WpCliAdapter implements WpBackend {
       // Best effort.
     }
 
-    return this.getMedia(id);
+    const item = await this.getMedia(id);
+    return formatChangeRewrite ? { ...item, formatChangeRewrite } : item;
   }
 
   async updateMetadata(id: number, metadata: UpdateMetadata): Promise<void> {
     if (metadata.title !== undefined) {
-      await this.wp(`post update ${id} --post_title="${metadata.title}"`);
+      await this.wp(`post update ${id} --post_title=${shellQuote(metadata.title)}`);
     }
     if (metadata.altText !== undefined) {
-      await this.wp(`post meta update ${id} _wp_attachment_image_alt "${metadata.altText}"`);
+      await this.wp(
+        `post meta update ${id} _wp_attachment_image_alt ${shellQuote(metadata.altText)}`,
+      );
     }
     if (metadata.caption !== undefined) {
-      await this.wp(`post update ${id} --post_excerpt="${metadata.caption}"`);
+      await this.wp(`post update ${id} --post_excerpt=${shellQuote(metadata.caption)}`);
     }
     if (metadata.description !== undefined) {
-      await this.wp(`post update ${id} --post_content="${metadata.description}"`);
+      await this.wp(`post update ${id} --post_content=${shellQuote(metadata.description)}`);
     }
   }
 
@@ -383,7 +485,7 @@ export class WpCliAdapter implements WpBackend {
     // List all files in uploads.
     const filesOutput = await sshExec(
       this.ssh,
-      `find "${uploadsDir.trim()}" -type f -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" -o -name "*.gif" -o -name "*.webp" -o -name "*.avif" | sort`,
+      `find ${shellQuote(uploadsDir.trim())} -type f \\( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.gif' -o -name '*.webp' -o -name '*.avif' \\) | sort`,
     );
     const allFiles = filesOutput.stdout.split('\n').filter(Boolean);
 
@@ -427,7 +529,10 @@ export class WpCliAdapter implements WpBackend {
       if (!registeredFiles.has(file)) {
         orphanFiles.push(file);
         // Get file size.
-        const sizeResult = await sshExec(this.ssh, `stat -c%s "${file}" 2>/dev/null || echo "0"`);
+        const sizeResult = await sshExec(
+          this.ssh,
+          `stat -c%s ${shellQuote(file)} 2>/dev/null || echo "0"`,
+        );
         reclaimableBytes += Number.parseInt(sizeResult.stdout.trim(), 10) || 0;
       }
     }
@@ -445,7 +550,7 @@ export class WpCliAdapter implements WpBackend {
         const fullPath = `${uploadsDir.trim()}/${filePath.trim()}`;
         const existsResult = await sshExec(
           this.ssh,
-          `test -f "${fullPath}" && echo "yes" || echo "no"`,
+          `test -f ${shellQuote(fullPath)} && echo "yes" || echo "no"`,
         );
         if (existsResult.stdout.trim() === 'no') {
           missingFiles.push(att.ID);
@@ -460,6 +565,11 @@ export class WpCliAdapter implements WpBackend {
 
   // Reference finding ---------------------------------------------------------
 
+  // The block/content queries below intentionally scope to post_status='publish',
+  // matching the REST adapter: WP's REST /posts and /pages endpoints default to
+  // `status=publish` even for authenticated requests, so this is parity, not an
+  // arbitrary restriction. Widen it only if unpublished references need to be
+  // surfaced too — that's a user-visible behavior change, not a bug fix.
   async findReferences(id: number, scope: ReferenceScope): Promise<Reference[]> {
     const references: Reference[] = [];
 
@@ -491,15 +601,20 @@ export class WpCliAdapter implements WpBackend {
       }
     }
 
-    // Gutenberg block references.
-    const blockPattern = `wp:image {"id":${id}`;
+    // Gutenberg block references. The LIKE clause is a cheap pre-filter only
+    // (it would match id:123 inside id:1234 too) — the real match is the
+    // anchored regex applied to post_content below, same as REST's
+    // countBlockReferences() in rest.ts.
+    const blockPattern = `"id":${id}`;
     const blockOutput = await this.wp(
       `db query "SELECT ID, post_title, post_type, post_content FROM wp_posts WHERE post_status='publish' AND post_content LIKE '%${blockPattern}%'" --skip-column-names`,
     );
     for (const line of blockOutput.split('\n').filter(Boolean)) {
       const parts = line.split('\t');
-      if (parts.length >= 3) {
+      if (parts.length >= 4) {
         const postId = Number.parseInt(parts[0], 10);
+        const content = parts.slice(3).join('\t');
+        if (!matchesBlockId(content, id)) continue;
         // Avoid duplicating featured-image refs.
         if (!references.some((r) => r.postId === postId && r.type === 'featured-image')) {
           references.push({
@@ -579,6 +694,18 @@ export class WpCliAdapter implements WpBackend {
   }
 }
 
+/**
+ * Returns true if `content` contains a Gutenberg block reference to
+ * `attachmentId` that is ID-boundary safe (so id:123 does not match id:1234).
+ * Mirrors countBlockReferences() in rest.ts.
+ */
+export function matchesBlockId(content: string, attachmentId: number): boolean {
+  const pattern = new RegExp(
+    `wp:(?:image|gallery|cover|media-text)[^}]*"id"\\s*:\\s*${attachmentId}\\b`,
+  );
+  return pattern.test(content);
+}
+
 // -- WP-CLI response types ----------------------------------------------------
 
 interface WpCliPost {
@@ -609,6 +736,22 @@ interface WpCliAttachmentMeta {
 // Helper for callers that want to check availability.
 export function isWpCliAvailableForSite(site: SiteConfig): boolean {
   return Boolean(site.ssh?.host && site.ssh?.user && site.ssh?.wpPath);
+}
+
+/** Join a WordPress uploads base URL with a relative file path, avoiding double slashes. */
+export function buildUploadUrl(baseUrl: string, relativePath: string): string {
+  return `${baseUrl.replace(/\/+$/, '')}/${relativePath.replace(/^\/+/, '')}`;
+}
+
+/**
+ * Best-effort parse of `wp search-replace`'s human-readable summary line
+ * (e.g. "Success: Made 3 replacements."). Returns null rather than throwing
+ * if the output format doesn't match — callers must degrade gracefully.
+ */
+export function parseSearchReplaceCount(output: string): number | null {
+  const match = output.match(/Made (\d+) replacements?/i);
+  if (!match) return null;
+  return Number.parseInt(match[1], 10);
 }
 
 export { CapabilityUnavailableError } from './types.ts';

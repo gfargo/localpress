@@ -136,6 +136,62 @@ describe('getLibraryOverview', () => {
   });
 });
 
+// -- getStats -----------------------------------------------------------------
+
+describe('getStats', () => {
+  test('excludes failed operations from avgDurationMs, bytesIn, and bytesOut', () => {
+    seedAttachments([
+      { wpId: 1, mimeType: 'image/jpeg', sizeBytes: 500_000 },
+      { wpId: 2, mimeType: 'image/jpeg', sizeBytes: 500_000 },
+    ]);
+
+    db.recordProcessing({
+      siteName: SITE_NAME,
+      wpId: 1,
+      operation: 'optimize',
+      paramsJson: null,
+      sourceHash: 'h1',
+      resultHash: 'h2',
+      bytesBefore: 500_000,
+      bytesAfter: 300_000,
+      resultWpId: null,
+      ranAt: Date.now(),
+      durationMs: 100,
+      status: 'success',
+      errorMessage: null,
+    });
+
+    // A failure with a huge duration/byte delta that must not pollute the
+    // success-only aggregates.
+    db.recordProcessing({
+      siteName: SITE_NAME,
+      wpId: 2,
+      operation: 'optimize',
+      paramsJson: null,
+      sourceHash: 'h3',
+      resultHash: null,
+      bytesBefore: 9_000_000,
+      bytesAfter: 9_000_000,
+      resultWpId: null,
+      ranAt: Date.now(),
+      durationMs: 60_000,
+      status: 'failure',
+      errorMessage: 'codec error',
+    });
+
+    const stats = db.getStats(SITE_NAME);
+    const op = stats.byOperation.find((o) => o.operation === 'optimize');
+    expect(op).toBeDefined();
+    expect(op?.avgDurationMs).toBe(100);
+    expect(op?.bytesIn).toBe(500_000);
+    expect(op?.bytesOut).toBe(300_000);
+    expect(op?.bytesSaved).toBe(200_000);
+
+    expect(stats.bytesIn).toBe(500_000);
+    expect(stats.bytesSaved).toBe(200_000);
+  });
+});
+
 // -- getFormatBreakdown -------------------------------------------------------
 
 describe('getFormatBreakdown', () => {

@@ -14,6 +14,7 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { info } from '../../cli/utils/output.ts';
 
 // biome-ignore lint/suspicious/noExplicitAny: sharp's type export varies by version
 type SharpModule = any;
@@ -183,11 +184,10 @@ export async function loadSharpWithPrompt(opts: {
   } catch (err) {
     if (!(err instanceof SharpNotInstalledError)) throw err;
 
-    if (opts.noPrompt) throw err;
-
-    // Prompt (unless autoYes).
+    // --yes wins even when --json/--quiet also set noPrompt.
     let shouldInstall = opts.autoYes ?? false;
     if (!shouldInstall) {
+      if (opts.noPrompt) throw err;
       shouldInstall = await promptYesNo(
         '\nsharp is not installed. Image processing requires it.\nInstall now? [y/N]',
       );
@@ -197,7 +197,7 @@ export async function loadSharpWithPrompt(opts: {
       throw err;
     }
 
-    process.stdout.write('\nInstalling sharp (this may take a minute)...\n\n');
+    info('\nInstalling sharp (this may take a minute)...\n');
     const success = await installSharpGlobally();
 
     if (!success) {
@@ -207,7 +207,7 @@ export async function loadSharpWithPrompt(opts: {
       );
     }
 
-    process.stdout.write('\nSharp installed. Retrying operation...\n\n');
+    info('\nSharp installed. Retrying operation...\n');
     return await loadSharp();
   }
 }

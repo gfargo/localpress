@@ -30,7 +30,9 @@ import {
   removeBackgroundWithSystemRembg,
 } from '../../engine/rembg/system-rembg.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 export function registerRemoveBgCommand(program: Command): void {
@@ -51,8 +53,10 @@ export function registerRemoveBgCommand(program: Command): void {
     .option('--rembg', 'use system Python rembg instead of built-in ONNX pipeline')
     .option('--rembg-model <name>', 'model name for system rembg (e.g. isnet-general-use)')
     .option('--preview', 'open a browser preview to adjust settings before applying')
-    .option('--preview-port <port>', 'port for the preview server (default: auto)', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--preview-port <port>',
+      'port for the preview server (default: auto)',
+      parseIntOption('--preview-port'),
     )
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
@@ -195,13 +199,14 @@ export function registerRemoveBgCommand(program: Command): void {
             });
 
             let resultWpId: number | null = null;
+            let rewriteMessage = '';
 
             if (!options.keepOriginal) {
               const replaceAdapter = resolver.tryResolve('replace-in-place');
               if (replaceAdapter) {
                 try {
                   const formatChanged = item.mimeType !== 'image/png';
-                  await replaceAdapter.replaceInPlace(
+                  const replaced = await replaceAdapter.replaceInPlace(
                     id,
                     resultBytes,
                     formatChanged
@@ -213,6 +218,15 @@ export function registerRemoveBgCommand(program: Command): void {
                       : { regenerateThumbnails: true },
                   );
                   resultWpId = id;
+
+                  const rewrite = replaced.formatChangeRewrite;
+                  if (rewrite?.warning) {
+                    warn(`    ⚠ ${rewrite.warning}`);
+                    rewriteMessage = ` (⚠ ${rewrite.warning})`;
+                  } else if (rewrite && rewrite.rewrittenUrls > 0) {
+                    info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
+                    rewriteMessage = ` (rewrote ${rewrite.rewrittenUrls} reference(s))`;
+                  }
                 } catch (err) {
                   if (!(err instanceof CapabilityUnavailableError) || parentOpts.strict) {
                     throw err;
@@ -250,7 +264,7 @@ export function registerRemoveBgCommand(program: Command): void {
             });
 
             db.close();
-            return { wpId: resultWpId, message: `Uploaded as #${resultWpId}` };
+            return { wpId: resultWpId, message: `Uploaded as #${resultWpId}${rewriteMessage}` };
           },
         });
 
@@ -262,15 +276,11 @@ export function registerRemoveBgCommand(program: Command): void {
         return;
       }
 
-      const ids = idStrs.map((s) => Number.parseInt(s, 10));
-      if (ids.length === 0) {
+      if (idStrs.length === 0) {
         error('Specify one or more attachment IDs.\nExample: localpress remove-bg 123 124 125');
         process.exit(2);
       }
-      if (ids.some(Number.isNaN)) {
-        error('All arguments must be valid attachment IDs (integers).');
-        process.exit(2);
-      }
+      const ids = parseAttachmentIds(idStrs);
 
       const modelName = options.model as ModelName;
       const validModels = listAvailableModels().map((m) => m.name);
@@ -321,6 +331,7 @@ export function registerRemoveBgCommand(program: Command): void {
         inferenceMs: number;
         totalMs: number;
         resultWpId: number | null;
+        rewrittenUrls?: number;
       }> = [];
       let failures = 0;
 
@@ -406,6 +417,7 @@ export function registerRemoveBgCommand(program: Command): void {
 
           // Upload the result.
           let resultWpId: number | null = null;
+          let rewrittenUrls: number | undefined;
 
           if (!options.keepOriginal) {
             const replaceAdapter = resolver.tryResolve('replace-in-place');
@@ -415,7 +427,7 @@ export function registerRemoveBgCommand(program: Command): void {
                 // PNG, change the file extension + MIME and regenerate thumbnails
                 // so WP serves the right type and thumbnails show the cutout.
                 const formatChanged = item.mimeType !== 'image/png';
-                await replaceAdapter.replaceInPlace(
+                const replaced = await replaceAdapter.replaceInPlace(
                   id,
                   resultBytes,
                   formatChanged
@@ -427,6 +439,16 @@ export function registerRemoveBgCommand(program: Command): void {
                     : { regenerateThumbnails: true },
                 );
                 resultWpId = id;
+
+                const rewrite = replaced.formatChangeRewrite;
+                if (rewrite) {
+                  rewrittenUrls = rewrite.rewrittenUrls;
+                  if (rewrite.warning) {
+                    warn(`    ⚠ ${rewrite.warning}`);
+                  } else if (rewrite.rewrittenUrls > 0) {
+                    info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
+                  }
+                }
               } catch (err) {
                 if (err instanceof CapabilityUnavailableError && !parentOpts.strict) {
                   // Fall through.
@@ -494,6 +516,7 @@ export function registerRemoveBgCommand(program: Command): void {
             inferenceMs,
             totalMs,
             resultWpId,
+            rewrittenUrls,
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
