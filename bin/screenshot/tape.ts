@@ -17,7 +17,7 @@ const DEFAULT_TYPING_SPEED = 30;
  * @param recipe - The scene to capture
  * @param opts.localPressBin - Path to the localpress binary/entrypoint
  */
-export function buildTape(recipe: Recipe, opts: { localPressBin: string }): string {
+export function buildTape(recipe: Recipe, opts: { localPressBin: string; projectRoot: string }): string {
   const lines: string[] = [];
   const fontSize = recipe.fontSize ?? DEFAULT_FONT_SIZE;
   const theme = recipe.theme ?? DEFAULT_THEME;
@@ -35,6 +35,9 @@ export function buildTape(recipe: Recipe, opts: { localPressBin: string }): stri
   lines.push('# --- Settings ---');
   lines.push('Set Shell "bash"');
   lines.push(`Set FontSize ${fontSize}`);
+  if (recipe.width) {
+    lines.push(`Set Width ${recipe.width}`);
+  }
   if (recipe.height) {
     lines.push(`Set Height ${recipe.height}`);
   }
@@ -58,15 +61,27 @@ export function buildTape(recipe: Recipe, opts: { localPressBin: string }): stri
     }
   }
 
+  // cd to project root so relative paths in commands work
+  lines.push(`Type "cd ${opts.projectRoot}" Enter`);
+
   lines.push('Type "clear" Enter');
   lines.push('Sleep 500ms');
+
+  // If hideCommand, launch the app inside the hidden block so recording starts with it loaded
+  if (recipe.hideCommand) {
+    lines.push(`Type "${escapeForTape(recipe.command)}" Enter`);
+    lines.push(`Sleep ${settleMs}ms`);
+  }
+
   lines.push('Show');
   lines.push('');
 
   // --- The scene ---
   lines.push('# --- Scene ---');
-  lines.push(`Type "${escapeForTape(recipe.command)}" Enter`);
-  lines.push(`Sleep ${settleMs}ms`);
+  if (!recipe.hideCommand) {
+    lines.push(`Type "${escapeForTape(recipe.command)}" Enter`);
+    lines.push(`Sleep ${settleMs}ms`);
+  }
 
   // Actions (keystrokes, typing, sleeps)
   if (recipe.actions) {

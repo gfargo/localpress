@@ -25,6 +25,8 @@ export type Recipe = {
   actions?: Action[];
   /** Font size in px (default 20). Controls capture scale. */
   fontSize?: number;
+  /** Canvas width in px (default 1200). */
+  width?: number;
   /** Canvas height in px (default 600). Use 800+ for tall TUI apps. */
   height?: number;
   /** Typing speed in ms between chars (default 30). Lower = faster. */
@@ -37,6 +39,8 @@ export type Recipe = {
   settleMs?: number;
   /** Extra env vars to set in the VHS shell. */
   env?: Record<string, string>;
+  /** If true, the command is typed inside Hide — recording starts with the app already running. */
+  hideCommand?: boolean;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -81,6 +85,7 @@ const STILLS: Recipe[] = [
     description: 'Interactive media browser — main list view with sidebar',
     command: 'localpress list -i',
     settleMs: 6000,
+    width: 1600,
     height: 800,
     // Navigate down a few items to show the cursor + selection UI
     actions: [
@@ -94,6 +99,7 @@ const STILLS: Recipe[] = [
     description: 'Interactive browser — detail overlay showing full metadata',
     command: 'localpress list -i',
     settleMs: 6000,
+    width: 1600,
     height: 800,
     actions: [
       { kind: 'key', key: 'Down', count: 2 },
@@ -108,6 +114,7 @@ const STILLS: Recipe[] = [
     description: 'Interactive browser — optimize settings overlay (quality/format/keep)',
     command: 'localpress list -i',
     settleMs: 6000,
+    width: 1600,
     height: 800,
     actions: [
       { kind: 'key', key: 'Down', count: 4 },
@@ -122,6 +129,7 @@ const STILLS: Recipe[] = [
     description: 'Interactive browser — convert format picker overlay',
     command: 'localpress list -i',
     settleMs: 6000,
+    width: 1600,
     height: 800,
     actions: [
       { kind: 'key', key: 'Down', count: 3 },
@@ -136,6 +144,7 @@ const STILLS: Recipe[] = [
     description: 'Interactive browser — resize dimension input overlay',
     command: 'localpress list -i',
     settleMs: 6000,
+    width: 1600,
     height: 800,
     actions: [
       { kind: 'key', key: 'Down', count: 2 },
@@ -152,6 +161,7 @@ const STILLS: Recipe[] = [
     description: 'Interactive browser — search/filter mode narrowing results',
     command: 'localpress list -i',
     settleMs: 6000,
+    width: 1600,
     height: 800,
     actions: [
       { kind: 'type', text: '/', noEnter: true }, // Open search
@@ -166,6 +176,7 @@ const STILLS: Recipe[] = [
     description: 'Interactive browser — multi-select mode with items checked',
     command: 'localpress list -i',
     settleMs: 6000,
+    width: 1600,
     height: 800,
     actions: [
       { kind: 'key', key: 'Down' },
@@ -211,53 +222,75 @@ const GIFS: Recipe[] = [
   // ─── Interactive browser workflows (the star of the show) ─────────────────
 
   {
-    name: 'demo-browser-navigate',
-    description: 'Interactive browser: browse items → open details → return to list',
+    name: 'demo-browser-hero',
+    description: 'Compact hero GIF: browse → details → optimize overlay (no sidebar, fast)',
     command: 'localpress list -i',
     emitGif: true,
-    settleMs: 4000,
-    height: 800,
+    hideCommand: true,
+    settleMs: 3000,
+    fontSize: 18,
+    // Narrow width = no sidebar = single pane = smaller file
+    width: 1000,
+    height: 750,
     actions: [
-      { kind: 'sleep', ms: 1500 },
       { kind: 'key', key: 'Down', count: 3 },
       { kind: 'sleep', ms: 1200 },
       { kind: 'key', key: 'Down', count: 2 },
+      { kind: 'sleep', ms: 1000 },
+      { kind: 'key', key: 'Enter' }, // Details
+      { kind: 'sleep', ms: 3500 },
+      { kind: 'type', text: ' ', noEnter: true }, // Close
+      { kind: 'sleep', ms: 1000 },
+      { kind: 'type', text: 'o', noEnter: true }, // Optimize overlay
+      { kind: 'sleep', ms: 3000 },
+      { kind: 'key', key: 'Escape' },
+      { kind: 'sleep', ms: 1000 },
+    ],
+  },
+
+  {
+    name: 'demo-browser-navigate',
+    description: 'Interactive browser: browse items, sidebar updates live',
+    command: 'localpress list -i',
+    emitGif: true,
+    settleMs: 3000,
+    width: 1600,
+    height: 800,
+    actions: [
+      { kind: 'sleep', ms: 1000 },
+      { kind: 'key', key: 'Down', count: 4 },
+      { kind: 'sleep', ms: 1200 },
+      { kind: 'key', key: 'Down', count: 3 },
+      { kind: 'sleep', ms: 1200 },
+      { kind: 'key', key: 'Up', count: 5 },
       { kind: 'sleep', ms: 1500 },
-      { kind: 'key', key: 'Enter' }, // Open detail view
-      { kind: 'sleep', ms: 5000 }, // Hold on details (API fetch + read)
-      { kind: 'type', text: ' ', noEnter: true }, // Close details (any key)
-      { kind: 'sleep', ms: 1500 },
-      { kind: 'key', key: 'Down', count: 2 },
-      { kind: 'sleep', ms: 2000 },
     ],
   },
 
   {
     name: 'demo-browser-actions-tour',
-    description: 'Interactive browser: navigate → optimize overlay → cancel → convert picker',
+    description: 'Interactive browser: open optimize settings overlay',
     command: 'localpress list -i',
     emitGif: true,
+    hideCommand: true,
     settleMs: 3000,
+    width: 1600,
     height: 800,
     actions: [
-      { kind: 'sleep', ms: 1000 },
       { kind: 'key', key: 'Down', count: 3 },
+      { kind: 'sleep', ms: 600 },
+      { kind: 'type', text: 'o', noEnter: true }, // Open optimize overlay
+      { kind: 'sleep', ms: 2500 },
+      { kind: 'key', key: 'Tab' }, // Move to quality
+      { kind: 'sleep', ms: 400 },
+      { kind: 'type', text: '75', noEnter: true },
       { kind: 'sleep', ms: 800 },
-      // Open optimize overlay
-      { kind: 'type', text: 'o', noEnter: true },
-      { kind: 'sleep', ms: 2500 },
-      { kind: 'key', key: 'Escape' }, // Cancel
-      { kind: 'sleep', ms: 1200 },
-      // Open convert picker
-      { kind: 'type', text: 'c', noEnter: true },
-      { kind: 'sleep', ms: 2500 },
-      { kind: 'key', key: 'Escape' }, // Cancel
-      { kind: 'sleep', ms: 1200 },
-      // Open resize
-      { kind: 'type', text: 's', noEnter: true },
-      { kind: 'sleep', ms: 2000 },
-      { kind: 'key', key: 'Escape' }, // Cancel
-      { kind: 'sleep', ms: 1200 },
+      { kind: 'key', key: 'Tab' }, // Move to format
+      { kind: 'sleep', ms: 400 },
+      { kind: 'key', key: 'Space' }, // Cycle to webp
+      { kind: 'sleep', ms: 1500 },
+      { kind: 'key', key: 'Escape' },
+      { kind: 'sleep', ms: 800 },
     ],
   },
 
@@ -267,6 +300,7 @@ const GIFS: Recipe[] = [
     command: 'localpress list -i',
     emitGif: true,
     settleMs: 4000,
+    width: 1600,
     height: 800,
     actions: [
       { kind: 'sleep', ms: 2000 },
@@ -285,6 +319,7 @@ const GIFS: Recipe[] = [
     command: 'localpress list -i',
     emitGif: true,
     settleMs: 4000,
+    width: 1600,
     height: 800,
     actions: [
       { kind: 'sleep', ms: 2000 },
@@ -311,6 +346,7 @@ const GIFS: Recipe[] = [
     command: 'localpress list -i',
     emitGif: true,
     settleMs: 4000,
+    width: 1600,
     height: 800,
     actions: [
       { kind: 'sleep', ms: 2000 },
@@ -331,6 +367,7 @@ const GIFS: Recipe[] = [
     command: 'localpress list -i',
     emitGif: true,
     settleMs: 4000,
+    width: 1600,
     height: 800,
     actions: [
       { kind: 'sleep', ms: 2000 },
@@ -355,6 +392,7 @@ const GIFS: Recipe[] = [
     command: 'localpress list -i',
     emitGif: true,
     settleMs: 4000,
+    width: 1600,
     height: 800,
     actions: [
       { kind: 'sleep', ms: 2000 },
@@ -372,6 +410,21 @@ const GIFS: Recipe[] = [
   },
 
   // ─── CLI workflow demos ───────────────────────────────────────────────────
+
+  {
+    name: 'demo-mcp-agent',
+    description: 'Simulated MCP agent session: find unoptimized images → optimize to WebP',
+    command: './bin/screenshot/mcp-demo.sh',
+    emitGif: true,
+    hideCommand: true,
+    settleMs: 500,
+    width: 1000,
+    height: 600,
+    fontSize: 18,
+    actions: [
+      { kind: 'sleep', ms: 18000 }, // Let the script run its full course
+    ],
+  },
 
   {
     name: 'demo-doctor-to-list',

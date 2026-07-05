@@ -109,7 +109,7 @@ async function runRecipe(recipe: Recipe): Promise<void> {
   console.log(`${'─'.repeat(60)}`);
 
   // 1. Build the tape
-  const tape = buildTape(recipe, { localPressBin: LOCALPRESS_BIN_DIR });
+  const tape = buildTape(recipe, { localPressBin: LOCALPRESS_BIN_DIR, projectRoot: PROJECT_ROOT });
   const tapeFile = resolve(TAPES_DIR, `${recipe.name}.tape`);
   await Bun.write(tapeFile, tape);
 
@@ -204,6 +204,7 @@ async function optimizeGif(filePath: string): Promise<void> {
   const before = Bun.file(filePath);
   const beforeSize = (await before.arrayBuffer()).byteLength;
 
+  // Lossless pass first
   console.log('  🗜️  Optimizing with gifsicle -O3...');
   const proc = Bun.spawn(['gifsicle', '-O3', '--batch', filePath], {
     stdout: 'pipe',
@@ -211,8 +212,21 @@ async function optimizeGif(filePath: string): Promise<void> {
   });
   await proc.exited;
 
-  const after = Bun.file(filePath);
-  const afterSize = (await after.arrayBuffer()).byteLength;
+  let after = Bun.file(filePath);
+  let afterSize = (await after.arrayBuffer()).byteLength;
+
+  // If still over 600 KB, apply mild lossy compression
+  if (afterSize > 600 * 1024) {
+    console.log('     Still large — applying lossy compression...');
+    const lossyProc = Bun.spawn(['gifsicle', '-O3', '--lossy=100', '--batch', filePath], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    await lossyProc.exited;
+    after = Bun.file(filePath);
+    afterSize = (await after.arrayBuffer()).byteLength;
+  }
+
   const ratio = ((1 - afterSize / beforeSize) * 100).toFixed(1);
   console.log(
     `     ${(beforeSize / 1024).toFixed(0)} KB → ${(afterSize / 1024).toFixed(0)} KB (${ratio}% reduction)`,
