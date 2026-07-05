@@ -19,14 +19,29 @@
  */
 
 import type { Command } from 'commander';
-import { AdapterResolver } from '../../adapters/resolver.ts';
-import type { WpBackend } from '../../adapters/types.ts';
+import type { AdapterResolver } from '../../adapters/resolver.ts';
+import { AdapterResolver as AdapterResolverImpl } from '../../adapters/resolver.ts';
+import type { ReplaceOptions, WpBackend } from '../../adapters/types.ts';
 import { CapabilityUnavailableError } from '../../adapters/types.ts';
 import { openSnapshotStore } from '../../engine/history/index.ts';
 import type { SnapshotRecord, SnapshotStore } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+
+/**
+ * Structural subset of AdapterResolver's public surface. AdapterResolver has a
+ * private field, so a duck-typed fake (used in unit tests) isn't assignable to
+ * the class type directly — Pick over the public methods removes that brand.
+ */
+export type ResolverLike = Pick<AdapterResolver, 'resolve' | 'tryResolve'>;
+
+/** The exact suffix (e.g. '.jpeg', not a mimeType-derived '.jpg') off a filename. */
+function extensionOf(filename: string): string | undefined {
+  const match = filename.match(/\.[^./]+$/);
+  return match ? match[0] : undefined;
+}
 
 interface UndoResult {
   snapshotId: number;
@@ -41,11 +56,11 @@ export function registerUndoCommand(program: Command): void {
   program
     .command('undo [sessionId]')
     .description('Restore from a snapshot (last session by default). Dry-run unless --apply.')
-    .option('--snapshot <id>', 'restore a specific snapshot by ID', (v) => Number.parseInt(v, 10))
+    .option('--snapshot <id>', 'restore a specific snapshot by ID', parseIntOption('--snapshot'))
     .option(
       '--attachment <id>',
       'restore the most recent un-restored snapshot for an attachment',
-      (v) => Number.parseInt(v, 10),
+      parseIntOption('--attachment'),
     )
     .action(async (sessionIdArg: string | undefined, options) => {
       const parentOpts = program.opts();
@@ -53,7 +68,7 @@ export function registerUndoCommand(program: Command): void {
       const site = resolveActiveSite(config, parentOpts.site);
       const db = SiteDb.init(getSiteDbPath(site.name));
       const store = openSnapshotStore(db, getConfigDir());
-      const resolver = new AdapterResolver(site);
+      const resolver = new AdapterResolverImpl(site);
 
       // Resolve target snapshots based on flags.
       let snapshots: SnapshotRecord[] = [];
@@ -151,6 +166,10 @@ export function registerUndoCommand(program: Command): void {
         try {
           await restoreSnapshot(snap, resolver, store, parentOpts.strict);
           store.markRestored(snap.id);
+          // The restored bytes no longer match what processing_history recorded
+          // as this operation's output, so exclude that row from future stats
+          // and let optimize/etc. re-process this attachment.
+          db.markProcessingReverted(site.name, snap.wpId, snap.operation);
           results.push({
             snapshotId: snap.id,
             attachmentId: snap.wpId,
@@ -186,9 +205,9 @@ export function registerUndoCommand(program: Command): void {
 }
 
 /** Apply a single snapshot back to WordPress. Throws on failure. */
-async function restoreSnapshot(
+export async function restoreSnapshot(
   snap: SnapshotRecord,
-  resolver: AdapterResolver,
+  resolver: ResolverLike,
   store: SnapshotStore,
   strict: boolean,
 ): Promise<void> {
@@ -199,6 +218,7 @@ async function restoreSnapshot(
       title: snap.beforeMeta.title,
       caption: snap.beforeMeta.caption,
       description: snap.beforeMeta.description,
+      ...(snap.beforeMeta.slug !== undefined ? { slug: snap.beforeMeta.slug } : {}),
     });
     return;
   }
@@ -210,9 +230,34 @@ async function restoreSnapshot(
   const replaceAdapter = resolver.tryResolve('replace-in-place');
   if (replaceAdapter) {
     try {
-      await replaceAdapter.replaceInPlace(snap.wpId, bytes, {
-        newMimeType: snap.beforeMeta.mimeType,
-      });
+      // The attachment may currently be in a different format than the
+      // snapshot (e.g. optimize converted PNG → WebP). If so, we must pass
+      // newExtension/newMimeType so replaceInPlace renames the file back,
+      // restores post_mime_type, and regenerates thumbnails — otherwise the
+      // original bytes get written under the wrong (new-format) extension.
+      const current = await resolver.resolve('get').getMedia(snap.wpId);
+      const formatChanged = current.mimeType !== snap.beforeMeta.mimeType;
+
+      let options: ReplaceOptions | undefined;
+      if (formatChanged) {
+        const newExtension = extensionOf(snap.beforeMeta.filename);
+        if (newExtension) {
+          options = {
+            newExtension,
+            newMimeType: snap.beforeMeta.mimeType,
+            regenerateThumbnails: true,
+          };
+        }
+      }
+
+      const restored = await replaceAdapter.replaceInPlace(snap.wpId, bytes, options);
+
+      if (options && current.url && restored.url && current.url !== restored.url) {
+        warn(
+          `    ⚠ Attachment #${snap.wpId} restored, but content may still reference the old URL (${current.url}). Run: localpress references ${snap.wpId} --scope full`,
+        );
+      }
+
       // Also restore metadata fields that may have changed.
       const metaAdapter = resolver.tryResolve('update-meta');
       if (metaAdapter) {
@@ -221,6 +266,7 @@ async function restoreSnapshot(
           title: snap.beforeMeta.title,
           caption: snap.beforeMeta.caption,
           description: snap.beforeMeta.description,
+          ...(snap.beforeMeta.slug !== undefined ? { slug: snap.beforeMeta.slug } : {}),
         });
       }
       return;
