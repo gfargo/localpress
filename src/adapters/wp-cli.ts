@@ -6,6 +6,7 @@
  * thumbnail regeneration, orphan pruning, full content scans.
  */
 
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SiteConfig, SshConfig } from '../types.ts';
@@ -197,10 +198,11 @@ export class WpCliAdapter implements WpBackend {
 
   async upload(file: Buffer, metadata: UploadMetadata): Promise<MediaItem> {
     // Write the file to a local temp path, then SCP to remote.
-    const localTmp = join(tmpdir(), `localpress-upload-${Date.now()}-${metadata.filename}`);
+    const uploadId = `${Date.now()}-${randomUUID()}`;
+    const localTmp = join(tmpdir(), `localpress-upload-${uploadId}-${metadata.filename}`);
     await Bun.write(localTmp, file);
 
-    const remoteTmp = `/tmp/localpress-upload-${Date.now()}-${metadata.filename}`;
+    const remoteTmp = `/tmp/localpress-upload-${uploadId}-${metadata.filename}`;
     const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
     if (scpResult.exitCode !== 0) {
       throw new Error(
@@ -216,7 +218,14 @@ export class WpCliAdapter implements WpBackend {
     if (metadata.description) args.push(`--description=${shellQuote(metadata.description)}`);
     if (metadata.postId) args.push(`--post_id=${metadata.postId}`);
 
-    const output = await this.wp(args.join(' '));
+    let output: string;
+    try {
+      output = await this.wp(args.join(' '));
+    } catch (err) {
+      // Remove the uploaded temp file so a failed import doesn't leave litter.
+      await sshExec(this.ssh, `rm -f ${shellQuote(remoteTmp)}`).catch(() => {});
+      throw err;
+    }
     const newId = Number.parseInt(output.trim(), 10);
 
     if (Number.isNaN(newId)) {
@@ -259,10 +268,11 @@ export class WpCliAdapter implements WpBackend {
     const isFormatChange = Boolean(options?.newExtension) && newFilePath !== oldFilePath;
 
     // Write to local temp, SCP to remote, place at the (possibly new) path.
-    const localTmp = join(tmpdir(), `localpress-replace-${Date.now()}`);
+    const replaceId = `${Date.now()}-${randomUUID()}`;
+    const localTmp = join(tmpdir(), `localpress-replace-${replaceId}`);
     await Bun.write(localTmp, file);
 
-    const remoteTmp = `/tmp/localpress-replace-${Date.now()}`;
+    const remoteTmp = `/tmp/localpress-replace-${replaceId}`;
     const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
     if (scpResult.exitCode !== 0) {
       throw new Error(
@@ -319,19 +329,17 @@ export class WpCliAdapter implements WpBackend {
       }
 
       // Update attachment metadata: file field, filesize, and clear stale sizes.
-      try {
-        if (oldMeta?.file) {
-          oldMeta.file = newFilePath;
-          oldMeta.filesize = file.length;
-          // Clear the sizes array — old format thumbnails are now invalid.
-          // WordPress will repopulate this on regenerate.
-          const updatedMeta = JSON.stringify({ ...oldMeta, sizes: {} });
-          await this.wp(
-            `post meta update ${id} _wp_attachment_metadata ${shellQuote(updatedMeta)} --format=json`,
-          );
-        }
-      } catch {
-        // Best effort — metadata update is non-critical.
+      // This is NOT best-effort — a failure here leaves the attachment's
+      // recorded metadata inconsistent with the bytes on disk, so let it throw.
+      if (oldMeta?.file) {
+        oldMeta.file = newFilePath;
+        oldMeta.filesize = file.length;
+        // Clear the sizes array — old format thumbnails are now invalid.
+        // WordPress will repopulate this on regenerate.
+        const updatedMeta = JSON.stringify({ ...oldMeta, sizes: {} });
+        await this.wp(
+          `post meta update ${id} _wp_attachment_metadata ${shellQuote(updatedMeta)} --format=json`,
+        );
       }
 
       // Remove _require_file_renaming flag that WP may have set during the transition.
