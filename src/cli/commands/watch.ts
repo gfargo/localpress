@@ -27,6 +27,7 @@ import type { ImageFormat } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { createRerunGuard } from '../utils/rerun-guard.ts';
 
 /** Image extensions we watch for. */
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.avif', '.gif', '.svg']);
@@ -97,8 +98,22 @@ export function registerWatchCommand(program: Command): void {
 
       const debounceMs = options.debounce ?? DEBOUNCE_MS;
 
-      // Track in-flight operations to avoid duplicate processing.
-      const processing = new Set<string>();
+      // Per-file rerun guards: a save that arrives while a sync for the same
+      // file is in flight is queued and rerun once the in-flight sync
+      // finishes, rather than dropped. State is kept per-file so concurrent
+      // uploads for different files never block each other. Entries are
+      // never evicted, which is fine for a long-running watch process since
+      // the set of distinct paths in a watched directory is bounded.
+      const rerunGuards = new Map<string, (isNew: boolean) => Promise<void>>();
+
+      function getGuard(filePath: string): (isNew: boolean) => Promise<void> {
+        let guard = rerunGuards.get(filePath);
+        if (!guard) {
+          guard = createRerunGuard<boolean>((isNew) => processFile(filePath, isNew));
+          rerunGuards.set(filePath, guard);
+        }
+        return guard;
+      }
 
       // Debounce timers per file.
       const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -115,13 +130,9 @@ export function registerWatchCommand(program: Command): void {
       async function processFile(filePath: string, isNew: boolean): Promise<void> {
         const relPath = relative(watchDir, filePath);
 
-        if (processing.has(filePath)) return;
-        processing.add(filePath);
-
         try {
           const file = Bun.file(filePath);
           if (!(await file.exists())) {
-            processing.delete(filePath);
             return;
           }
 
@@ -133,7 +144,6 @@ export function registerWatchCommand(program: Command): void {
           const existingMapping = db.getWatchMapping(site.name, watchDir, relPath);
           if (existingMapping && existingMapping.fileHash === hash) {
             // File hasn't actually changed (editor may have touched mtime).
-            processing.delete(filePath);
             return;
           }
 
@@ -179,7 +189,6 @@ export function registerWatchCommand(program: Command): void {
                 } else {
                   info(`↻ ${relPath} → replaced #${result.id}${optimizeInfo}`);
                 }
-                processing.delete(filePath);
                 return;
               } catch (err) {
                 if ((err as CapabilityUnavailableError).name !== 'CapabilityUnavailableError') {
@@ -194,7 +203,6 @@ export function registerWatchCommand(program: Command): void {
               warn(
                 `Cannot replace #${existingMapping.wpId} in place (no WP-CLI). Skipping ${relPath} (--strict mode).`,
               );
-              processing.delete(filePath);
               return;
             }
 
@@ -240,8 +248,6 @@ export function registerWatchCommand(program: Command): void {
           } else {
             error(`✗ ${relPath}: ${msg}`);
           }
-        } finally {
-          processing.delete(filePath);
         }
       }
 
@@ -300,7 +306,7 @@ export function registerWatchCommand(program: Command): void {
           filePath,
           setTimeout(() => {
             debounceTimers.delete(filePath);
-            void processFile(filePath, isNew);
+            void getGuard(filePath)(isNew);
           }, debounceMs),
         );
       }
