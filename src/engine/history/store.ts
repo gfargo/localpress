@@ -152,8 +152,12 @@ export class SnapshotStore {
     const row = this.db
       .query(
         `SELECT id, site_name, command, params_json, started_at, finished_at, item_count
-         FROM sessions
-         WHERE site_name = ? AND item_count > 0
+         FROM sessions s
+         WHERE s.site_name = ?
+           AND EXISTS (
+             SELECT 1 FROM snapshots
+             WHERE session_id = s.id AND restored_at IS NULL
+           )
          ORDER BY started_at DESC LIMIT 1`,
       )
       .get(siteName) as RawSessionRow | null;
