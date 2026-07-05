@@ -25,12 +25,18 @@ Trigger this skill when the user asks to:
 - Find where a specific image is used across posts and pages
 - Open a WP image in a desktop editor, edit it, and sync back
 - Bulk-process images across their WordPress media library
+- Generate/write title, description, tags, or a classification for images via AI
+- Delete media attachments, or create/update/delete posts and pages
+- Run an accessibility (WCAG) pass over post/page content
+- Undo a previous localpress operation (time machine)
+- Watch a local directory and auto-sync new/changed images to WordPress
+- Run the same localpress command across multiple configured sites
 
 Do **not** invoke this skill for:
 
 - Generic local image editing unrelated to WordPress
 - Direct WordPress database queries (use the WP MCP for that)
-- Managing WordPress posts, pages, or settings (use the WP MCP)
+- WordPress settings, plugins, themes, users, or comments (use the WP MCP) — `localpress posts` only covers posts/pages content
 
 ## Installation check
 
@@ -81,9 +87,30 @@ localpress sites --json
 # Switch active site
 localpress sites use production
 
+# Run a command across multiple sites
+localpress sites run "list --unoptimized" --all-sites --json
+localpress sites run "optimize --unoptimized --apply" --sites production,staging --json
+
 # Show backend capabilities
 localpress doctor --json
 ```
+
+#### `sites run --json` output
+
+```json
+{
+  "command": "list --unoptimized",
+  "total": 2,
+  "succeeded": 2,
+  "failed": 0,
+  "results": [
+    { "site": "production", "exitCode": 0, "ok": true, "stdout": { "items": [], "total": 0, "totalPages": 1, "page": 1 }, "stderr": "" },
+    { "site": "staging", "exitCode": 0, "ok": true, "stdout": { "items": [], "total": 0, "totalPages": 1, "page": 1 }, "stderr": "" }
+  ]
+}
+```
+
+`stdout` is the parsed JSON of the inner command when it emitted valid JSON, otherwise the raw string. Exit code is 0 only if every site succeeded.
 
 #### `doctor --json` output
 
@@ -92,6 +119,7 @@ localpress doctor --json
   "site": "production",
   "url": "https://example.com",
   "connectionOk": true,
+  "sharpAvailable": true,
   "adapters": { "rest": true, "wpCli": false, "mcp": false },
   "capabilities": [
     { "capability": "list", "preferredAdapter": "rest", "availableOn": ["rest"] },
@@ -173,27 +201,39 @@ localpress audit --display-size --json
 localpress audit --duplicates --json
 localpress audit --broken-refs --json
 
+# Vision-based checks (require Ollama; slow, ~10s/image; opt-in only, not
+# part of the default "run everything" audit)
+localpress audit --quality --json
+localpress audit --ocr-text "Sale" --json
+
 # Find where an attachment is used
 localpress references 123 --json
 ```
 
 #### `list --json` output
 
+The top-level shape is an object with pagination metadata, **not** a bare array (`src/cli/commands/list.ts:437`):
+
 ```json
-[
-  {
-    "id": 123,
-    "title": "product-shot",
-    "filename": "product-shot.jpg",
-    "url": "https://example.com/wp-content/uploads/2026/01/product-shot.jpg",
-    "mimeType": "image/jpeg",
-    "width": 1920,
-    "height": 1080,
-    "sizeBytes": 524288,
-    "altText": "Product photo",
-    "uploadedAt": "2026-01-15T10:30:00"
-  }
-]
+{
+  "items": [
+    {
+      "id": 123,
+      "title": "product-shot",
+      "filename": "product-shot.jpg",
+      "url": "https://example.com/wp-content/uploads/2026/01/product-shot.jpg",
+      "mimeType": "image/jpeg",
+      "width": 1920,
+      "height": 1080,
+      "sizeBytes": 524288,
+      "altText": "Product photo",
+      "uploadedAt": "2026-01-15T10:30:00"
+    }
+  ],
+  "total": 150,
+  "totalPages": 3,
+  "page": 1
+}
 ```
 
 #### `audit --json` output
@@ -208,11 +248,15 @@ localpress references 123 --json
     { "type": "missing-alt", "attachmentId": 789, "filename": "hero.jpg", "detail": "No alt text set" },
     { "type": "display-size", "attachmentId": 101, "filename": "bg.jpg", "detail": "Source is 4000×3000 but largest registered size is 1024×768 (large) — 15.3× oversized" },
     { "type": "duplicate", "attachmentId": 202, "filename": "logo.png", "detail": "Perceptually similar to attachment(s) #203, #204", "duplicateOf": [203, 204] },
-    { "type": "broken-ref", "attachmentId": 303, "filename": "old-banner.jpg", "detail": "URL returns HTTP 404" }
+    { "type": "broken-ref", "attachmentId": 303, "filename": "old-banner.jpg", "detail": "URL returns HTTP 404" },
+    { "type": "quality", "attachmentId": 404, "filename": "blurry.jpg", "detail": "motion blur on subject" },
+    { "type": "ocr-match", "attachmentId": 505, "filename": "banner.jpg", "detail": "title bar reads \"Sale\"" }
   ],
-  "summary": { "unoptimized": 45, "large": 12, "missingAlt": 23, "displaySize": 8, "duplicates": 3, "brokenRefs": 2, "orphan": 0, "missingFile": 0 }
+  "summary": { "unoptimized": 45, "large": 12, "missingAlt": 23, "displaySize": 8, "duplicates": 3, "brokenRefs": 2, "orphan": 0, "missingFile": 0, "quality": 1, "ocrMatch": 1 }
 }
 ```
+
+`--quality` and `--ocr-text <term>` are opt-in only (each is a per-image Ollama vision call, ~10s/image) — they are never included in the default "run everything" audit.
 
 #### `stats --json` output
 
@@ -379,6 +423,226 @@ localpress caption --list-models --json
 
 > **Requires Ollama** — install at [https://ollama.com](https://ollama.com) then `ollama pull moondream`. The `caption` command talks to `http://localhost:11434` by default.
 
+### AI metadata generation (title, describe, classify, tag, vision, metadata, rename)
+
+`caption` (alt text) has five companions that follow the same pattern — Ollama vision model, dry-run-by-default bulk mode, idempotent-skip, `--overwrite`, time-machine snapshot before every write — plus two direct-write commands (`metadata`, `rename`) that don't call a vision model at all (except `rename --smart`).
+
+```bash
+# title: 3-7 word noun phrase written to the WP post title
+localpress title 123 124 --json
+localpress title --missing-title --apply --json   # only auto-generated-looking titles (Screenshot-…, IMG_…)
+localpress title --all --apply --json
+
+# describe: 2-3 sentence description written to the WP description field
+localpress describe 123 --json
+localpress describe --missing-description --apply --json
+
+# classify: detect image type (screenshot | photo | illustration | diagram) — read-only, no WP write
+localpress classify 123 124 --json
+
+# tag: 3-6 short labels written to the caption field as a `[tags: …]` block
+localpress tag 123 --json
+localpress tag --missing-tags --apply --json
+localpress tag 123 --overwrite --json
+
+# vision: generate all AI fields (alt, title, description, tags, classify) in one pass
+# Print-only by default — pass --apply to write to WordPress.
+localpress vision 123 --json
+localpress vision 123 124 --fields alt,tags --apply --json
+
+# metadata: directly set fields (no AI) — at least one flag required
+localpress metadata 123 --alt-text "Screenshot of the dashboard" --title "Dashboard overview" --json
+
+# rename: rename the WP slug/permalink (NOT the underlying filename)
+localpress rename 123 --smart --json           # AI-generated name, slugified
+localpress rename 123 --to "summer-sale-hero" --json
+```
+
+#### `title` / `describe` `--json` output
+
+The generated text (whether a title or a description) is always under `generated` — there is no `title`/`description` key on each result item. `previous` is omitted when the field had no prior value.
+
+```json
+{
+  "dryRun": false,
+  "processed": 1,
+  "skipped": 0,
+  "failures": 0,
+  "results": [
+    { "id": 123, "filename": "IMG_4821.jpg", "generated": "Terminal command output", "skipped": false, "durationMs": 3400 }
+  ]
+}
+```
+
+#### `classify --json` output
+
+```json
+{ "classified": 2, "failures": 0, "results": [{ "id": 123, "filename": "photo.jpg", "classification": "photo", "durationMs": 900 }] }
+```
+
+`classification` is one of `screenshot`, `photo`, `illustration`, `diagram`, `unknown`. The result is cached locally so `optimize` can pick smarter format defaults (screenshots → PNG, photos → WebP).
+
+#### `tag --json` output
+
+```json
+{
+  "dryRun": false,
+  "processed": 1,
+  "skipped": 0,
+  "failures": 0,
+  "results": [{ "id": 123, "filename": "hero.jpg", "tags": ["mug", "ceramic", "red", "steam"], "skipped": false, "durationMs": 1100 }]
+}
+```
+
+#### `vision --json` output
+
+```json
+{
+  "applied": true,
+  "fields": ["alt", "title", "description", "tags", "classify"],
+  "processed": 1,
+  "failures": 0,
+  "results": [
+    {
+      "id": 123,
+      "filename": "hero.jpg",
+      "alt": "A red ceramic mug on a white background",
+      "title": "Ceramic mug product shot",
+      "description": "A close-up product photo of a red ceramic mug against a plain white background.",
+      "tags": ["mug", "ceramic", "red"],
+      "classify": "photo",
+      "durationMs": 4200,
+      "applied": true
+    }
+  ]
+}
+```
+
+#### `metadata --json` output
+
+```json
+{
+  "updated": 1,
+  "skipped": 0,
+  "failures": 0,
+  "results": [
+    {
+      "id": 123,
+      "filename": "hero.jpg",
+      "updated": true,
+      "skipped": false,
+      "changes": { "altText": "Screenshot of the dashboard", "title": "Dashboard overview" },
+      "previous": { "altText": "", "title": "hero" }
+    }
+  ]
+}
+```
+
+#### `rename --json` output
+
+```json
+{
+  "dryRun": false,
+  "renamed": 1,
+  "skipped": 0,
+  "failures": 0,
+  "results": [{ "id": 123, "filename": "IMG_4821.jpg", "from": "img-4821", "to": "summer-sale-hero", "source": "explicit", "skipped": false }]
+}
+```
+
+`rename` updates the WordPress slug (`post_name` / permalink) only — it does not rename the underlying file on disk.
+
+### Content management (posts, delete, a11y)
+
+```bash
+# List posts/pages (works on custom post types too, e.g. --type portfolio)
+localpress posts list --json
+localpress posts list --type page --status draft --json
+
+# Show full details for a post/page
+localpress posts show 45 --json
+
+# Create a post (draft by default)
+localpress posts create --title "Summer Sale" --content "<p>...</p>" --status publish --json
+
+# Update a post (dry-run supported via global --dry-run)
+localpress posts update 45 --title "Summer Sale 2026" --featured-image 123 --json
+
+# Trash or permanently delete a post/page
+localpress posts delete 45 --json
+localpress posts delete 45 --force --json
+
+# Delete attachment(s) — moves to trash unless --force; captures an undo snapshot first
+localpress delete 123 124 --json
+localpress delete 123 --force --json
+
+# Accessibility audit of published posts/pages content (heading hierarchy, generic
+# link text, missing inline-image alt, empty links)
+localpress a11y --json
+localpress a11y --type page --status publish --json
+localpress a11y --id 45 --json
+```
+
+#### `posts list --json` output
+
+```json
+{
+  "items": [
+    { "id": 45, "title": "Summer Sale", "status": "publish", "type": "post", "date": "2026-06-01T10:00:00", "modified": "2026-06-02T09:00:00", "slug": "summer-sale", "link": "https://example.com/summer-sale/", "author": 1, "featuredMedia": 123 }
+  ],
+  "total": 12,
+  "totalPages": 1,
+  "page": 1
+}
+```
+
+#### `posts show --json` output
+
+Same item shape as `posts list`, plus `content` (string), `categories` (number[]), `tags` (number[]).
+
+#### `posts create` / `posts update --json` output
+
+```json
+{ "action": "created", "post": { "id": 46, "title": "New Post", "status": "draft", "type": "post", "date": "…", "modified": "…", "slug": "new-post", "link": "…", "author": 1, "featuredMedia": 0 } }
+```
+
+`posts update` uses `"action": "updated"`. Passing global `--dry-run` returns `{ "dryRun": true, "action": "update", "id": 45, "fields": { ... } }` instead and makes no request.
+
+#### `posts delete --json` output
+
+```json
+{ "action": "trashed", "id": 45 }
+```
+
+`action` is `"deleted"` when `--force` is passed. Global `--dry-run` returns `{ "dryRun": true, "action": "trash"|"delete", "id": 45 }` instead.
+
+#### `delete --json` output
+
+```json
+{
+  "deleted": 1,
+  "failures": 0,
+  "force": false,
+  "results": [{ "id": 123, "filename": "old-banner.jpg", "status": "deleted", "force": false }]
+}
+```
+
+Global `--dry-run` returns `{ "dryRun": true, "force": false, "ids": [123, 124] }` and deletes nothing.
+
+#### `a11y --json` output
+
+```json
+{
+  "site": "production",
+  "postsChecked": 40,
+  "findings": [
+    { "type": "generic-link-text", "postId": 45, "postTitle": "Summer Sale", "detail": "Link text \"click here\" is not descriptive of its destination", "element": "<a href=\"/shop\">click here</a>" },
+    { "type": "missing-img-alt", "postId": 67, "postTitle": "Gallery", "detail": "Image in content has no alt attribute", "element": "<img src=\"...\">" }
+  ],
+  "summary": { "headingSkip": 0, "multipleH1": 1, "genericLinkText": 3, "missingImgAlt": 2, "emptyLink": 0 }
+}
+```
+
 ### Round-trip editing
 
 ```bash
@@ -455,6 +719,80 @@ localpress import ./photos/ --dry-run --json
 }
 ```
 
+### Maintenance (regenerate, watch, watch-status, update, completions)
+
+```bash
+# Regenerate WordPress thumbnails (requires WP-CLI over SSH)
+localpress regenerate 123 124 --json
+localpress regenerate --all --apply --json
+
+# Watch a local directory and auto-push new/changed images to WordPress
+# (long-running; NDJSON events on stdout, one JSON object per line, until Ctrl+C)
+localpress watch ./product-photos --optimize --to webp --json
+
+# Check what's been watched historically for the active site (no live-process detection yet)
+localpress watch-status --json
+
+# Check for / install a newer localpress release
+localpress update --check --json
+localpress update --yes --json
+
+# Generate shell completion scripts (not JSON — writes the script itself to stdout)
+localpress completions bash >> ~/.bashrc
+```
+
+#### `regenerate --json` output
+
+```json
+{ "succeeded": 2, "failed": 0, "total": 2, "results": [{ "id": 123, "status": "success" }, { "id": 124, "status": "success" }] }
+```
+
+Bulk `--all` without `--apply` returns `{ "dryRun": true, "count": N, "ids": [...] }` instead and regenerates nothing.
+
+#### `watch` output — a stream of NDJSON events, not one terminal JSON blob
+
+Each event is printed as its own line as it happens:
+
+```json
+{"event":"uploaded","file":"hero.jpg","attachmentId":847,"sizeBytes":142301}
+{"event":"replaced","file":"hero.jpg","attachmentId":847,"sizeBytes":98213}
+{"event":"uploaded-as-new","file":"hero.jpg","attachmentId":850,"previousId":847,"sizeBytes":98213}
+{"event":"file-removed","file":"hero.jpg","attachmentId":847,"note":"WordPress attachment not deleted (pass --delete to enable)"}
+{"event":"deleted","file":"hero.jpg","attachmentId":847}
+{"event":"error","file":"hero.jpg","error":"Failed to download: 404"}
+```
+
+An agent driving `watch` should read stdout line-by-line and treat the process as long-running (it only exits on Ctrl+C / SIGTERM).
+
+#### `watch-status --json` output
+
+```json
+{
+  "site": "production",
+  "running": false,
+  "runningDetectionImplemented": false,
+  "directories": [{ "watchDir": "/Users/me/product-photos", "fileCount": 42, "lastActivityAt": 1748870400000 }]
+}
+```
+
+`running` is always `false` today — live-process detection isn't implemented yet (`runningDetectionImplemented: false` flags this explicitly). The report reflects historical file→attachment mappings only.
+
+#### `update --json` output
+
+```json
+{
+  "currentVersion": "1.15.2",
+  "latestVersion": "1.16.0",
+  "updateAvailable": true,
+  "downloadUrl": "https://github.com/gfargo/localpress/releases/download/v1.16.0/localpress-darwin-arm64.tar.gz",
+  "releaseUrl": "https://github.com/gfargo/localpress/releases/tag/v1.16.0",
+  "assetName": "localpress-darwin-arm64.tar.gz",
+  "assetSize": 41943040
+}
+```
+
+`--check` exits `1` if an update is available (after printing the JSON), `0` otherwise. On a Homebrew install, the response additionally includes `"method": "homebrew", "command": "brew upgrade localpress"` and no download is attempted.
+
 ### Low-level
 
 ```bash
@@ -471,6 +809,84 @@ localpress push ./optimized.webp --json
 localpress push ./optimized.webp --replace 123 --json
 ```
 
+### Time machine (history, undo)
+
+Every mutating command (optimize, convert, resize, remove-bg, caption, title, describe, tag, vision, metadata, rename, delete) captures a snapshot before it writes, so changes can be reverted with `undo`. Purely local — no network calls to read history.
+
+```bash
+# List recent sessions
+localpress history --json
+
+# Filter to snapshots for one attachment / operation / session
+localpress history --attachment 123 --json
+localpress history --operation optimize --json
+localpress history --session a1b2c3d4 --json
+
+# Show a single session or snapshot in detail
+localpress history show a1b2c3d4 --json
+localpress history show 42 --json
+
+# Apply the retention policy (drop oldest snapshots past a size/age/count limit)
+localpress history prune --older-than 30 --json
+localpress history clear --yes --json
+
+# Undo: restores the last session by default; dry-run unless --apply
+localpress undo --json
+localpress undo --apply --json
+localpress undo a1b2c3d4 --apply --json      # a specific session (8-char prefix)
+localpress undo --snapshot 42 --json          # one snapshot — executes immediately
+localpress undo --attachment 123 --json       # most recent un-restored snapshot for #123 — executes immediately
+```
+
+#### `history --json` output (default: list sessions)
+
+```json
+{
+  "site": "production",
+  "sessions": [{ "id": "a1b2c3d4e5f6...", "command": "optimize", "startedAt": 1748870400000, "itemCount": 3, "paramsJson": "{\"quality\":80}" }],
+  "stats": { "sessionCount": 12, "snapshotCount": 45, "totalBytes": 52428800, "maxSizeBytes": 2147483648 }
+}
+```
+
+#### `history --attachment <id>` / `--operation <op>` / `--session <id> --json` output (snapshot list)
+
+```json
+{
+  "site": "production",
+  "snapshots": [
+    { "id": 42, "sessionId": "a1b2c3d4e5f6...", "wpId": 123, "operation": "optimize", "kind": "binary", "blobSize": 524288, "createdAt": 1748870400000, "restoredAt": null }
+  ]
+}
+```
+
+#### `undo --json` output
+
+Dry-run (default for session-targeted undo):
+
+```json
+{ "dryRun": true, "count": 3, "snapshots": [{ "id": 42, "attachmentId": 123, "operation": "optimize", "kind": "binary", "filename": "hero.jpg" }] }
+```
+
+Executed (`--apply`, or always for `--snapshot`/`--attachment` targeting):
+
+```json
+{ "restored": 3, "failures": 0, "results": [{ "snapshotId": 42, "attachmentId": 123, "operation": "optimize", "kind": "binary", "status": "restored" }] }
+```
+
+If replace-in-place is unavailable when restoring a binary snapshot, `undo` falls back to uploading the original bytes as a new attachment (same fallback behavior as `optimize`/`edit`) and warns that the attachment ID changed.
+
+### MCP server
+
+```bash
+# Run localpress as an MCP (Model Context Protocol) server over stdio.
+# Intended to be spawned by an MCP host (Claude Desktop, Cursor, Claude Code) —
+# not for direct human/agent invocation from a shell. There is no --json mode:
+# it speaks JSON-RPC over stdin/stdout for as long as the host keeps it running.
+localpress mcp
+```
+
+The MCP server exposes the same functionality as the CLI (20 tools + 3 resources as of v1.14, one MCP tool per CLI command family) by shelling out to the CLI's own `--json` output internally. If the user already has localpress configured as an MCP server in their host, prefer calling its tools directly over shelling out to the `localpress` binary yourself — see .wiki/MCP-Setup.md in the repo for host configuration.
+
 ## Global flags
 
 | Flag | Effect |
@@ -486,7 +902,7 @@ localpress push ./optimized.webp --replace 123 --json
 
 ## Error handling
 
-localpress uses stable exit codes:
+localpress defines stable exit codes (`src/types.ts`):
 
 | Code | Meaning |
 | --- | --- |
@@ -498,7 +914,16 @@ localpress uses stable exit codes:
 | 5 | Auth error (Application Password rejected) |
 | 6 | Capability unavailable (e.g. replace-in-place needs WP-CLI) |
 
-In `--json` mode, errors go to stderr as structured JSON:
+Most per-command failure paths honor this table and call `error()` (below) before exiting with the matching code.
+
+**Two exceptions exist today (tracked in [#128](https://github.com/gfargo/localpress/issues/128), open as of this writing) where the contract is NOT honored, even with `--json`:**
+
+1. An uncaught/unexpected error that bubbles past a command's own handling hits the top-level catch in `src/cli/index.ts` — it always prints plain text (`error: <message>`) to stderr and exits `1`, regardless of `--json`.
+2. Commander's own parse errors (unknown command, missing required argument) use commander's built-in behavior — plain text to stderr, exit `1` — not the documented `InvalidUsage` (2).
+
+An agent parsing exit codes should treat `1` as "generic failure, message is plain text OR JSON" rather than assuming JSON is always available, until #128 lands.
+
+In `--json` mode, errors and warnings emitted via the per-command `error()`/`warn()` helpers (`src/cli/utils/output.ts`) go to **stderr** as structured JSON — stdout carries only the data payload:
 
 ```json
 {"level":"error","message":"WordPress REST API error: 401 Unauthorized"}
