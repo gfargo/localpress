@@ -413,14 +413,29 @@ export function estimateTotalBytes(
  */
 export class ZipStreamWriter {
   private readonly tmpPath: string;
-  private readonly stream: ReturnType<typeof createWriteStream>;
+  private stream: ReturnType<typeof createWriteStream> | null = null;
   private readonly centralDir: Array<{ path: string; crc: number; size: number; offset: number }> =
     [];
   private offset = 0;
 
   constructor(private readonly destPath: string) {
     this.tmpPath = `${destPath}.tmp`;
-    this.stream = createWriteStream(this.tmpPath);
+  }
+
+  /**
+   * Open the underlying write stream lazily, on the first actual write. This
+   * way an entry rejected synchronously (e.g. by a ZIP32 size check) before any
+   * bytes are written never creates the `.tmp` file at all, so abort() has
+   * nothing to race against.
+   */
+  private getStream(): ReturnType<typeof createWriteStream> {
+    if (!this.stream) {
+      this.stream = createWriteStream(this.tmpPath);
+      // Surface write/finalize errors through the push()/finalize() promises,
+      // not as an uncaught 'error' event.
+      this.stream.on('error', () => {});
+    }
+    return this.stream;
   }
 
   async writeEntry(path: string, data: Buffer): Promise<void> {
@@ -470,8 +485,9 @@ export class ZipStreamWriter {
   }
 
   private push(buf: Buffer): Promise<void> {
+    const stream = this.getStream();
     return new Promise((resolve, reject) => {
-      this.stream.write(buf, (err) => (err ? reject(err) : resolve()));
+      stream.write(buf, (err) => (err ? reject(err) : resolve()));
     });
   }
 
@@ -519,14 +535,17 @@ export class ZipStreamWriter {
     endRecord.writeUInt16LE(0, 20); // comment length
     await this.push(endRecord);
 
+    const stream = this.getStream();
     await new Promise<void>((resolve, reject) => {
-      this.stream.end((err: Error | null | undefined) => (err ? reject(err) : resolve()));
+      stream.end((err: Error | null | undefined) => (err ? reject(err) : resolve()));
     });
     renameSync(this.tmpPath, this.destPath);
   }
 
   /** Cleans up the `.tmp` file after an error — the destination is left untouched. */
   abort(): void {
+    // If nothing was ever written, the stream (and file) were never created.
+    if (!this.stream) return;
     this.stream.destroy();
     try {
       unlinkSync(this.tmpPath);

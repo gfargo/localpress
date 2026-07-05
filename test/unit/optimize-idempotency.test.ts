@@ -106,4 +106,45 @@ describe('shouldSkipOptimize', () => {
     const differentOpts: OptimizeOptions = { toFormat: 'avif', quality: 80 };
     expect(shouldSkipOptimize(last, 'result-hash', differentOpts, false)).toBe(false);
   });
+
+  // --- Upload-as-new fallback (REST-only, no replace-in-place) --------------
+  // Here the source attachment is never rewritten, so the live download hash
+  // stays equal to the ORIGINAL source hash — resultWpId is the new attachment.
+
+  test('upload-as-new fallback: unchanged source skips (no duplicate re-upload)', () => {
+    // First run uploaded the optimized bytes as a *new* attachment (#123) and
+    // left the source untouched. The prior record therefore has a non-null
+    // resultWpId, sourceHash = original, resultHash = optimized (different).
+    const last = record({
+      sourceHash: 'original-hash',
+      resultHash: 'optimized-hash',
+      resultWpId: 123,
+      paramsJson: JSON.stringify(OPTS),
+    });
+    // Second run downloads the still-original source, whose hash matches the
+    // recorded sourceHash → skip instead of spawning another duplicate.
+    expect(shouldSkipOptimize(last, 'original-hash', OPTS, false)).toBe(true);
+  });
+
+  test('upload-as-new fallback: changed source re-optimizes', () => {
+    const last = record({
+      sourceHash: 'original-hash',
+      resultHash: 'optimized-hash',
+      resultWpId: 123,
+      paramsJson: JSON.stringify(OPTS),
+    });
+    // The source bytes changed (re-uploaded), so the live hash differs.
+    expect(shouldSkipOptimize(last, 'different-source-hash', OPTS, false)).toBe(false);
+  });
+
+  test('upload-as-new fallback: changed params force a re-run', () => {
+    const last = record({
+      sourceHash: 'original-hash',
+      resultHash: 'optimized-hash',
+      resultWpId: 123,
+      paramsJson: JSON.stringify(OPTS),
+    });
+    const differentOpts: OptimizeOptions = { toFormat: 'avif', quality: 80 };
+    expect(shouldSkipOptimize(last, 'original-hash', differentOpts, false)).toBe(false);
+  });
 });
