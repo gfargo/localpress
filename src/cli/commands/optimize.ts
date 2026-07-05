@@ -29,6 +29,7 @@ import {
   optimizeImage,
 } from '../../engine/image/optimize.ts';
 import type { ImageFormat, OptimizeOptions } from '../../engine/image/types.ts';
+import type { ProcessingHistoryRecord } from '../../engine/state/db.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
@@ -108,6 +109,10 @@ export function registerOptimizeCommand(program: Command): void {
       'regenerate WordPress thumbnails after replace-in-place (slower)',
     )
     .option('--profile <name>', 'use a named optimization profile (from localpress config)')
+    .option(
+      '--force',
+      'bypass the idempotency skip and re-process even if the output is already up to date',
+    )
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -468,13 +473,6 @@ export function registerOptimizeCommand(program: Command): void {
           const sourceBytes = Buffer.from(await response.arrayBuffer());
           const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
 
-          // Check idempotency: skip if source hasn't changed since last processing.
-          const lastProcessing = db.getLastProcessing(site.name, item.id, 'optimize');
-          if (lastProcessing?.sourceHash === sourceHash && lastProcessing.status === 'success') {
-            info('    ↳ Skipped (source unchanged since last optimization).');
-            continue;
-          }
-
           // Smart format default: if the user didn't pick a format (no --to,
           // no --profile format) and we have a cached `classify` result for
           // this attachment, route to a sensible default:
@@ -482,16 +480,33 @@ export function registerOptimizeCommand(program: Command): void {
           //   photo                → WebP (best photographic compression)
           //   illustration         → WebP (good for flat-color art too)
           // Explicit --to / profile values always win.
+          // Computed before the idempotency check below since the resulting
+          // params are part of what decides whether this run can be skipped.
           const perItemOpts: OptimizeOptions = { ...optimizeOpts };
+          let smartDefaultClassification: string | null = null;
           if (!perItemOpts.toFormat) {
             const classification = getCachedClassification(db, site.name, item.id);
             if (classification === 'screenshot' || classification === 'diagram') {
               perItemOpts.toFormat = 'png';
-              info(`    ↳ Smart default: PNG (classified as ${classification})`);
+              smartDefaultClassification = classification;
             } else if (classification === 'photo' || classification === 'illustration') {
               perItemOpts.toFormat = 'webp';
-              info(`    ↳ Smart default: WebP (classified as ${classification})`);
+              smartDefaultClassification = classification;
             }
+          }
+
+          // Check idempotency: skip only if we've already produced this exact
+          // output (same result bytes, same options). See shouldSkipOptimize.
+          const lastProcessing = db.getLastProcessing(site.name, item.id, 'optimize');
+          if (shouldSkipOptimize(lastProcessing, sourceHash, perItemOpts, Boolean(options.force))) {
+            info('    ↳ Skipped (already optimized with these settings).');
+            continue;
+          }
+
+          if (smartDefaultClassification) {
+            info(
+              `    ↳ Smart default: ${perItemOpts.toFormat === 'png' ? 'PNG' : 'WebP'} (classified as ${smartDefaultClassification})`,
+            );
           }
 
           // 2. Process through the image engine.
@@ -509,12 +524,24 @@ export function registerOptimizeCommand(program: Command): void {
               `    ↳ Skipped (optimized size ${formatBytes(result.bytes.length)} ≥ original ${formatBytes(sourceBytes.length)}).`,
             );
 
-            // Record as success so we don't re-process.
-            recordSuccess(db, site.name, item, sourceHash, sourceHash, perItemOpts, durationMs, {
-              bytesBefore: sourceBytes.length,
-              bytesAfter: sourceBytes.length,
-              resultWpId: null,
-            });
+            // Record as 'skipped' (not 'success') so --unoptimized won't
+            // reselect it forever, but different options next time (e.g.
+            // --to avif) still won't match this paramsJson and will re-run.
+            recordSuccess(
+              db,
+              site.name,
+              item,
+              sourceHash,
+              sourceHash,
+              perItemOpts,
+              durationMs,
+              {
+                bytesBefore: sourceBytes.length,
+                bytesAfter: sourceBytes.length,
+                resultWpId: null,
+              },
+              'skipped',
+            );
             continue;
           }
 
@@ -716,6 +743,34 @@ export function registerOptimizeCommand(program: Command): void {
 
 // -- Helpers ------------------------------------------------------------------
 
+/**
+ * Decide whether an item can be skipped because we've already produced this
+ * exact output. Skip only when:
+ *   - not forced,
+ *   - a prior run exists and didn't fail,
+ *   - the CURRENT file's hash matches the prior run's RESULT hash (not its
+ *     source hash — after a successful replace-in-place, the live file IS
+ *     the previous result, so comparing against sourceHash never matched and
+ *     every re-run re-compressed from scratch), and
+ *   - the requested options are byte-for-byte the same as last time (so a
+ *     changed --to/--quality/--target-size always re-runs).
+ *
+ * After `undo` restores the original bytes, the live file's hash reverts to
+ * the old sourceHash, which differs from resultHash (real compression changed
+ * the bytes) — so this naturally returns false and re-optimization proceeds.
+ */
+export function shouldSkipOptimize(
+  lastProcessing: ProcessingHistoryRecord | null,
+  currentSourceHash: string,
+  perItemOpts: OptimizeOptions,
+  force: boolean,
+): boolean {
+  if (force) return false;
+  if (!lastProcessing || lastProcessing.status === 'failure') return false;
+  if (lastProcessing.resultHash !== currentSourceHash) return false;
+  return lastProcessing.paramsJson === JSON.stringify(perItemOpts);
+}
+
 export function mimeToExtension(mimeType: string): string | undefined {
   const map: Record<string, string> = {
     'image/webp': '.webp',
@@ -747,6 +802,7 @@ function recordSuccess(
   opts: OptimizeOptions,
   durationMs: number,
   sizes: { bytesBefore: number; bytesAfter: number; resultWpId: number | null },
+  status: 'success' | 'skipped' = 'success',
 ): void {
   db.upsertAttachment({
     siteName,
@@ -771,7 +827,7 @@ function recordSuccess(
     resultWpId: sizes.resultWpId,
     ranAt: Date.now(),
     durationMs,
-    status: 'success',
+    status,
     errorMessage: null,
   });
 }

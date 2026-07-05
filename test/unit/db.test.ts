@@ -36,7 +36,7 @@ describe('SiteDb.init', () => {
     // Access the underlying Database to check the version.
     // We use getStoredSchemaVersion via a fresh Database connection.
     // Since we're using :memory:, we verify via the SiteDb's own state.
-    expect(SCHEMA_VERSION).toBe(4);
+    expect(SCHEMA_VERSION).toBe(5);
     db.close();
   });
 });
@@ -405,6 +405,277 @@ describe('processing history', () => {
     expect(record?.status).toBe('failure');
     expect(record?.errorMessage).toBe('Codec error: unsupported format');
 
+    db.close();
+  });
+});
+
+describe('processing history — skipped status and revert (localpress#97)', () => {
+  test('recordProcessing accepts status: skipped', () => {
+    const db = createTestDb();
+    const now = Date.now();
+
+    db.upsertAttachment({
+      siteName: 'test-site',
+      wpId: 50,
+      sourceUrl: 'https://example.test/img.jpg',
+      sourceHash: 'h1',
+      sizeBytes: 1000,
+      width: null,
+      height: null,
+      mimeType: 'image/jpeg',
+      lastSeenAt: now,
+    });
+
+    db.recordProcessing({
+      siteName: 'test-site',
+      wpId: 50,
+      operation: 'optimize',
+      paramsJson: JSON.stringify({ toFormat: 'webp' }),
+      sourceHash: 'h1',
+      resultHash: 'h1',
+      bytesBefore: 1000,
+      bytesAfter: 1000,
+      resultWpId: null,
+      ranAt: now,
+      durationMs: 50,
+      status: 'skipped',
+      errorMessage: null,
+    });
+
+    const record = db.getLastProcessing('test-site', 50);
+    expect(record?.status).toBe('skipped');
+    expect(record?.revertedAt).toBeNull();
+
+    db.close();
+  });
+
+  test('markProcessingReverted sets revertedAt on the most recent matching row', () => {
+    const db = createTestDb();
+    const now = Date.now();
+
+    db.upsertAttachment({
+      siteName: 'test-site',
+      wpId: 60,
+      sourceUrl: 'https://example.test/img.jpg',
+      sourceHash: 'before',
+      sizeBytes: 1000,
+      width: null,
+      height: null,
+      mimeType: 'image/jpeg',
+      lastSeenAt: now,
+    });
+
+    db.recordProcessing({
+      siteName: 'test-site',
+      wpId: 60,
+      operation: 'optimize',
+      paramsJson: null,
+      sourceHash: 'before',
+      resultHash: 'after',
+      bytesBefore: 1000,
+      bytesAfter: 400,
+      resultWpId: null,
+      ranAt: now,
+      durationMs: 50,
+      status: 'success',
+      errorMessage: null,
+    });
+
+    expect(db.getLastProcessing('test-site', 60)?.revertedAt).toBeNull();
+
+    db.markProcessingReverted('test-site', 60, 'optimize');
+
+    const reverted = db.getLastProcessing('test-site', 60);
+    expect(reverted?.revertedAt).not.toBeNull();
+
+    db.close();
+  });
+
+  test('markProcessingReverted on a wpId with no history is a no-op', () => {
+    const db = createTestDb();
+    // Should not throw.
+    db.markProcessingReverted('test-site', 999, 'optimize');
+    db.close();
+  });
+
+  test('getStats excludes reverted rows from succeeded/bytesSaved, and reports failed/skipped explicitly', () => {
+    const db = createTestDb();
+    const now = Date.now();
+
+    for (const wpId of [1, 2, 3]) {
+      db.upsertAttachment({
+        siteName: 'test-site',
+        wpId,
+        sourceUrl: `https://example.test/img-${wpId}.jpg`,
+        sourceHash: null,
+        sizeBytes: 1000,
+        width: null,
+        height: null,
+        mimeType: 'image/jpeg',
+        lastSeenAt: now,
+      });
+    }
+
+    // wpId 1: successful optimize, later reverted by undo.
+    db.recordProcessing({
+      siteName: 'test-site',
+      wpId: 1,
+      operation: 'optimize',
+      paramsJson: null,
+      sourceHash: 'h1',
+      resultHash: 'h1-out',
+      bytesBefore: 1000,
+      bytesAfter: 400,
+      resultWpId: null,
+      ranAt: now,
+      durationMs: 50,
+      status: 'success',
+      errorMessage: null,
+    });
+    db.markProcessingReverted('test-site', 1, 'optimize');
+
+    // wpId 2: skipped (would-be-larger).
+    db.recordProcessing({
+      siteName: 'test-site',
+      wpId: 2,
+      operation: 'optimize',
+      paramsJson: null,
+      sourceHash: 'h2',
+      resultHash: 'h2',
+      bytesBefore: 1000,
+      bytesAfter: 1000,
+      resultWpId: null,
+      ranAt: now,
+      durationMs: 10,
+      status: 'skipped',
+      errorMessage: null,
+    });
+
+    // wpId 3: failure.
+    db.recordProcessing({
+      siteName: 'test-site',
+      wpId: 3,
+      operation: 'optimize',
+      paramsJson: null,
+      sourceHash: null,
+      resultHash: null,
+      bytesBefore: 1000,
+      bytesAfter: null,
+      resultWpId: null,
+      ranAt: now,
+      durationMs: 5,
+      status: 'failure',
+      errorMessage: 'boom',
+    });
+
+    const stats = db.getStats('test-site');
+    expect(stats.totalOps).toBe(3);
+    expect(stats.succeeded).toBe(0); // the only success row was reverted
+    expect(stats.failed).toBe(1);
+    expect(stats.skipped).toBe(1);
+    expect(stats.bytesSaved).toBe(0); // reverted row's savings excluded
+
+    db.close();
+  });
+
+  test('listProcessedWpIds excludes reverted rows, includes skipped rows', () => {
+    const db = createTestDb();
+    const now = Date.now();
+
+    for (const wpId of [1, 2]) {
+      db.upsertAttachment({
+        siteName: 'test-site',
+        wpId,
+        sourceUrl: `https://example.test/img-${wpId}.jpg`,
+        sourceHash: null,
+        sizeBytes: 1000,
+        width: null,
+        height: null,
+        mimeType: 'image/jpeg',
+        lastSeenAt: now,
+      });
+    }
+
+    // wpId 1: success, then reverted -> should no longer count as processed.
+    db.recordProcessing({
+      siteName: 'test-site',
+      wpId: 1,
+      operation: 'optimize',
+      paramsJson: null,
+      sourceHash: 'h1',
+      resultHash: 'h1-out',
+      bytesBefore: 1000,
+      bytesAfter: 400,
+      resultWpId: null,
+      ranAt: now,
+      durationMs: 50,
+      status: 'success',
+      errorMessage: null,
+    });
+    db.markProcessingReverted('test-site', 1, 'optimize');
+
+    // wpId 2: skipped -> should still count as processed (evaluated already).
+    db.recordProcessing({
+      siteName: 'test-site',
+      wpId: 2,
+      operation: 'optimize',
+      paramsJson: null,
+      sourceHash: 'h2',
+      resultHash: 'h2',
+      bytesBefore: 1000,
+      bytesAfter: 1000,
+      resultWpId: null,
+      ranAt: now,
+      durationMs: 10,
+      status: 'skipped',
+      errorMessage: null,
+    });
+
+    const processed = db.listProcessedWpIds('test-site');
+    expect(processed.has(1)).toBe(false);
+    expect(processed.has(2)).toBe(true);
+
+    db.close();
+  });
+
+  test('getLibraryOverview does not count a reverted optimize as optimized', () => {
+    const db = createTestDb();
+    const now = Date.now();
+
+    db.upsertAttachment({
+      siteName: 'test-site',
+      wpId: 1,
+      sourceUrl: 'https://example.test/img-1.jpg',
+      sourceHash: null,
+      sizeBytes: 1000,
+      width: null,
+      height: null,
+      mimeType: 'image/jpeg',
+      lastSeenAt: now,
+    });
+
+    db.recordProcessing({
+      siteName: 'test-site',
+      wpId: 1,
+      operation: 'optimize',
+      paramsJson: null,
+      sourceHash: 'h1',
+      resultHash: 'h1-out',
+      bytesBefore: 1000,
+      bytesAfter: 400,
+      resultWpId: null,
+      ranAt: now,
+      durationMs: 50,
+      status: 'success',
+      errorMessage: null,
+    });
+
+    expect(db.getLibraryOverview('test-site').optimized).toBe(1);
+
+    db.markProcessingReverted('test-site', 1, 'optimize');
+
+    expect(db.getLibraryOverview('test-site').optimized).toBe(0);
+    expect(db.getLibraryOverview('test-site').unoptimized).toBe(1);
     db.close();
   });
 });

@@ -34,8 +34,10 @@ export interface ProcessingHistoryRecord {
   resultWpId: number | null;
   ranAt: number;
   durationMs: number | null;
-  status: 'success' | 'failure';
+  status: 'success' | 'failure' | 'skipped';
   errorMessage: string | null;
+  /** Set when a later `undo` reversed this row's effect. Excluded from stats/idempotency. */
+  revertedAt: number | null;
 }
 
 /**
@@ -166,8 +168,12 @@ export class SiteDb {
    * doesn't make an image look "already optimized" to `optimize --unoptimized`.
    */
   listProcessedWpIds(siteName: string, operations?: readonly string[]): Set<number> {
+    // 'skipped' rows (e.g. optimize decided the result would be larger) still
+    // count as "processed" — the item was evaluated, so --unoptimized should
+    // not re-select it forever. A reverted row (undone) is excluded so the
+    // attachment becomes eligible for re-processing again.
     let sql = `SELECT DISTINCT wp_id FROM processing_history
-               WHERE site_name = ? AND status = 'success'`;
+               WHERE site_name = ? AND status != 'failure' AND reverted_at IS NULL`;
     const params: Array<string> = [siteName];
 
     if (operations && operations.length > 0) {
@@ -182,7 +188,7 @@ export class SiteDb {
 
   // Processing history --------------------------------------------------------
 
-  recordProcessing(record: Omit<ProcessingHistoryRecord, 'id'>): number {
+  recordProcessing(record: Omit<ProcessingHistoryRecord, 'id' | 'revertedAt'>): number {
     const result = this.db.run(
       `INSERT INTO processing_history
          (site_name, wp_id, operation, params_json, source_hash, result_hash,
@@ -215,7 +221,7 @@ export class SiteDb {
   ): ProcessingHistoryRecord | null {
     let sql = `SELECT id, site_name, wp_id, operation, params_json, source_hash,
                       result_hash, bytes_before, bytes_after, result_wp_id,
-                      ran_at, duration_ms, status, error_message
+                      ran_at, duration_ms, status, error_message, reverted_at
                FROM processing_history
                WHERE site_name = ? AND wp_id = ?`;
     const params: Array<string | number> = [siteName, wpId];
@@ -231,19 +237,43 @@ export class SiteDb {
     return row ? mapProcessingRow(row) : null;
   }
 
+  /**
+   * Mark the most recent processing_history row for a wp_id+operation as
+   * reverted (e.g. by `undo`). Excluded from stats sums and idempotency
+   * checks from this point on. No-op if no matching row exists.
+   *
+   * Assumes the most recent row for this wp_id+operation is the one being
+   * undone — true for the normal one-command-at-a-time flow this CLI uses,
+   * but could mis-attribute if another operation ran on the same attachment
+   * between the original run and the undo.
+   */
+  markProcessingReverted(siteName: string, wpId: number, operation: string): void {
+    const last = this.getLastProcessing(siteName, wpId, operation);
+    if (!last) return;
+    this.db.run('UPDATE processing_history SET reverted_at = ? WHERE id = ?', [
+      Date.now(),
+      last.id,
+    ]);
+  }
+
   // Stats ---------------------------------------------------------------------
 
   getStats(siteName: string): SiteStats {
+    // Rows with reverted_at set were undone — exclude them from "succeeded"
+    // and "bytes_saved" so stats reflect reality after an undo. Failed rows
+    // and skipped rows (e.g. "result would be larger") are tracked as their
+    // own explicit counts rather than derived by subtraction, since a third
+    // status makes `total - succeeded` no longer equal "failed".
     const ops = this.db
       .query(
         `SELECT operation,
               COUNT(*)                                          AS total,
-              SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS succeeded,
+              SUM(CASE WHEN status = 'success' AND reverted_at IS NULL THEN 1 ELSE 0 END) AS succeeded,
               SUM(CASE WHEN status = 'failure' THEN 1 ELSE 0 END) AS failed,
-              SUM(CASE WHEN status = 'success' AND bytes_before > bytes_after THEN bytes_before - bytes_after ELSE 0 END) AS bytes_saved,
-              SUM(CASE WHEN status = 'success' THEN bytes_before ELSE 0 END) AS bytes_in,
-              SUM(CASE WHEN status = 'success' THEN bytes_after ELSE 0 END) AS bytes_out,
-              SUM(CASE WHEN status = 'success' THEN duration_ms ELSE 0 END) AS total_ms,
+              SUM(CASE WHEN status = 'success' AND reverted_at IS NULL AND bytes_before > bytes_after THEN bytes_before - bytes_after ELSE 0 END) AS bytes_saved,
+              SUM(CASE WHEN status = 'success' AND reverted_at IS NULL THEN bytes_before ELSE 0 END) AS bytes_in,
+              SUM(CASE WHEN status = 'success' AND reverted_at IS NULL THEN bytes_after ELSE 0 END) AS bytes_out,
+              SUM(CASE WHEN status = 'success' AND reverted_at IS NULL THEN duration_ms ELSE 0 END) AS total_ms,
               MAX(ran_at)                                       AS last_ran_at
        FROM processing_history
        WHERE site_name = ?
@@ -255,10 +285,12 @@ export class SiteDb {
     const totals = this.db
       .query(
         `SELECT COUNT(DISTINCT wp_id)                                       AS files_touched,
-              SUM(CASE WHEN status = 'success' AND bytes_before > bytes_after THEN bytes_before - bytes_after ELSE 0 END) AS bytes_saved,
-              SUM(CASE WHEN status = 'success' THEN bytes_before ELSE 0 END) AS bytes_in,
+              SUM(CASE WHEN status = 'success' AND reverted_at IS NULL AND bytes_before > bytes_after THEN bytes_before - bytes_after ELSE 0 END) AS bytes_saved,
+              SUM(CASE WHEN status = 'success' AND reverted_at IS NULL THEN bytes_before ELSE 0 END) AS bytes_in,
               COUNT(*)                                                    AS total_ops,
-              SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END)        AS succeeded,
+              SUM(CASE WHEN status = 'success' AND reverted_at IS NULL THEN 1 ELSE 0 END) AS succeeded,
+              SUM(CASE WHEN status = 'failure' THEN 1 ELSE 0 END)        AS failed,
+              SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END)        AS skipped,
               MAX(ran_at)                                                 AS last_ran_at
        FROM processing_history
        WHERE site_name = ?`,
@@ -270,6 +302,8 @@ export class SiteDb {
       filesTouched: totals?.files_touched ?? 0,
       totalOps: totals?.total_ops ?? 0,
       succeeded: totals?.succeeded ?? 0,
+      failed: totals?.failed ?? 0,
+      skipped: totals?.skipped ?? 0,
       bytesSaved: totals?.bytes_saved ?? 0,
       bytesIn: totals?.bytes_in ?? 0,
       lastRanAt: totals?.last_ran_at ?? null,
@@ -304,7 +338,7 @@ export class SiteDb {
       .query(
         `SELECT COUNT(DISTINCT wp_id) AS optimized
          FROM processing_history
-         WHERE site_name = ? AND status = 'success'`,
+         WHERE site_name = ? AND status = 'success' AND reverted_at IS NULL`,
       )
       .get(siteName) as { optimized: number } | null;
 
@@ -534,8 +568,9 @@ interface RawProcessingRow {
   result_wp_id: number | null;
   ran_at: number;
   duration_ms: number | null;
-  status: 'success' | 'failure';
+  status: 'success' | 'failure' | 'skipped';
   error_message: string | null;
+  reverted_at: number | null;
 }
 
 function mapProcessingRow(row: RawProcessingRow): ProcessingHistoryRecord {
@@ -554,6 +589,7 @@ function mapProcessingRow(row: RawProcessingRow): ProcessingHistoryRecord {
     durationMs: row.duration_ms,
     status: row.status,
     errorMessage: row.error_message,
+    revertedAt: row.reverted_at,
   };
 }
 
@@ -576,6 +612,8 @@ export interface SiteStats {
   filesTouched: number;
   totalOps: number;
   succeeded: number;
+  failed: number;
+  skipped: number;
   bytesSaved: number;
   bytesIn: number;
   lastRanAt: number | null;
@@ -600,6 +638,8 @@ interface RawTotalStat {
   bytes_in: number | null;
   total_ops: number;
   succeeded: number;
+  failed: number;
+  skipped: number;
   last_ran_at: number | null;
 }
 

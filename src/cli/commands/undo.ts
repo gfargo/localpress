@@ -152,6 +152,10 @@ export function registerUndoCommand(program: Command): void {
         try {
           await restoreSnapshot(snap, resolver, parentOpts.strict);
           store.markRestored(snap.id);
+          // The restored bytes no longer match what processing_history recorded
+          // as this operation's output, so exclude that row from future stats
+          // and let optimize/etc. re-process this attachment.
+          db.markProcessingReverted(site.name, snap.wpId, snap.operation);
           results.push({
             snapshotId: snap.id,
             attachmentId: snap.wpId,
