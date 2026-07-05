@@ -409,6 +409,62 @@ describe('processing history', () => {
   });
 });
 
+describe('pruneStaleAttachments', () => {
+  test('removes only rows last seen before the cutoff', () => {
+    const db = createTestDb();
+
+    db.upsertAttachment({
+      siteName: 'test-site',
+      wpId: 1,
+      sourceUrl: 'https://example.test/old.jpg',
+      sourceHash: null,
+      sizeBytes: 100,
+      width: null,
+      height: null,
+      mimeType: 'image/jpeg',
+      lastSeenAt: 1000,
+    });
+
+    db.upsertAttachment({
+      siteName: 'test-site',
+      wpId: 2,
+      sourceUrl: 'https://example.test/new.jpg',
+      sourceHash: null,
+      sizeBytes: 100,
+      width: null,
+      height: null,
+      mimeType: 'image/jpeg',
+      lastSeenAt: 2000,
+    });
+
+    const removed = db.pruneStaleAttachments('test-site', 2000);
+    expect(removed).toBe(1);
+    expect(db.getAttachment('test-site', 1)).toBeNull();
+    expect(db.getAttachment('test-site', 2)).not.toBeNull();
+    expect(db.getLibraryOverview('test-site').totalAttachments).toBe(1);
+
+    db.close();
+  });
+
+  test('returns 0 when nothing is stale', () => {
+    const db = createTestDb();
+    db.upsertAttachment({
+      siteName: 'test-site',
+      wpId: 1,
+      sourceUrl: 'https://example.test/img.jpg',
+      sourceHash: null,
+      sizeBytes: 100,
+      width: null,
+      height: null,
+      mimeType: 'image/jpeg',
+      lastSeenAt: 5000,
+    });
+
+    expect(db.pruneStaleAttachments('test-site', 1000)).toBe(0);
+    db.close();
+  });
+});
+
 describe('listProcessedWpIds', () => {
   test('returns IDs with successful processing history', () => {
     const db = createTestDb();
@@ -466,6 +522,80 @@ describe('listProcessedWpIds', () => {
     expect(processed.has(1)).toBe(true);
     expect(processed.has(2)).toBe(false);
     expect(processed.has(3)).toBe(true);
+
+    db.close();
+  });
+});
+
+describe('failure recording FK-safety (regression for #96)', () => {
+  test('recordProcessing throws when no attachments row exists for the wpId', () => {
+    // Documents the hazard: PRAGMA foreign_keys=ON (schema.ts) rejects a
+    // processing_history row whose wpId has no corresponding attachments row.
+    // Bulk commands must never call recordProcessing directly in a failure
+    // path without first ensuring the attachment row exists.
+    const db = createTestDb();
+
+    expect(() =>
+      db.recordProcessing({
+        siteName: 'test-site',
+        wpId: 999,
+        operation: 'remove-bg',
+        paramsJson: null,
+        sourceHash: null,
+        resultHash: null,
+        bytesBefore: null,
+        bytesAfter: null,
+        resultWpId: null,
+        ranAt: Date.now(),
+        durationMs: null,
+        status: 'failure',
+        errorMessage: 'getMedia failed: 404',
+      }),
+    ).toThrow();
+
+    db.close();
+  });
+
+  test('upsertAttachment (nulled fields) before recordProcessing records a failure without throwing', () => {
+    // Mirrors the catch-block sequence in remove-bg.ts / caption.ts: when
+    // getMedia() fails before any attachments row exists, upsert a
+    // placeholder attachment first so the FK is satisfied, then record the
+    // failure.
+    const db = createTestDb();
+    const now = Date.now();
+
+    expect(() => {
+      db.upsertAttachment({
+        siteName: 'test-site',
+        wpId: 999,
+        sourceUrl: '',
+        sourceHash: null,
+        sizeBytes: null,
+        width: null,
+        height: null,
+        mimeType: null,
+        lastSeenAt: now,
+      });
+      db.recordProcessing({
+        siteName: 'test-site',
+        wpId: 999,
+        operation: 'remove-bg',
+        paramsJson: null,
+        sourceHash: null,
+        resultHash: null,
+        bytesBefore: null,
+        bytesAfter: null,
+        resultWpId: null,
+        ranAt: now,
+        durationMs: 50,
+        status: 'failure',
+        errorMessage: 'getMedia failed: 404',
+      });
+    }).not.toThrow();
+
+    const record = db.getLastProcessing('test-site', 999);
+    expect(record?.status).toBe('failure');
+    expect(record?.errorMessage).toBe('getMedia failed: 404');
 
     db.close();
   });

@@ -13,7 +13,26 @@ import { SiteDb } from '../../engine/state/db.ts';
 import type { MediaBrowserAction } from '../components/MediaBrowser.tsx';
 import { parseIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { buildDispatchArgs } from '../utils/dispatch.ts';
 import { error, info, printJson } from '../utils/output.ts';
+
+/**
+ * Fetch a page, falling back to page 1 if a page > 1 fails (e.g. the
+ * library shrank or filters changed since the page was persisted, so the
+ * previously-saved page is now out of range). A failure at page 1 rethrows —
+ * that's a real error (auth/network), not a stale-page problem.
+ */
+export async function fetchPageWithFallback<T>(
+  fetchPage: (page: number) => Promise<T>,
+  page: number,
+): Promise<{ result: T; page: number }> {
+  try {
+    return { result: await fetchPage(page), page };
+  } catch (err) {
+    if (page <= 1) throw err;
+    return { result: await fetchPage(1), page: 1 };
+  }
+}
 
 export function registerListCommand(program: Command): void {
   program
@@ -138,7 +157,17 @@ export function registerListCommand(program: Command): void {
           );
 
           try {
-            result = await adapter.listMediaPage({ ...filters, page: interactivePage });
+            const fetched = await fetchPageWithFallback(
+              (page) => adapter.listMediaPage({ ...filters, page }),
+              interactivePage,
+            );
+            result = fetched.result;
+            if (fetched.page !== interactivePage) {
+              // Saved/requested page was out of range (library shrank, filters changed) — reset once.
+              interactivePage = fetched.page;
+              interactiveCursor = 0;
+              saveBrowserPosition(interactivePage, 0);
+            }
           } catch (err) {
             spinner.unmount();
             error(err instanceof Error ? err.message : String(err));
@@ -257,71 +286,7 @@ export function registerListCommand(program: Command): void {
             continue;
           }
 
-          let subCmd: string;
-          let extraArgs: string[] = [];
-          let targetIds: string[] = [];
-
-          switch (pendingAction.type) {
-            case 'optimize':
-              subCmd = 'optimize';
-              targetIds = [String(pendingAction.id)];
-              if (pendingAction.quality !== undefined)
-                extraArgs.push('--quality', String(pendingAction.quality));
-              if (pendingAction.to) extraArgs.push('--to', pendingAction.to);
-              if (pendingAction.keepOriginal) extraArgs.push('--keep-original');
-              if (pendingAction.preview) extraArgs.push('--preview');
-              break;
-            case 'bulk-optimize':
-              subCmd = 'optimize';
-              targetIds = pendingAction.ids.map(String);
-              if (pendingAction.quality !== undefined)
-                extraArgs.push('--quality', String(pendingAction.quality));
-              if (pendingAction.to) extraArgs.push('--to', pendingAction.to);
-              extraArgs.push('--apply');
-              break;
-            case 'remove-bg':
-              subCmd = 'remove-bg';
-              targetIds = [String(pendingAction.id)];
-              if (pendingAction.preview) extraArgs.push('--preview');
-              break;
-            case 'bulk-remove-bg':
-              subCmd = 'remove-bg';
-              targetIds = pendingAction.ids.map(String);
-              extraArgs.push('--apply');
-              break;
-            case 'caption':
-              subCmd = 'caption';
-              targetIds = [String(pendingAction.id)];
-              break;
-            case 'convert':
-              subCmd = 'convert';
-              targetIds = [String(pendingAction.id)];
-              extraArgs = ['--to', pendingAction.to];
-              if (pendingAction.quality !== undefined)
-                extraArgs.push('--quality', String(pendingAction.quality));
-              break;
-            case 'bulk-convert':
-              subCmd = 'convert';
-              targetIds = pendingAction.ids.map(String);
-              extraArgs = ['--to', pendingAction.to];
-              extraArgs.push('--apply');
-              break;
-            case 'resize':
-              subCmd = 'resize';
-              targetIds = [String(pendingAction.id)];
-              if (pendingAction.maxWidth)
-                extraArgs.push('--max-width', String(pendingAction.maxWidth));
-              if (pendingAction.maxHeight)
-                extraArgs.push('--max-height', String(pendingAction.maxHeight));
-              break;
-            case 'bulk-pull':
-              subCmd = 'pull';
-              targetIds = pendingAction.ids.map(String);
-              break;
-            default:
-              subCmd = 'edit';
-              targetIds = ['id' in pendingAction ? String(pendingAction.id) : '0'];
-          }
+          const { subCmd, targetIds, extraArgs } = buildDispatchArgs(pendingAction);
 
           // Spawn the subcommand with all target IDs.
           const cmdArgs = isDevMode(process.argv, process.execPath)
@@ -377,24 +342,7 @@ export function registerListCommand(program: Command): void {
             lastProcessedId = 'id' in pendingAction ? pendingAction.id : null;
           }
 
-          // Store the ID of the item that was just processed so we can
-          // refresh it after the next page fetch (bypasses REST API cache).
-          const justProcessedId =
-            processingTypes.has(pendingAction.type) && 'id' in pendingAction
-              ? pendingAction.id
-              : null;
-
           process.stdout.write('\x1b[2J\x1b[H');
-
-          // The loop will re-fetch the page at the top. After that fetch,
-          // we patch the specific item with a fresh getMedia() call to ensure
-          // we show updated metadata (mimeType, sizeBytes, dimensions) even
-          // if WordPress's REST API returns a cached page response.
-          if (justProcessedId !== null) {
-            // We'll handle this at the top of the next loop iteration.
-            // Store it in a variable accessible to the next iteration.
-            // (We use a closure variable declared outside the loop.)
-          }
         }
 
         return;

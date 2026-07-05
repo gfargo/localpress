@@ -9,9 +9,10 @@
  */
 
 import type { Command } from 'commander';
+import { ExitCode } from '../../types.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
-import { info, printJson } from '../utils/output.ts';
+import { error, info, printJson } from '../utils/output.ts';
 
 const GENERIC_LINK_TEXTS = new Set([
   'click here',
@@ -38,6 +39,150 @@ interface A11yFinding {
   element?: string;
 }
 
+interface A11yError {
+  postType: string;
+  url: string;
+  status?: number;
+  message?: string;
+}
+
+export interface A11yScanOptions {
+  baseUrl: string;
+  auth: string;
+  types: string[];
+  id?: number;
+  status: string;
+  limit: number;
+}
+
+export interface A11yScanResult {
+  postsChecked: number;
+  findings: A11yFinding[];
+  errors: A11yError[];
+  truncated: string[];
+  complete: boolean;
+}
+
+/**
+ * Fetch and analyze posts/pages for a site. Extracted from the command
+ * action so it can be exercised directly in tests with a mocked fetch.
+ */
+export async function runA11yScan(scanOptions: A11yScanOptions): Promise<A11yScanResult> {
+  const { baseUrl, auth, types, id, status, limit } = scanOptions;
+
+  const findings: A11yFinding[] = [];
+  const errors: A11yError[] = [];
+  const idModeResults: Record<string, boolean> = {};
+  const truncatedTypes: string[] = [];
+  let postsChecked = 0;
+
+  for (const postType of types) {
+    if (id) {
+      // Single post mode.
+      const url = `${baseUrl}/wp-json/wp/v2/${postType}/${id}?context=edit`;
+      try {
+        const res = await fetch(url, { headers: { Authorization: auth } });
+        if (!res.ok) {
+          // Might just be the wrong post type for this ID — only report
+          // as an error if no post type succeeds for this ID.
+          errors.push({ postType, url, status: res.status });
+          idModeResults[postType] = false;
+          continue;
+        }
+        idModeResults[postType] = true;
+        const post = (await res.json()) as {
+          id: number;
+          title: { rendered: string };
+          content: { rendered: string };
+        };
+        postsChecked++;
+        analyzePost(
+          post.id,
+          post.title.rendered.replace(/<[^>]*>/g, ''),
+          post.content.rendered,
+          findings,
+        );
+      } catch (err) {
+        errors.push({
+          postType,
+          url,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        idModeResults[postType] = false;
+      }
+      continue;
+    }
+
+    // Paginate through posts.
+    let page = 1;
+    let limitReached = false;
+    while (postsChecked < limit) {
+      const perPage = Math.min(20, limit - postsChecked);
+      const params = new URLSearchParams({
+        per_page: String(perPage),
+        page: String(page),
+        status,
+        _fields: 'id,title,content',
+      });
+
+      const url = `${baseUrl}/wp-json/wp/v2/${postType}?${params}`;
+      try {
+        const res = await fetch(url, { headers: { Authorization: auth } });
+        if (!res.ok) {
+          errors.push({ postType, url, status: res.status });
+          break;
+        }
+
+        const posts = (await res.json()) as Array<{
+          id: number;
+          title: { rendered: string };
+          content: { rendered: string };
+        }>;
+        if (posts.length === 0) break;
+
+        for (const post of posts) {
+          postsChecked++;
+          const title = post.title.rendered.replace(/<[^>]*>/g, '');
+          analyzePost(post.id, title, post.content.rendered, findings);
+        }
+
+        const totalPages = Number.parseInt(res.headers.get('X-WP-TotalPages') ?? '1', 10);
+        if (page >= totalPages) break;
+        if (postsChecked >= limit) {
+          limitReached = true;
+          break;
+        }
+        page++;
+      } catch (err) {
+        errors.push({
+          postType,
+          url,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        break;
+      }
+    }
+
+    if (limitReached) truncatedTypes.push(postType);
+  }
+
+  // In --id mode, a 404/error for one post type isn't a real error if
+  // another post type successfully found the post.
+  const filteredErrors = id
+    ? errors.filter(() => !Object.values(idModeResults).some(Boolean))
+    : errors;
+
+  const complete = filteredErrors.length === 0 && truncatedTypes.length === 0;
+
+  return {
+    postsChecked,
+    findings,
+    errors: filteredErrors,
+    truncated: truncatedTypes,
+    complete,
+  };
+}
+
 export function registerA11yCommand(program: Command): void {
   program
     .command('a11y')
@@ -62,72 +207,22 @@ export function registerA11yCommand(program: Command): void {
             ? ['pages']
             : ['posts', 'pages'];
 
-      const findings: A11yFinding[] = [];
-      let postsChecked = 0;
       const limit = options.limit ?? 100;
 
-      for (const postType of types) {
-        if (options.id) {
-          // Single post mode.
-          const url = `${baseUrl}/wp-json/wp/v2/${postType}/${options.id}?context=edit`;
-          try {
-            const res = await fetch(url, { headers: { Authorization: auth } });
-            if (!res.ok) continue; // might be wrong type
-            const post = (await res.json()) as {
-              id: number;
-              title: { rendered: string };
-              content: { rendered: string };
-            };
-            postsChecked++;
-            analyzePost(
-              post.id,
-              post.title.rendered.replace(/<[^>]*>/g, ''),
-              post.content.rendered,
-              findings,
-            );
-          } catch {
-            /* skip */
-          }
-          continue;
-        }
-
-        // Paginate through posts.
-        let page = 1;
-        while (postsChecked < limit) {
-          const perPage = Math.min(20, limit - postsChecked);
-          const params = new URLSearchParams({
-            per_page: String(perPage),
-            page: String(page),
-            status: options.status,
-            _fields: 'id,title,content',
-          });
-
-          const url = `${baseUrl}/wp-json/wp/v2/${postType}?${params}`;
-          try {
-            const res = await fetch(url, { headers: { Authorization: auth } });
-            if (!res.ok) break;
-
-            const posts = (await res.json()) as Array<{
-              id: number;
-              title: { rendered: string };
-              content: { rendered: string };
-            }>;
-            if (posts.length === 0) break;
-
-            for (const post of posts) {
-              postsChecked++;
-              const title = post.title.rendered.replace(/<[^>]*>/g, '');
-              analyzePost(post.id, title, post.content.rendered, findings);
-            }
-
-            const totalPages = Number.parseInt(res.headers.get('X-WP-TotalPages') ?? '1', 10);
-            if (page >= totalPages) break;
-            page++;
-          } catch {
-            break;
-          }
-        }
-      }
+      const {
+        postsChecked,
+        findings,
+        errors: filteredErrors,
+        truncated: truncatedTypes,
+        complete,
+      } = await runA11yScan({
+        baseUrl,
+        auth,
+        types,
+        id: options.id,
+        status: options.status,
+        limit,
+      });
 
       // Build summary.
       const summary = {
@@ -139,14 +234,45 @@ export function registerA11yCommand(program: Command): void {
       };
 
       if (parentOpts.json) {
-        printJson({ site: site.name, postsChecked, findings, summary });
+        printJson({
+          site: site.name,
+          postsChecked,
+          findings,
+          summary,
+          errors: filteredErrors,
+          truncated: truncatedTypes,
+          complete,
+        });
+        if (filteredErrors.length > 0) process.exitCode = ExitCode.NetworkError;
         return;
       }
 
       info(`Accessibility audit — ${postsChecked} post(s) checked on '${site.name}':\n`);
 
+      if (filteredErrors.length > 0) {
+        error(`Scan encountered ${filteredErrors.length} error(s):`);
+        for (const e of filteredErrors) {
+          const reason = e.status ? `HTTP ${e.status}` : (e.message ?? 'unknown error');
+          error(`  [${e.postType}] ${e.url} — ${reason}`);
+        }
+        info('');
+
+        if (postsChecked === 0) {
+          info('  0 post(s) checked — all requests failed. See errors above.');
+        }
+
+        process.exitCode = ExitCode.NetworkError;
+        return;
+      }
+
       if (findings.length === 0) {
-        info('  No accessibility issues found. Nice work!');
+        if (truncatedTypes.length > 0) {
+          info(
+            `  No issues found in the posts checked (scan incomplete — reached --limit before all pages were checked for: ${truncatedTypes.join(', ')}).`,
+          );
+        } else {
+          info('  No accessibility issues found. Nice work!');
+        }
         return;
       }
 
@@ -186,6 +312,12 @@ export function registerA11yCommand(program: Command): void {
       info(`  Total findings: ${findings.length}`);
       info('  Fix generic link text by making links descriptive of their destination.');
       info('  Fix heading hierarchy by ensuring no levels are skipped (h1 → h2 → h3).');
+
+      if (truncatedTypes.length > 0) {
+        info(
+          `\n  Scan incomplete — reached --limit before all pages were checked for: ${truncatedTypes.join(', ')}.`,
+        );
+      }
     });
 }
 

@@ -7,6 +7,8 @@
 
 import { readFileSync } from 'node:fs';
 import type { Command } from 'commander';
+import { ExitCode } from '../../types.ts';
+import type { SiteConfig } from '../../types.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -74,20 +76,67 @@ function mapPostDetail(raw: WpPost): PostDetail {
   };
 }
 
+/**
+ * Raised when a post type's REST route cannot be resolved (unknown type,
+ * or a type that exists but isn't exposed via the REST API).
+ */
+export class PostTypeError extends Error {
+  constructor(
+    message: string,
+    readonly exitCode: ExitCode = ExitCode.NetworkError,
+  ) {
+    super(message);
+  }
+}
+
+const typeEndpointCache = new Map<string, string>();
+
+/**
+ * Resolve a post type slug to its REST API endpoint path.
+ * WordPress exposes custom post types at /wp-json/wp/v2/<rest_base> when
+ * show_in_rest is true — rest_base does not always equal the type slug
+ * (e.g. `portfolio_project` may register with `rest_base: 'portfolio'`).
+ * Built-in types ('post', 'page') are hardcoded to skip the lookup.
+ */
+export async function resolveTypeEndpoint(site: SiteConfig, type: string): Promise<string> {
+  if (type === 'post') return '/posts';
+  if (type === 'page') return '/pages';
+
+  const cached = typeEndpointCache.get(type);
+  if (cached) return cached;
+
+  const auth = `Basic ${btoa(`${site.username}:${site.appPassword}`)}`;
+  const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2/types/${type}`;
+  const res = await fetch(url, { headers: { Authorization: auth } });
+
+  if (res.status === 404) {
+    throw new PostTypeError(
+      `Post type "${type}" was not found on this site. Check the slug with \`localpress posts list --type <slug>\` or your CPT registration.`,
+      ExitCode.InvalidUsage,
+    );
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new PostTypeError(
+      `WordPress API error resolving post type "${type}": ${res.status} — ${body.slice(0, 200)}`,
+    );
+  }
+
+  const data = (await res.json()) as { rest_base?: string; show_in_rest?: boolean };
+  if (data.show_in_rest === false) {
+    throw new PostTypeError(
+      `Post type "${type}" is not exposed in the REST API (show_in_rest=false) — it cannot be managed via localpress.`,
+      ExitCode.CapabilityUnavailable,
+    );
+  }
+
+  const endpoint = `/${data.rest_base || type}`;
+  typeEndpointCache.set(type, endpoint);
+  return endpoint;
+}
+
 export function registerPostsCommand(program: Command): void {
   const posts = program.command('posts').description('Manage WordPress posts and pages');
-
-  /**
-   * Map a post type slug to its REST API endpoint path.
-   * WordPress exposes custom post types at /wp-json/wp/v2/<slug> when show_in_rest is true.
-   * Built-in types: 'post' → '/posts', 'page' → '/pages'.
-   * Custom types: 'portfolio' → '/portfolio', 'event' → '/event', etc.
-   */
-  function typeEndpoint(type: string): string {
-    if (type === 'post') return '/posts';
-    if (type === 'page') return '/pages';
-    return `/${type}`;
-  }
 
   // -- posts list -------------------------------------------------------------
   posts
@@ -111,7 +160,6 @@ export function registerPostsCommand(program: Command): void {
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
 
-      const endpoint = typeEndpoint(options.type);
       const params = new URLSearchParams();
       params.set('per_page', String(Math.min(options.perPage ?? 20, 100)));
       params.set('page', String(options.page ?? 1));
@@ -122,10 +170,11 @@ export function registerPostsCommand(program: Command): void {
       if (options.search) params.set('search', options.search);
       if (options.category) params.set('categories', String(options.category));
 
-      const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}?${params}`;
       const auth = `Basic ${btoa(`${site.username}:${site.appPassword}`)}`;
 
       try {
+        const endpoint = await resolveTypeEndpoint(site, options.type);
+        const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}?${params}`;
         const res = await fetch(url, { headers: { Authorization: auth } });
         if (!res.ok) {
           const body = await res.text().catch(() => '');
@@ -158,6 +207,10 @@ export function registerPostsCommand(program: Command): void {
           info(`\nNext page: localpress posts list --page ${(options.page ?? 1) + 1}`);
         }
       } catch (err) {
+        if (err instanceof PostTypeError) {
+          error(err.message);
+          process.exit(err.exitCode);
+        }
         error(err instanceof Error ? err.message : String(err));
         process.exit(4);
       }
@@ -179,11 +232,11 @@ export function registerPostsCommand(program: Command): void {
         process.exit(2);
       }
 
-      const endpoint = typeEndpoint(options.type);
-      const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}/${id}?context=edit`;
       const auth = `Basic ${btoa(`${site.username}:${site.appPassword}`)}`;
 
       try {
+        const endpoint = await resolveTypeEndpoint(site, options.type);
+        const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}/${id}?context=edit`;
         const res = await fetch(url, { headers: { Authorization: auth } });
         if (!res.ok) {
           const body = await res.text().catch(() => '');
@@ -213,6 +266,10 @@ export function registerPostsCommand(program: Command): void {
         if (post.excerpt) info(`  Excerpt: ${post.excerpt.slice(0, 200)}...`);
         info(`  Content length: ${post.content.length} chars`);
       } catch (err) {
+        if (err instanceof PostTypeError) {
+          error(err.message);
+          process.exit(err.exitCode);
+        }
         error(err instanceof Error ? err.message : String(err));
         process.exit(4);
       }
@@ -251,8 +308,6 @@ export function registerPostsCommand(program: Command): void {
         }
       }
 
-      const endpoint = typeEndpoint(options.type);
-      const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}`;
       const auth = `Basic ${btoa(`${site.username}:${site.appPassword}`)}`;
 
       const body: Record<string, unknown> = {
@@ -267,6 +322,8 @@ export function registerPostsCommand(program: Command): void {
       if (options.tag) body.tags = options.tag.split(',').map(Number);
 
       try {
+        const endpoint = await resolveTypeEndpoint(site, options.type);
+        const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}`;
         const res = await fetch(url, {
           method: 'POST',
           headers: { Authorization: auth, 'Content-Type': 'application/json' },
@@ -290,6 +347,10 @@ export function registerPostsCommand(program: Command): void {
         info(`✓ Created ${options.type} #${post.id}: "${post.title}" [${post.status}]`);
         info(`  Link: ${post.link}`);
       } catch (err) {
+        if (err instanceof PostTypeError) {
+          error(err.message);
+          process.exit(err.exitCode);
+        }
         error(err instanceof Error ? err.message : String(err));
         process.exit(4);
       }
@@ -334,8 +395,6 @@ export function registerPostsCommand(program: Command): void {
         }
       }
 
-      const endpoint = typeEndpoint(options.type);
-      const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}/${id}`;
       const auth = `Basic ${btoa(`${site.username}:${site.appPassword}`)}`;
 
       // Use !== undefined so an explicit empty string (e.g. --excerpt "") can
@@ -364,6 +423,8 @@ export function registerPostsCommand(program: Command): void {
       }
 
       try {
+        const endpoint = await resolveTypeEndpoint(site, options.type);
+        const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}/${id}`;
         const res = await fetch(url, {
           method: 'POST',
           headers: { Authorization: auth, 'Content-Type': 'application/json' },
@@ -386,6 +447,10 @@ export function registerPostsCommand(program: Command): void {
 
         info(`✓ Updated ${options.type} #${post.id}: "${post.title}" [${post.status}]`);
       } catch (err) {
+        if (err instanceof PostTypeError) {
+          error(err.message);
+          process.exit(err.exitCode);
+        }
         error(err instanceof Error ? err.message : String(err));
         process.exit(4);
       }
@@ -418,12 +483,12 @@ export function registerPostsCommand(program: Command): void {
         return;
       }
 
-      const endpoint = typeEndpoint(options.type);
       const params = options.force ? '?force=true' : '';
-      const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}/${id}${params}`;
       const auth = `Basic ${btoa(`${site.username}:${site.appPassword}`)}`;
 
       try {
+        const endpoint = await resolveTypeEndpoint(site, options.type);
+        const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}/${id}${params}`;
         const res = await fetch(url, {
           method: 'DELETE',
           headers: { Authorization: auth },
@@ -442,6 +507,10 @@ export function registerPostsCommand(program: Command): void {
 
         info(`✓ ${options.force ? 'Permanently deleted' : 'Trashed'} ${options.type} #${id}`);
       } catch (err) {
+        if (err instanceof PostTypeError) {
+          error(err.message);
+          process.exit(err.exitCode);
+        }
         error(err instanceof Error ? err.message : String(err));
         process.exit(4);
       }

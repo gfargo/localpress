@@ -147,8 +147,8 @@ Examples:
   $ localpress references 1234                   # show where attachment 1234 is used
 
 Documentation:
-  Full v1 plan:        docs/v1-plan.md
-  Competitive brief:   docs/competitive-brief.md
+  Docs & website:      https://localpress.griffen.codes
+  MCP tool reference:  README.md
   Issues & feedback:   https://github.com/gfargo/localpress/issues
 `,
 );

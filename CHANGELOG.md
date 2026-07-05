@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`sites run` forwards `--apply`/`--dry-run`/`--strict` to child processes**
+  (#104). Previously these parent-level flags were silently dropped, so bulk
+  ops ran as no-op dry-runs while the parent reported success.
+- **`sites run` tokenizer no longer drops empty quoted arguments or treats
+  mid-word apostrophes as quotes** (#104) — `--alt-text ""` is preserved and
+  `don't-stop` is no longer mangled into `dont-stop`.
+- **`sites run` children get a 30-minute default timeout** (#104), separate
+  from the 5-minute MCP-tool-call default, and are now escalated to `SIGKILL`
+  if they don't exit within a grace period after `SIGTERM`. Configurable via
+  `--timeout <ms>`.
+- **`update` verifies the downloaded tarball's SHA256 checksum before
+  extracting** (#121) — the release workflow now publishes a `checksums.txt`
+  asset; `update` downloads it alongside the archive and hard-fails if the
+  digest doesn't match or `checksums.txt` is missing from the release. Any
+  non-`https:` download URL is rejected outright.
+- **`update`'s install swap is now atomic** (#121) — the new install is staged
+  in a sibling directory and swapped into place with two `rename()` calls
+  (`targetDir → backup`, `staging → targetDir`) instead of deleting the old
+  install and copying over it, so a crash mid-update can't leave a broken
+  install. On failure after the first rename, the backup is renamed back.
+- **`a11y` no longer reports a false "No accessibility issues found" success**
+  when the scan failed or was truncated (#103). HTTP/network errors during
+  pagination or `--id` lookups are now recorded and surfaced (human output +
+  `errors: []` in `--json`), and the command exits with `ExitCode.NetworkError`
+  instead of `0`. Hitting `--limit` before all pages are checked is now
+  reported as an incomplete scan rather than silently treated as exhaustive.
+  `--json` output adds `errors` and `complete` fields (additive).
+
 ## [2.1.0] - 2026-07-05
 
 Trust & correctness release — hardens the safety primitives (dry-run, undo,

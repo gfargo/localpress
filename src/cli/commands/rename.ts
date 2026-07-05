@@ -33,6 +33,7 @@ import {
 import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 interface RenameResult {
   id: number;
@@ -60,9 +61,9 @@ export function registerRenameCommand(program: Command): void {
       `Ollama base URL (default: ${DEFAULT_OLLAMA_URL})`,
       DEFAULT_OLLAMA_URL,
     )
-    .option('--dry-run', "show what would change but don't write to WordPress")
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
+      const dryRun = resolveDryRun(parentOpts, false);
       const ids = idStrs.map((s) => Number.parseInt(s, 10));
       if (ids.some(Number.isNaN)) {
         error('All arguments must be valid attachment IDs (integers).');
@@ -103,7 +104,7 @@ export function registerRenameCommand(program: Command): void {
       const historyConfig = resolveHistoryConfig(config.history);
       const snapshotStore = openSnapshotStore(db, getConfigDir());
       const session =
-        historyConfig.enabled && !options.dryRun
+        historyConfig.enabled && !dryRun
           ? openHistorySession(snapshotStore, site.name, 'rename', {
               mode: options.smart ? 'smart' : 'explicit',
               to: options.to ?? null,
@@ -171,7 +172,7 @@ export function registerRenameCommand(program: Command): void {
             lastSeenAt: Date.now(),
           });
 
-          if (!options.dryRun) {
+          if (!dryRun) {
             if (session) {
               captureSnapshot(snapshotStore, {
                 siteName: site.name,
@@ -192,7 +193,7 @@ export function registerRenameCommand(program: Command): void {
             await metaAdapter.updateMetadata(id, { slug: newSlug });
           }
 
-          info(`    ✓ slug: ${previousSlug} → ${newSlug}${options.dryRun ? ' (dry-run)' : ''}`);
+          info(`    ✓ slug: ${previousSlug} → ${newSlug}${dryRun ? ' (dry-run)' : ''}`);
 
           results.push({
             id,
@@ -219,7 +220,7 @@ export function registerRenameCommand(program: Command): void {
 
       if (parentOpts.json) {
         printJson({
-          dryRun: Boolean(options.dryRun),
+          dryRun,
           renamed: results.filter((r) => !r.skipped).length,
           skipped: results.filter((r) => r.skipped).length,
           failures,
@@ -230,7 +231,7 @@ export function registerRenameCommand(program: Command): void {
         info(
           `  Done: ${results.filter((r) => !r.skipped).length} renamed, ${results.filter((r) => r.skipped).length} skipped, ${failures} failed.`,
         );
-        if (!options.dryRun && results.some((r) => !r.skipped)) {
+        if (!dryRun && results.some((r) => !r.skipped)) {
           info(
             '  Note: slug changes affect permalinks only — the underlying file URL is unchanged.',
           );
