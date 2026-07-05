@@ -21,6 +21,7 @@ import {
 import { preflightOllama } from '../../engine/caption/run-bulk.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson } from '../utils/output.ts';
 
 export type ImageClass = 'screenshot' | 'photo' | 'illustration' | 'diagram' | 'unknown';
@@ -49,11 +50,7 @@ export function registerClassifyCommand(program: Command): void {
     )
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
-      const ids = idStrs.map((s) => Number.parseInt(s, 10));
-      if (ids.some(Number.isNaN)) {
-        error('All arguments must be valid attachment IDs (integers).');
-        process.exit(2);
-      }
+      const ids = parseAttachmentIds(idStrs);
 
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);

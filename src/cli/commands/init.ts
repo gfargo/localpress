@@ -13,7 +13,7 @@
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { SiteConfig } from '../../types.ts';
-import { loadConfig, saveConfig } from '../utils/config.ts';
+import { isValidSiteName, loadConfig, mergeSiteConfig, saveConfig } from '../utils/config.ts';
 import { error, info, warn } from '../utils/output.ts';
 
 export function registerInitCommand(program: Command): void {
@@ -31,16 +31,20 @@ export function registerInitCommand(program: Command): void {
       // Try Ink wizard for interactive mode.
       if (isInteractive && !options.url) {
         try {
+          const parentOpts = program.opts();
+          const targetName = options.name ?? parentOpts.site;
+          const existingSite = targetName ? (await loadConfig()).sites[targetName] : undefined;
+
           const { render } = await import('ink');
           const React = await import('react');
           const { InitWizard } = await import('../components/InitWizard.tsx');
 
           const { waitUntilExit } = render(
             React.createElement(InitWizard, {
-              initialUrl: options.url,
-              initialName: options.name,
-              initialUsername: options.username,
-              initialPassword: options.appPassword,
+              initialUrl: options.url ?? existingSite?.url,
+              initialName: options.name ?? existingSite?.name,
+              initialUsername: options.username ?? existingSite?.username,
+              initialPassword: options.appPassword ?? existingSite?.appPassword,
             }),
           );
 
@@ -77,6 +81,13 @@ export function registerInitCommand(program: Command): void {
         siteName = new URL(siteUrl).hostname;
       }
 
+      if (!isValidSiteName(siteName)) {
+        error(
+          `Invalid site name '${siteName}'. Use only letters, numbers, '.', '_' and '-' (pass --name to override the hostname-derived default).`,
+        );
+        process.exit(2);
+      }
+
       // Test the connection.
       info(`Testing connection to ${siteUrl}...`);
 
@@ -110,18 +121,20 @@ export function registerInitCommand(program: Command): void {
 
       // Save config.
       const config = await loadConfig();
+      const existing = config.sites[siteName];
 
-      if (config.sites[siteName]) {
-        warn(`Site '${siteName}' already exists and will be updated.`);
+      if (existing) {
+        warn(
+          `Site '${siteName}' already exists and will be updated (SSH config, if any, is preserved).`,
+        );
       }
 
-      const siteConfig: SiteConfig = {
+      const siteConfig: SiteConfig = mergeSiteConfig(existing, {
         name: siteName,
         url: siteUrl,
         username,
         appPassword,
-        createdAt: new Date().toISOString(),
-      };
+      });
 
       config.sites[siteName] = siteConfig;
       if (!config.activeSite) {

@@ -7,12 +7,14 @@
  * See docs/v1-plan.md §4 "Backend adapters" for the contract.
  */
 
+import { warn } from '../cli/utils/output.ts';
 import type { SiteConfig } from '../types.ts';
 import type {
   Capability,
   ListFilters,
   MediaItem,
   MediaSize,
+  PagedResult,
   PruneResult,
   Reference,
   ReferenceScope,
@@ -20,7 +22,14 @@ import type {
   UploadMetadata,
   WpBackend,
 } from './types.ts';
-import { CapabilityUnavailableError } from './types.ts';
+import { CapabilityUnavailableError, WpApiError } from './types.ts';
+
+/**
+ * Cap on how many pages we'll fetch to compute a global size sort. At
+ * per_page=100 this covers a 2,000-item library; beyond that we sort the
+ * subset we have and warn rather than silently returning a wrong result.
+ */
+const MAX_SIZE_SORT_PAGES = 20;
 
 /**
  * Capabilities supported by the REST adapter. Notably absent:
@@ -95,8 +104,9 @@ export class RestAdapter implements WpBackend {
       } catch {
         wpMessage = body.slice(0, 200);
       }
-      throw new Error(
+      throw new WpApiError(
         `WordPress REST API error: ${response.status} ${response.statusText}${wpMessage ? ` — ${wpMessage}` : ''} (${init?.method ?? 'GET'} ${url})`,
+        response.status,
       );
     }
 
@@ -105,8 +115,9 @@ export class RestAdapter implements WpBackend {
     try {
       data = JSON.parse(text) as T;
     } catch {
-      throw new Error(
+      throw new WpApiError(
         `WordPress REST API: expected JSON but got ${response.status} ${response.headers.get('content-type') ?? 'unknown content-type'} (${init?.method ?? 'GET'} ${response.url})\nBody: ${text.slice(0, 500)}`,
+        response.status,
       );
     }
     return { data, headers: response.headers };
@@ -115,6 +126,15 @@ export class RestAdapter implements WpBackend {
   // Discovery -----------------------------------------------------------------
 
   async listMedia(filters: ListFilters): Promise<MediaItem[]> {
+    if (filters.sortBy === 'size') {
+      const { items } = await this.fetchAllForSizeSort(filters);
+      const sorted = applySizeSort(items, filters);
+      const perPage = filters.perPage ?? 20;
+      const page = filters.page ?? 1;
+      const start = (page - 1) * perPage;
+      return sorted.slice(start, start + perPage);
+    }
+
     const params: Record<string, string | number> = {
       per_page: filters.perPage ?? 20,
       page: filters.page ?? 1,
@@ -123,11 +143,28 @@ export class RestAdapter implements WpBackend {
 
     applyCommonFilters(params, filters);
     const raw = await this.request<WpMediaResponse[]>(this.apiUrl('/media', params));
-    const items = raw.map(mapWpMediaToItem);
-    return applySizeSort(items, filters);
+    return raw.map(mapWpMediaToItem);
   }
 
-  async listMediaPage(filters: ListFilters): Promise<import('./types.ts').PagedResult<MediaItem>> {
+  async listMediaPage(filters: ListFilters): Promise<PagedResult<MediaItem>> {
+    if (filters.sortBy === 'size') {
+      const { items, total, truncated } = await this.fetchAllForSizeSort(filters);
+      if (truncated) {
+        warn(
+          `Sorting by size across the first ${items.length} of ${total} items (library too large to sort exhaustively); the true largest/smallest file outside that range won't be shown.`,
+        );
+      }
+      const sorted = applySizeSort(items, filters);
+      const perPage = Math.min(filters.perPage ?? 50, 100);
+      const page = filters.page ?? 1;
+      const start = (page - 1) * perPage;
+      return {
+        items: sorted.slice(start, start + perPage),
+        total,
+        totalPages: Math.ceil(total / perPage),
+      };
+    }
+
     const params: Record<string, string | number> = {
       per_page: Math.min(filters.perPage ?? 50, 100),
       page: filters.page ?? 1,
@@ -140,8 +177,41 @@ export class RestAdapter implements WpBackend {
     );
     const total = Number.parseInt(headers.get('X-WP-Total') ?? '0', 10);
     const totalPages = Number.parseInt(headers.get('X-WP-TotalPages') ?? '1', 10);
-    const items = applySizeSort(data.map(mapWpMediaToItem), filters);
+    const items = data.map(mapWpMediaToItem);
     return { items, total, totalPages };
+  }
+
+  /**
+   * Fetch up to MAX_SIZE_SORT_PAGES pages of the filtered media collection so
+   * size sort can be computed globally instead of within one page. Bounded
+   * because there's no server-side `orderby=size`.
+   */
+  private async fetchAllForSizeSort(
+    filters: ListFilters,
+  ): Promise<{ items: MediaItem[]; total: number; truncated: boolean }> {
+    const perPage = 100;
+    const params: Record<string, string | number> = {
+      per_page: perPage,
+      page: 1,
+      orderby: 'date',
+      order: 'desc',
+    };
+    applyCommonFilters(params, filters);
+
+    const first = await this.requestRaw<WpMediaResponse[]>(this.apiUrl('/media', params));
+    const total = Number.parseInt(first.headers.get('X-WP-Total') ?? '0', 10);
+    const totalPages = Number.parseInt(first.headers.get('X-WP-TotalPages') ?? '1', 10);
+    const maxPages = Math.min(totalPages, MAX_SIZE_SORT_PAGES);
+
+    const items = first.data.map(mapWpMediaToItem);
+    for (let page = 2; page <= maxPages; page++) {
+      const { data } = await this.requestRaw<WpMediaResponse[]>(
+        this.apiUrl('/media', { ...params, page }),
+      );
+      items.push(...data.map(mapWpMediaToItem));
+    }
+
+    return { items, total, truncated: maxPages < totalPages };
   }
 
   async getMedia(id: number): Promise<MediaItem> {
@@ -333,7 +403,10 @@ export class RestAdapter implements WpBackend {
         // If we get a 400 on page > 1, we've gone past the last page.
         if (page > 1 && response.status === 400) break;
         const body = await response.text().catch(() => '');
-        throw new Error(`WordPress REST API error: ${response.status} — ${body.slice(0, 200)}`);
+        throw new WpApiError(
+          `WordPress REST API error: ${response.status} — ${body.slice(0, 200)}`,
+          response.status,
+        );
       }
 
       const items = (await response.json()) as T[];
@@ -405,6 +478,11 @@ function restSortParams(filters: ListFilters): Record<string, string> {
 function applyCommonFilters(params: Record<string, string | number>, filters: ListFilters): void {
   if (filters.type) {
     params.media_type = filters.type.startsWith('image') ? 'image' : filters.type;
+    if (filters.type.includes('/')) {
+      // media_type only recognizes broad categories (image/video/text/...);
+      // mime_type does an exact post_mime_type match against WP_Query.
+      params.mime_type = filters.type;
+    }
   }
   if (filters.postId) {
     params.parent = filters.postId;
@@ -443,6 +521,7 @@ function mapWpMediaToItem(raw: WpMediaResponse): MediaItem {
     id: raw.id,
     title: raw.title.raw ?? raw.title.rendered,
     filename: raw.media_details?.file ?? raw.slug,
+    slug: raw.slug,
     url: raw.source_url,
     mimeType: raw.mime_type,
     width: raw.media_details?.width,
