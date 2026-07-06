@@ -201,9 +201,9 @@ export function MediaBrowser({
   // Derive filtered list from current page items + search query.
   const filteredItems = filterItems(items, searchQuery);
 
-  // 5 reserved rows: header + page bar + divider + divider + footer.
+  // 6 reserved rows: header + page bar + divider + divider + footer + safety.
   // +1 extra when the search bar is visible.
-  const reservedRows = 5 + (searchMode || searchQuery ? 1 : 0);
+  const reservedRows = 6 + (searchMode || searchQuery ? 1 : 0);
   const listHeight = Math.max(4, termHeight - reservedRows);
 
   // Reset cursor to top when the query changes.
@@ -1408,15 +1408,14 @@ export function MediaBrowser({
       </Box>
       <Box paddingX={1}>
         {selectedItem?.mimeType.startsWith('image/') ? (
-          <Text dimColor>
-            [jk] nav [nb] page [/] search [o] opt [O] opt+preview [r] rembg [R] rembg+preview [c]
-            conv [s] resize [a] cap [e] edit [d] download [W] WP [↵] details
-            {canImages ? '  [p] preview' : ''} [q] quit
+          <Text dimColor wrap="truncate">
+            [jk] nav [nb] page [/] search [o] opt [O] preview [r] rembg [c] conv [s] resize [a] cap
+            [e] edit [d] pull [↵] details{canImages ? ' [p] img' : ''} [q] quit
           </Text>
         ) : (
-          <Text dimColor>
-            [↑↓/jk] navigate [←→/n/b] page [/] search [o] optimize [O] opt+preview [e] edit [d]
-            download [W] open in WP [↵] details [q] quit
+          <Text dimColor wrap="truncate">
+            [jk] nav [nb] page [/] search [o] optimize [O] preview [e] edit [d] pull [W] WP [↵]
+            details [q] quit
           </Text>
         )}
       </Box>
