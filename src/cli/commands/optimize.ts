@@ -24,7 +24,6 @@ import {
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
 import { formatToMime, mimeToExtension } from '../../engine/image/mime.ts';
-export { mimeToExtension };
 import {
   AnimatedImageError,
   UnsupportedFormatError,
@@ -38,6 +37,7 @@ import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../u
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { getCachedClassification } from './classify.ts';
+export { mimeToExtension };
 
 /** Source MIME types the optimize pipeline can safely handle. Anything else
  * (e.g. image/svg+xml) is skipped so it can't be rasterized in place. */
@@ -501,6 +501,7 @@ export function registerOptimizeCommand(program: Command): void {
           info(`  Processing #${item.id} (${item.filename})...`);
 
           // 1. Download the source image.
+          info('    ↳ Downloading...');
           const response = await fetch(item.url);
           if (!response.ok) {
             throw new Error(`Failed to download ${item.url}: ${response.status}`);
@@ -545,6 +546,7 @@ export function registerOptimizeCommand(program: Command): void {
           }
 
           // 2. Process through the image engine.
+          info(`    ↳ Compressing${perItemOpts.toFormat ? ` → ${perItemOpts.toFormat}` : ''}...`);
           const result = await optimizeImage(sourceBytes, item.mimeType, perItemOpts);
           const resultHash = createHash('sha256').update(result.bytes).digest('hex');
           const durationMs = Date.now() - startTime;
@@ -611,6 +613,7 @@ export function registerOptimizeCommand(program: Command): void {
             // Try replace-in-place.
             const replaceAdapter = resolver.tryResolve('replace-in-place');
             if (replaceAdapter) {
+              info('    ↳ Replacing in-place...');
               // Detect format change for metadata update.
               const outputMime = formatToMime(result.after.format);
               const formatChanged = outputMime !== item.mimeType;
@@ -646,6 +649,7 @@ export function registerOptimizeCommand(program: Command): void {
 
           if (resultWpId === null) {
             // Upload as new attachment (fallback or --keep-original).
+            info('    ↳ Uploading as new attachment...');
             const uploadAdapter = resolver.resolve('upload');
             const ext = result.after.format ? `.${result.after.format}` : '';
             const newFilename = `${item.filename.replace(/\.[^.]+$/, '')}-optimized${ext}`;
