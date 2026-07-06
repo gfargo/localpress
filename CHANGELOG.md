@@ -5,6 +5,26 @@ All notable changes to localpress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0](https://github.com/gfargo/localpress/compare/v2.1.0...v2.2.0) (2026-07-06)
+
+
+### Features
+
+* add demo GIF to README + fix clipped stats output in recipes ([18ba9b0](https://github.com/gfargo/localpress/commit/18ba9b0595d141375f7eecd5288b487ca1e4d274))
+* add interactive browser GIF to README ([f49547a](https://github.com/gfargo/localpress/commit/f49547aa6eef7546d06f09a9428ccc0a74b6bd73))
+
+
+### Bug Fixes
+
+* prevent footer keybindings from wrapping and clipping header ([540e69f](https://github.com/gfargo/localpress/commit/540e69f83b3ea059d0289b542e21f85542c384cc))
+* **tape:** add missing return type to buildTape ([b9ddd56](https://github.com/gfargo/localpress/commit/b9ddd566119df1ba607c273da466da4a6aa47b27))
+* **undo:** treat REST-only upload-as-new restore as partial, not restored ([#183](https://github.com/gfargo/localpress/issues/183)) ([89f9f85](https://github.com/gfargo/localpress/commit/89f9f855d4b0e21c5c9cf5c2c6a44a77af1e0483))
+
+
+### Documentation
+
+* replace browser GIF with static screenshot in README ([bf1eeee](https://github.com/gfargo/localpress/commit/bf1eeee6486ee71345f23f037b77cbcaaa72dae9))
+
 ## [2.1.0] - 2026-07-05
 
 The first release since v2.0.0 — a large **trust, correctness, and security**
