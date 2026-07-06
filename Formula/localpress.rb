@@ -14,7 +14,7 @@
 class Localpress < Formula
   desc "Local-compute WordPress media optimization. Your laptop, your library."
   homepage "https://github.com/gfargo/localpress"
-  version "2.1.0"
+  version "2.2.0"
   license "MIT"
 
   # Bun is required at runtime but not declared as a Homebrew dependency
@@ -24,22 +24,22 @@ class Localpress < Formula
   on_macos do
     on_arm do
       url "https://github.com/gfargo/localpress/releases/download/v#{version}/localpress-darwin-arm64.tar.gz"
-      sha256 "f8558dabd7d0dc52b481dfc1bbfd7cb85121189e39c783628fd041e8a858be43"
+      sha256 "7f53538633468ba4c4c64edd4ed0da316b5d0e934deee4ee9025caea7e1fcd57"
     end
     on_intel do
       url "https://github.com/gfargo/localpress/releases/download/v#{version}/localpress-darwin-x64.tar.gz"
-      sha256 "240589ff1982b44585af429e0352aa6a45391f92270cffe7ff5349dc050d0380"
+      sha256 "db5a9776c029a3d867c7f7cd561fa74a53ad3ca931d7025a9d5596f661f4b325"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/gfargo/localpress/releases/download/v#{version}/localpress-linux-arm64.tar.gz"
-      sha256 "1ecc2deaa79a0f76f8b8bf4571cb92e12942499e7df3c03c9230ce7338053b90"
+      sha256 "b9488a4472e551551a3c23b688a054045a377326b431818ec67fe71e69459a5a"
     end
     on_intel do
       url "https://github.com/gfargo/localpress/releases/download/v#{version}/localpress-linux-x64.tar.gz"
-      sha256 "50004da001e884fd4098b897631e8753aa4aa181511a4d9a3d1d40df0b9a3540"
+      sha256 "4bf3504b676bebb242d33377785bd04febadc539dc58db55035ac4de9106ae48"
     end
   end
 
