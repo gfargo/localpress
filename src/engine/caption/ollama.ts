@@ -165,6 +165,64 @@ export async function generateCaption(
 }
 
 /**
+ * Heuristic: does this caption look like garbage from a confused model?
+ *
+ * Common failure modes from small vision models:
+ * - Very short (< 10 chars): "Watch.", "Image.", "A."
+ * - Coordinate arrays: "ids: [0.3, 0.13, 0.64, 0.26]"
+ * - Mostly numbers/brackets (confidence scores leaked)
+ * - Single word that's clearly not a description
+ */
+export function looksLikeGarbage(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 10) return true;
+  // Coordinate/float arrays: "ids: [0.3, ...]" or "[0.25, 0.39, ...]"
+  if (/^(?:ids:\s*)?\[[\d.,\s]+\]$/.test(trimmed)) return true;
+  // Mostly numbers, dots, brackets — not a real description
+  const nonNumeric = trimmed.replace(/[\d.,\[\]\s:]/g, '');
+  if (nonNumeric.length < 5 && trimmed.length > 5) return true;
+  return false;
+}
+
+/**
+ * Generate a caption with automatic fallback to a second model when the
+ * primary model returns garbage output.
+ *
+ * If `options.fallbackModel` is set and the primary result fails the
+ * quality heuristic, retries with the fallback model. Returns the best
+ * result available.
+ */
+export async function generateCaptionWithFallback(
+  imageBuffer: Buffer,
+  options: CaptionOptions = {},
+): Promise<CaptionResult> {
+  const result = await generateCaption(imageBuffer, options);
+
+  // If no fallback configured, or the result looks fine, return as-is.
+  if (!options.fallbackModel || !looksLikeGarbage(result.caption)) {
+    return result;
+  }
+
+  // Retry with the fallback model.
+  const fallbackResult = await generateCaption(imageBuffer, {
+    ...options,
+    model: options.fallbackModel,
+  });
+
+  // If the fallback also produces garbage, return whichever is longer
+  // (marginally better than nothing).
+  if (looksLikeGarbage(fallbackResult.caption)) {
+    return result.caption.length >= fallbackResult.caption.length ? result : fallbackResult;
+  }
+
+  return {
+    ...fallbackResult,
+    // Include total time from both attempts.
+    durationMs: result.durationMs + fallbackResult.durationMs,
+  };
+}
+
+/**
  * Dispatch post-processing based on kind. Defaults to `cleanCaption` (the
  * existing alt-text cleaner) for alt + description, with tighter rules for
  * title / classify / tags.

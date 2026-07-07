@@ -24,7 +24,7 @@ import {
   openSnapshotStore,
 } from '../history/index.ts';
 import type { SiteDb } from '../state/db.ts';
-import { generateCaption, isOllamaAvailable, listOllamaModels } from './ollama.ts';
+import { generateCaptionWithFallback, isOllamaAvailable, listOllamaModels } from './ollama.ts';
 import type { VisionKind } from './types.ts';
 
 export interface BulkRunItemResult {
@@ -110,6 +110,7 @@ export async function runBulkVision(args: {
   ids: number[];
   isDryRun: boolean;
   effectiveModel: string;
+  fallbackModel?: string;
   ollamaUrl: string;
   language?: string;
   getAdapter: WpBackend;
@@ -191,9 +192,10 @@ export async function runBulkVision(args: {
       if (!response.ok) throw new Error(`Failed to download image: ${response.status}`);
       const imageBuffer = Buffer.from(await response.arrayBuffer());
 
-      const result = await generateCaption(imageBuffer, {
+      const result = await generateCaptionWithFallback(imageBuffer, {
         kind: args.options.kind,
         model: args.effectiveModel,
+        fallbackModel: args.fallbackModel,
         ollamaUrl: args.ollamaUrl,
         language: args.language,
       });

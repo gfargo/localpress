@@ -15,7 +15,7 @@ import { AdapterResolver } from '../../adapters/resolver.ts';
 import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_OLLAMA_URL,
-  generateCaption,
+  generateCaptionWithFallback,
   isOllamaAvailable,
   listOllamaModels,
 } from '../../engine/caption/ollama.ts';
@@ -50,6 +50,10 @@ export function registerCaptionCommand(program: Command): void {
     .option('--all', 'process all image attachments (dry-run unless --apply)')
     .option('--overwrite', 'replace existing alt text (default: skip if already set)')
     .option('--language <lang>', 'generate alt text in this language (e.g. "Spanish", "French")')
+    .option(
+      '--fallback-model <name>',
+      'retry with this model if the primary model returns garbage output',
+    )
     .option('--list-models', 'list Ollama models available locally and exit')
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
@@ -259,8 +263,13 @@ export function registerCaptionCommand(program: Command): void {
           if (!response.ok) throw new Error(`Failed to download image: ${response.status}`);
           const imageBuffer = Buffer.from(await response.arrayBuffer());
 
-          const result = await generateCaption(imageBuffer, {
+          const result = await generateCaptionWithFallback(imageBuffer, {
             model: effectiveModel,
+            fallbackModel:
+              options.fallbackModel ??
+              ((config.defaults as Record<string, unknown>)?.captionFallbackModel as
+                | string
+                | undefined),
             prompt: options.prompt,
             ollamaUrl: options.ollamaUrl,
             language: options.language,

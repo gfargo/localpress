@@ -19,6 +19,8 @@ export interface CaptionOptions {
   /** What to generate. Defaults to 'alt' to preserve existing behavior. */
   kind?: VisionKind;
   model?: string;
+  /** Fallback model to try when the primary model returns garbage. */
+  fallbackModel?: string;
   prompt?: string;
   ollamaUrl?: string;
   /** Generate output in this language (alt/title/description only; e.g. "Spanish"). */
