@@ -296,15 +296,25 @@ export function registerListCommand(program: Command): void {
             stdio: 'inherit',
           });
 
+          // After spawnSync with stdio:'inherit', the child process may have
+          // left stdin in a different mode (cooked/line-buffered). Ink needs raw
+          // mode to capture individual keypresses. Force a small pause to let the
+          // terminal settle, then Ink's render() will re-enable raw mode.
+          await new Promise((r) => setTimeout(r, 150));
+
+          // Ensure stdin is flowing — spawnSync can leave it paused.
+          if (process.stdin.isPaused()) process.stdin.resume();
+
           // Use Ink for the "press any key" prompt so stdin is managed correctly.
-          // The 80ms ready-delay drains any buffered keystroke (e.g. the 'o'/'e' that
-          // triggered the action) before we start listening for a new keypress.
+          // The 200ms ready-delay drains any buffered keystroke (e.g. the 'o'/'e'
+          // that triggered the action, or Enter from the subprocess's output)
+          // before we start listening for a new keypress.
           await new Promise<void>((resolve) => {
             function PressAnyKey() {
               const [ready, setReady] = useReactState(false);
               const { exit } = useApp();
               useReactEffect(() => {
-                const t = setTimeout(() => setReady(true), 80);
+                const t = setTimeout(() => setReady(true), 200);
                 return () => clearTimeout(t);
               }, []);
               useInkInput(() => {
