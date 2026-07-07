@@ -91,6 +91,77 @@ async function runCli(args: string[], site?: string, concurrency?: number) {
   };
 }
 
+/**
+ * Chunk size for batched processing. Keeps each CLI invocation under ~60s
+ * even for large images (5 × ~12s worst case).
+ */
+const BATCH_CHUNK_SIZE = 5;
+
+/**
+ * Run a processing command in batches when many IDs are passed.
+ * Splits the ID array into chunks of BATCH_CHUNK_SIZE, invokes the CLI
+ * for each chunk sequentially, and merges the JSON results.
+ *
+ * This prevents MCP timeouts on large batches while preserving the full
+ * result set for the agent.
+ */
+async function runCliBatched(
+  buildArgv: (batchIds: number[]) => string[],
+  allIds: number[],
+  site?: string,
+  concurrency?: number,
+) {
+  // If the batch is small enough, just run it directly.
+  if (allIds.length <= BATCH_CHUNK_SIZE) {
+    return runCli(buildArgv(allIds), site, concurrency);
+  }
+
+  // Split into chunks and process sequentially.
+  const allResults: unknown[] = [];
+  let totalProcessed = 0;
+  let totalFailures = 0;
+  let totalSavedBytes = 0;
+  let allStderr = '';
+
+  for (let i = 0; i < allIds.length; i += BATCH_CHUNK_SIZE) {
+    const chunk = allIds.slice(i, i + BATCH_CHUNK_SIZE);
+    const result = await invokeCli({ args: buildArgv(chunk), site, concurrency });
+
+    if (result.stderr) allStderr += `${result.stderr}\n`;
+
+    if (result.ok && typeof result.stdout === 'object' && result.stdout !== null) {
+      const out = result.stdout as Record<string, unknown>;
+      totalProcessed += (out.processed as number) ?? 0;
+      totalFailures += (out.failures as number) ?? 0;
+      totalSavedBytes += (out.totalSavedBytes as number) ?? 0;
+      if (Array.isArray(out.results)) {
+        allResults.push(...out.results);
+      }
+    } else if (!result.ok) {
+      // Partial failure — record the error but continue with remaining chunks.
+      allStderr += `Batch ${Math.floor(i / BATCH_CHUNK_SIZE) + 1} failed (exit ${result.exitCode})\n`;
+      totalFailures += chunk.length;
+    }
+  }
+
+  const merged = {
+    processed: totalProcessed,
+    failures: totalFailures,
+    totalSavedBytes,
+    results: allResults,
+  };
+
+  const textContent = JSON.stringify(merged, null, 2);
+  const fullText = allStderr.trim()
+    ? `${textContent}\n\n--- stderr ---\n${allStderr.trim()}`
+    : textContent;
+
+  return {
+    content: [{ type: 'text' as const, text: fullText }],
+    structuredContent: merged,
+  };
+}
+
 export function registerTools(server: McpServer): void {
   // ---------------------------------------------------------------------------
   // Setup & configuration
@@ -471,6 +542,29 @@ export function registerTools(server: McpServer): void {
       if (a.stripMetadata === true) argv.push('--strip-metadata');
       else if (a.stripMetadata === false) argv.push('--no-strip-metadata');
       flag(argv, '--apply', a.apply);
+
+      // Use batched processing for explicit IDs to avoid timeouts on large sets.
+      const idArray = Array.isArray(a.ids) ? (a.ids as number[]) : [];
+      if (idArray.length > BATCH_CHUNK_SIZE) {
+        return runCliBatched(
+          (batchIds) => {
+            const bArgv = ['optimize', ...batchIds.map(String)];
+            opt(bArgv, '--quality', a.quality);
+            opt(bArgv, '--to', a.to);
+            opt(bArgv, '--max-width', a.maxWidth);
+            opt(bArgv, '--max-height', a.maxHeight);
+            opt(bArgv, '--encoder', a.encoder);
+            opt(bArgv, '--profile', a.profile);
+            if (a.stripMetadata === true) bArgv.push('--strip-metadata');
+            else if (a.stripMetadata === false) bArgv.push('--no-strip-metadata');
+            return bArgv;
+          },
+          idArray,
+          a.site as string | undefined,
+          a.concurrency as number | undefined,
+        );
+      }
+
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
@@ -599,6 +693,24 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--overwrite', a.overwrite);
       flag(argv, '--list-models', a.listModels);
       flag(argv, '--apply', a.apply);
+
+      // Batch explicit IDs to avoid timeouts (each image takes 2-30s via Ollama).
+      const idArray = Array.isArray(a.ids) ? (a.ids as number[]) : [];
+      if (idArray.length > BATCH_CHUNK_SIZE) {
+        return runCliBatched(
+          (batchIds) => {
+            const bArgv = ['caption', ...batchIds.map(String)];
+            opt(bArgv, '--model', a.model);
+            opt(bArgv, '--language', a.language);
+            flag(bArgv, '--overwrite', a.overwrite);
+            return bArgv;
+          },
+          idArray,
+          a.site as string | undefined,
+          a.concurrency as number | undefined,
+        );
+      }
+
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );

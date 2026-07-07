@@ -45,7 +45,7 @@ export interface InvokeOptions {
   extraTopLevelFlags?: string[];
 }
 
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 /** Grace period after SIGTERM before escalating to SIGKILL. */
 const SIGKILL_GRACE_MS = 8 * 1000;
 
