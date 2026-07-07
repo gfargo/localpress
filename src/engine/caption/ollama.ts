@@ -284,15 +284,26 @@ async function downscaleForVision(imageBuffer: Buffer): Promise<Buffer> {
     const sharp = sharpMod.default;
     const meta = await sharp(imageBuffer).metadata();
     const maxEdge = Math.max(meta.width ?? 0, meta.height ?? 0);
-    if (maxEdge <= MAX_IMAGE_EDGE) return imageBuffer;
-    return await sharp(imageBuffer)
-      .resize({
+    const needsResize = maxEdge > MAX_IMAGE_EDGE;
+
+    // Always output PNG — Ollama vision models can't read WebP/AVIF/GIF
+    // directly. PNG is universally supported and the quality loss from
+    // re-encoding is irrelevant for vision model input.
+    const needsFormatConvert =
+      meta.format !== 'png' && meta.format !== 'jpeg' && meta.format !== 'jpg';
+
+    if (!needsResize && !needsFormatConvert) return imageBuffer;
+
+    let pipeline = sharp(imageBuffer);
+    if (needsResize) {
+      pipeline = pipeline.resize({
         width: MAX_IMAGE_EDGE,
         height: MAX_IMAGE_EDGE,
         fit: 'inside',
         withoutEnlargement: true,
-      })
-      .toBuffer();
+      });
+    }
+    return await pipeline.png().toBuffer();
   } catch {
     // sharp not installed or processing failed — fall back to original.
     // Captions still work, just may be slower / more failure-prone.
