@@ -5,6 +5,21 @@ All notable changes to localpress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0](https://github.com/gfargo/localpress/compare/v2.2.0...v2.3.0) (2026-07-07)
+
+
+### Features
+
+* **caption:** automatic fallback model on garbage output ([f215951](https://github.com/gfargo/localpress/commit/f215951a9fae1b60835ba6438d68e0a3408889e7))
+
+
+### Bug Fixes
+
+* add step-by-step progress messages to optimize command ([e1cb470](https://github.com/gfargo/localpress/commit/e1cb4700e9821634b6be3af0bdc32854fa371858))
+* **caption:** convert WebP/AVIF to PNG before sending to Ollama ([fcfea13](https://github.com/gfargo/localpress/commit/fcfea13471f4da76fff9250f7704f3228e5667bb))
+* **list:** prevent interactive browser hang after subprocess ([42ad509](https://github.com/gfargo/localpress/commit/42ad509bb86a7acbb1bb1e2aba82c7b0adedde12))
+* **mcp:** batch large ID sets to prevent timeout on bulk operations ([24eb57f](https://github.com/gfargo/localpress/commit/24eb57fd7111f3be790c8c6572b68012a9cf0526))
+
 ## [2.2.0](https://github.com/gfargo/localpress/compare/v2.1.0...v2.2.0) (2026-07-06)
 
 
