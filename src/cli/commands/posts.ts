@@ -352,6 +352,14 @@ export function registerPostsCommand(program: Command): void {
       if (options.category) body.categories = options.category.split(',').map(Number);
       if (options.tag) body.tags = options.tag.split(',').map(Number);
 
+      if (resolveDryRun(parentOpts, false)) {
+        warn(`[dry-run] would create ${options.type}: "${options.title}" [${options.status}]`);
+        if (parentOpts.json) {
+          printJson({ dryRun: true, action: 'create', fields: body });
+        }
+        return;
+      }
+
       try {
         const endpoint = await resolveTypeEndpoint(site, options.type);
         const url = `${site.url.replace(/\/+$/, '')}/wp-json/wp/v2${endpoint}`;

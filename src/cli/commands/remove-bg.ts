@@ -34,6 +34,7 @@ import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 export function registerRemoveBgCommand(program: Command): void {
   program
@@ -287,6 +288,17 @@ export function registerRemoveBgCommand(program: Command): void {
       if (!validModels.includes(modelName)) {
         error(`Unknown model '${modelName}'. Available: ${validModels.join(', ')}`);
         process.exit(2);
+      }
+
+      const isDryRun = resolveDryRun(parentOpts, false);
+      if (isDryRun) {
+        info(
+          `Dry-run: would remove background from ${ids.length} attachment(s). Omit --dry-run to execute.`,
+        );
+        if (parentOpts.json) {
+          printJson({ dryRun: true, count: ids.length, ids });
+        }
+        return;
       }
 
       // Check --rembg flag.

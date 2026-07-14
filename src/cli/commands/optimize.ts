@@ -36,6 +36,7 @@ import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 import { getCachedClassification } from './classify.ts';
 export { mimeToExtension };
 
@@ -371,7 +372,7 @@ export function registerOptimizeCommand(program: Command): void {
       }
 
       // Determine if this is a dry-run.
-      const isDryRun = isBulk && !parentOpts.apply;
+      const isDryRun = resolveDryRun(parentOpts, isBulk);
 
       // Resolve target items.
       let items: MediaItem[] = [];

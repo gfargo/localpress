@@ -29,6 +29,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 /**
  * Structural subset of AdapterResolver's public surface. AdapterResolver has a
@@ -140,8 +141,9 @@ export function registerUndoCommand(program: Command): void {
         return;
       }
 
-      // Dry-run for bulk targets unless --apply.
-      const isDryRun = isBulk && !parentOpts.apply;
+      // Dry-run for bulk targets unless --apply; single-snapshot targets execute
+      // by default but still honor an explicit --dry-run.
+      const isDryRun = resolveDryRun(parentOpts, isBulk);
 
       if (isDryRun) {
         info(
