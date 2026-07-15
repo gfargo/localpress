@@ -10,6 +10,10 @@
  * kebab-case on the wire.
  */
 
+import { randomUUID } from 'node:crypto';
+import { unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { invokeCli } from './invoke.ts';
@@ -89,6 +93,28 @@ async function runCli(args: string[], site?: string, concurrency?: number) {
     content: [{ type: 'text' as const, text: fullText }],
     structuredContent: structured,
   };
+}
+
+/**
+ * Run a CLI command whose content argument may be large. Linux caps a single
+ * argv element at 128 KiB (MAX_ARG_STRLEN), so large Gutenberg/base64/SVG
+ * content is written to a temp file and passed via `--content-file` instead
+ * of inline `--content`.
+ */
+async function runCliWithContent(argv: string[], content: unknown, site?: string) {
+  if (typeof content !== 'string') return runCli(argv, site);
+  const file = join(tmpdir(), `localpress-mcp-content-${randomUUID()}.html`);
+  writeFileSync(file, content, 'utf-8');
+  try {
+    argv.push('--content-file', file);
+    return await runCli(argv, site);
+  } finally {
+    try {
+      unlinkSync(file);
+    } catch {
+      // best effort cleanup
+    }
+  }
 }
 
 /**
@@ -1174,7 +1200,22 @@ export function registerTools(server: McpServer): void {
           .optional()
           .describe('Filter to a specific attachment ID'),
         operation: z
-          .enum(['optimize', 'convert', 'resize', 'remove-bg', 'caption'])
+          .enum([
+            'optimize',
+            'convert',
+            'resize',
+            'remove-bg',
+            'caption',
+            'classify',
+            'rename',
+            'delete',
+            'title',
+            'tag',
+            'metadata',
+            'edit',
+            'vision',
+            'describe',
+          ])
           .optional()
           .describe('Filter by operation'),
         limit: z.number().int().positive().max(500).optional(),
@@ -1429,7 +1470,6 @@ export function registerTools(server: McpServer): void {
       const a = args as ArgMap;
       const argv = ['posts', 'create'];
       opt(argv, '--title', a.title);
-      opt(argv, '--content', a.content);
       opt(argv, '--status', a.status);
       opt(argv, '--type', a.type);
       opt(argv, '--slug', a.slug);
@@ -1437,7 +1477,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--featured-image', a.featuredImage);
       opt(argv, '--category', a.categories);
       opt(argv, '--tag', a.tags);
-      return runCli(argv, a.site as string | undefined);
+      return runCliWithContent(argv, a.content, a.site as string | undefined);
     },
   );
 
@@ -1472,7 +1512,6 @@ export function registerTools(server: McpServer): void {
       const a = args as ArgMap;
       const argv = ['posts', 'update', String(a.id)];
       opt(argv, '--title', a.title);
-      opt(argv, '--content', a.content);
       opt(argv, '--status', a.status);
       opt(argv, '--type', a.type);
       opt(argv, '--slug', a.slug);
@@ -1480,7 +1519,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--featured-image', a.featuredImage);
       opt(argv, '--category', a.categories);
       opt(argv, '--tag', a.tags);
-      return runCli(argv, a.site as string | undefined);
+      return runCliWithContent(argv, a.content, a.site as string | undefined);
     },
   );
 

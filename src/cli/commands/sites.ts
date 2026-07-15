@@ -134,7 +134,11 @@ export function registerSitesCommand(program: Command): void {
       const names = Object.keys(config.sites);
 
       if (names.length === 0) {
-        info('No sites configured. Run `localpress init` to add one.');
+        if (parentOpts.json) {
+          printJson([]);
+        } else {
+          info('No sites configured. Run `localpress init` to add one.');
+        }
         return;
       }
 
