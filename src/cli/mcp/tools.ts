@@ -98,6 +98,40 @@ async function runCli(args: string[], site?: string, concurrency?: number) {
 const BATCH_CHUNK_SIZE = 5;
 
 /**
+ * Merge per-chunk `--json` outputs from a batched CLI run into a single
+ * object, generically — no command-specific field list. `results` arrays are
+ * concatenated; every other numeric field present is summed; every other
+ * boolean field is OR'd across chunks. This way each command's native JSON
+ * contract (e.g. caption's `dryRun`/`skipped`, optimize's `totalSavedBytes`)
+ * is preserved rather than coerced into one shared shape.
+ */
+export function mergeBatchedOutputs(
+  outputs: Array<Record<string, unknown>>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  const allResults: unknown[] = [];
+
+  for (const out of outputs) {
+    for (const [key, value] of Object.entries(out)) {
+      if (key === 'results') {
+        if (Array.isArray(value)) allResults.push(...value);
+        continue;
+      }
+      if (typeof value === 'number') {
+        merged[key] = ((merged[key] as number) ?? 0) + value;
+      } else if (typeof value === 'boolean') {
+        merged[key] = (merged[key] as boolean | undefined) || value;
+      } else if (!(key in merged)) {
+        merged[key] = value;
+      }
+    }
+  }
+
+  merged.results = allResults;
+  return merged;
+}
+
+/**
  * Run a processing command in batches when many IDs are passed.
  * Splits the ID array into chunks of BATCH_CHUNK_SIZE, invokes the CLI
  * for each chunk sequentially, and merges the JSON results.
@@ -117,10 +151,7 @@ async function runCliBatched(
   }
 
   // Split into chunks and process sequentially.
-  const allResults: unknown[] = [];
-  let totalProcessed = 0;
-  let totalFailures = 0;
-  let totalSavedBytes = 0;
+  const chunkOutputs: Array<Record<string, unknown>> = [];
   let allStderr = '';
 
   for (let i = 0; i < allIds.length; i += BATCH_CHUNK_SIZE) {
@@ -130,26 +161,15 @@ async function runCliBatched(
     if (result.stderr) allStderr += `${result.stderr}\n`;
 
     if (result.ok && typeof result.stdout === 'object' && result.stdout !== null) {
-      const out = result.stdout as Record<string, unknown>;
-      totalProcessed += (out.processed as number) ?? 0;
-      totalFailures += (out.failures as number) ?? 0;
-      totalSavedBytes += (out.totalSavedBytes as number) ?? 0;
-      if (Array.isArray(out.results)) {
-        allResults.push(...out.results);
-      }
+      chunkOutputs.push(result.stdout as Record<string, unknown>);
     } else if (!result.ok) {
       // Partial failure — record the error but continue with remaining chunks.
       allStderr += `Batch ${Math.floor(i / BATCH_CHUNK_SIZE) + 1} failed (exit ${result.exitCode})\n`;
-      totalFailures += chunk.length;
+      chunkOutputs.push({ failures: chunk.length });
     }
   }
 
-  const merged = {
-    processed: totalProcessed,
-    failures: totalFailures,
-    totalSavedBytes,
-    results: allResults,
-  };
+  const merged = mergeBatchedOutputs(chunkOutputs);
 
   const textContent = JSON.stringify(merged, null, 2);
   const fullText = allStderr.trim()
