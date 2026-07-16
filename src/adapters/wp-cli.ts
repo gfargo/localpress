@@ -334,11 +334,10 @@ export class WpCliAdapter implements WpBackend {
       await this.wp(`post meta update ${id} _wp_attached_file ${shellQuote(newFilePath)}`);
 
       // Update the post MIME type via wp post update (handles quoting correctly).
+      // Routed through this.wp() so a failure here throws instead of being
+      // silently swallowed, which would leave a stale post_mime_type on disk.
       if (options?.newMimeType) {
-        await sshExec(
-          this.ssh,
-          `cd ${shellQuote(this.wpPath)} && wp post update ${id} --post_mime_type=${shellQuote(options.newMimeType)} --allow-root`,
-        );
+        await this.wp(`post update ${id} --post_mime_type=${shellQuote(options.newMimeType)}`);
       }
 
       // Update attachment metadata: file field, filesize, and clear stale sizes.

@@ -55,14 +55,21 @@ interface FakeState {
   calls: string[];
   regenerated: boolean;
   searchReplaceShouldFail: ((command: string) => boolean) | null;
+  mimeUpdateShouldFail: boolean;
 }
 
-const state: FakeState = { calls: [], regenerated: false, searchReplaceShouldFail: null };
+const state: FakeState = {
+  calls: [],
+  regenerated: false,
+  searchReplaceShouldFail: null,
+  mimeUpdateShouldFail: false,
+};
 
 function resetState(): void {
   state.calls = [];
   state.regenerated = false;
   state.searchReplaceShouldFail = null;
+  state.mimeUpdateShouldFail = false;
 }
 
 function shellQuote(value: string): string {
@@ -104,7 +111,7 @@ mock.module('../../src/adapters/ssh.ts', () => ({
       return ok('');
     }
     if (command.includes('--post_mime_type=')) {
-      return ok('');
+      return state.mimeUpdateShouldFail ? fail('wp: permission denied') : ok('');
     }
     if (command.includes('search-replace')) {
       if (state.searchReplaceShouldFail?.(command)) {
@@ -277,6 +284,19 @@ describe('WpCliAdapter.replaceInPlace — format change', () => {
       (c) => c.includes('rm -f') && c.includes('2024/01/photo.png'),
     );
     expect(rmOldFileIdx).toBeGreaterThanOrEqual(0);
+  });
+
+  test('a failed post_mime_type update throws instead of being silently swallowed', async () => {
+    resetState();
+    state.mimeUpdateShouldFail = true;
+    const adapter = new WpCliAdapter(site);
+
+    await expect(
+      adapter.replaceInPlace(42, Buffer.from('fake-webp-bytes'), {
+        newExtension: '.webp',
+        newMimeType: 'image/webp',
+      }),
+    ).rejects.toThrow(/WP-CLI error/);
   });
 
   test('no format change: no rewrite is attempted and formatChangeRewrite is absent', async () => {
