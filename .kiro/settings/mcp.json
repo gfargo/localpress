@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "localpress": {
+      "command": "localpress",
+      "args": [
+        "mcp"
+      ],
+      "autoApprove": [
+        "sites_list",
+        "doctor",
+        "list",
+        "stats",
+        "show",
+        "audit",
+        "sites_list",
+        "caption",
+        "doctor",
+        "update_metadata",
+        "watch_status",
+        "health_check",
+        "health_check",
+        "posts_list",
+        "a11y_audit"
+      ]
+    }
+  }
+}
