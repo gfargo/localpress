@@ -16,8 +16,19 @@
  * sequence/ordering rather than a real end-to-end round trip.
  */
 
-import { describe, expect, mock, test } from 'bun:test';
+import { afterAll, describe, expect, mock, test } from 'bun:test';
 import type { SiteConfig } from '../../src/types.ts';
+
+// bun:test's mock.module() replaces the module for the whole test process
+// (there is no per-file un-mock), so other files importing '../../src/adapters/ssh.ts'
+// after this one — e.g. ssh.test.ts, which asserts on the real sshDestination/
+// buildSshArgs — would otherwise see these fakes too. Restore the real module
+// once this file's tests finish.
+const actualSsh = await import('../../src/adapters/ssh.ts');
+
+afterAll(() => {
+  mock.module('../../src/adapters/ssh.ts', () => actualSsh);
+});
 
 // -- Fake SSH backend ---------------------------------------------------------
 
@@ -72,14 +83,17 @@ function resetState(): void {
   state.mimeUpdateShouldFail = false;
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
+// Delegate the pure helpers to the real implementations rather than
+// reimplementing them — if this mock ever leaks into another file (e.g. via
+// a mock.module ordering race), a diverging fake here would corrupt that
+// file's assertions on the real sshDestination/buildSshArgs/shellQuote
+// behavior. Only sshExec/scpUpload (the actual I/O) are faked.
+const { shellQuote, sshDestination, buildSshArgs } = actualSsh;
 
 mock.module('../../src/adapters/ssh.ts', () => ({
   shellQuote,
-  sshDestination: (ssh: SiteConfig['ssh']) => `${ssh?.user}@${ssh?.host}`,
-  buildSshArgs: () => [] as string[],
+  sshDestination,
+  buildSshArgs,
   scpUpload: mock(async () => ok('')),
   sshExec: mock(async (_ssh: unknown, command: string) => {
     state.calls.push(command);

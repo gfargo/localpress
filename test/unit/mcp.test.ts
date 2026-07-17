@@ -109,13 +109,91 @@ describe('mcp server', () => {
     const { client, close } = await connectClient();
     try {
       const result = await client.callTool({ name: 'sites_list', arguments: {} });
-      // CLI prints "No sites configured" to stdout in non-JSON mode but to
-      // structured JSON in --json mode. We pass --json from the server, so the
-      // tool result should contain a parsable structure.
       expect(result.isError).toBeFalsy();
-      // structuredContent may or may not be set depending on CLI output shape;
-      // at minimum, content should be present.
-      expect(Array.isArray(result.content)).toBe(true);
+      // Regression for #213 (1/3): `sites --json` used to print nothing at
+      // all when no sites were configured, so the tool's text content was
+      // empty and structuredContent was undefined — an agent couldn't tell
+      // "no sites" from a broken call. It must now be a parseable `[]`.
+      const content = result.content as Array<{ type: string; text?: string }>;
+      expect(content[0]?.text).toBe('[]');
+      expect(result.structuredContent).toEqual({ items: [] });
+    } finally {
+      await close();
+    }
+  }, 30_000);
+
+  test('localpress://sites resource returns [] against fresh config', async () => {
+    const { client, close } = await connectClient();
+    try {
+      const result = await client.readResource({ uri: 'localpress://sites' });
+      const [content] = result.contents as Array<{ text?: string }>;
+      expect(content?.text).toBeDefined();
+      expect(JSON.parse(content?.text as string)).toEqual([]);
+    } finally {
+      await close();
+    }
+  }, 30_000);
+
+  test('history_list operation enum covers every operation the history store records', async () => {
+    const { client, close } = await connectClient();
+    try {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === 'history_list');
+      expect(tool).toBeDefined();
+      const schema = tool?.inputSchema as {
+        properties?: { operation?: { enum?: string[] } };
+      };
+      const enumValues = schema.properties?.operation?.enum;
+      expect(enumValues).toBeDefined();
+      // Regression for #213 (2/3): the enum used to only list
+      // optimize/convert/resize/remove-bg/caption, so filtering on an
+      // operation the history store actually records (e.g. `delete`) threw a
+      // Zod validation error even though `localpress history --operation
+      // delete` worked fine on the CLI.
+      for (const op of [
+        'optimize',
+        'convert',
+        'resize',
+        'remove-bg',
+        'caption',
+        'classify',
+        'rename',
+        'delete',
+        'title',
+        'tag',
+        'metadata',
+        'edit',
+        'vision',
+        'describe',
+      ]) {
+        expect(enumValues, `operation enum should include "${op}"`).toContain(op);
+      }
+    } finally {
+      await close();
+    }
+  }, 30_000);
+
+  test('posts_create with content over the 128 KiB argv limit does not hit E2BIG', async () => {
+    const { client, close } = await connectClient();
+    try {
+      // MAX_ARG_STRLEN is 128 KiB per argv element on Linux; a naive
+      // `--content <value>` would fail to spawn at all for content this
+      // large. Regression for #213 (3/3): posts_create/posts_update must
+      // write large content to a temp file and pass `--content-file`.
+      const largeContent = `<p>${'x'.repeat(200_000)}</p>`;
+      const result = await client.callTool({
+        name: 'posts_create',
+        arguments: { title: 'Large content test', content: largeContent },
+      });
+      // No site is configured, so this fails — but on the expected
+      // "no active site" CLI error, not a low-level spawn/E2BIG failure.
+      expect(result.isError).toBe(true);
+      const text = (result.content as Array<{ type: string; text?: string }>)
+        .map((c) => c.text ?? '')
+        .join('\n');
+      expect(text).not.toContain('E2BIG');
+      expect(text).not.toContain('ENAMETOOLONG');
+      expect(text.toLowerCase()).toContain('site');
     } finally {
       await close();
     }

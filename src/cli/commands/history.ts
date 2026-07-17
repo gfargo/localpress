@@ -34,7 +34,7 @@ export function registerHistoryCommand(program: Command): void {
     )
     .option(
       '--operation <op>',
-      'filter by operation (optimize, convert, resize, remove-bg, caption)',
+      'filter by operation (optimize, convert, resize, remove-bg, caption, classify, rename, delete, title, tag, metadata, edit, vision, describe)',
     )
     .option('--limit <n>', 'max sessions/snapshots to show (default 50)', parseIntOption('--limit'))
     .option('-i, --interactive', 'browse with keyboard navigation')
