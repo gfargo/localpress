@@ -22,12 +22,23 @@ import { detectBrokenRefs, fetchAllMedia } from './audit.ts';
 const CACHE_KEY = 'briefing';
 /** Cap on how many posts/pages the a11y sub-scan checks — keeps the call interactive. */
 const A11Y_SCAN_LIMIT = 100;
+/**
+ * Cap on how many media items get a broken-refs check. Each check does up to
+ * 4 full post/page collection scans (see `RestAdapter.findReferences`), so
+ * this is O(items × posts) — unbounded, it can take minutes on a library of
+ * a few hundred attachments. Bounded the same way a11y bounds its post scan.
+ */
+const BROKEN_REFS_SCAN_LIMIT = 30;
+/** Hard cap on the WP-CLI orphan scan so a slow/hung SSH connection can't block the whole briefing. */
+const ORPHANS_TIMEOUT_MS = 20_000;
 
 export interface CategorySummary {
   count: number;
   examples: string[];
   available: boolean;
   unavailableReason?: string;
+  /** Informational note when the check ran but only over a bounded subset (not an error). */
+  note?: string;
 }
 
 export interface BriefingResult {
@@ -149,7 +160,10 @@ export async function runMediaChecks(
 
     const unoptimizedItems = items.filter((i) => !processedIds.has(i.id));
     const missingAltItems = items.filter((i) => !i.altText || i.altText.trim() === '');
-    const brokenRefFindings = await detectBrokenRefs(items, adapter);
+
+    const brokenRefCandidates = items.slice(0, BROKEN_REFS_SCAN_LIMIT);
+    const brokenRefFindings = await detectBrokenRefs(brokenRefCandidates, adapter);
+    const brokenRefsTruncated = items.length > BROKEN_REFS_SCAN_LIMIT;
 
     return {
       unoptimized: {
@@ -166,6 +180,9 @@ export async function runMediaChecks(
         count: brokenRefFindings.length,
         examples: brokenRefFindings.slice(0, 5).map((f) => f.filename),
         available: true,
+        note: brokenRefsTruncated
+          ? `Checked ${BROKEN_REFS_SCAN_LIMIT} of ${items.length} attachments (bounded for interactive use) — run \`localpress audit --broken-refs\` for a full scan.`
+          : undefined,
       },
     };
   } catch (err) {
@@ -221,7 +238,16 @@ export async function runOrphansCheck(resolver: AdapterResolver): Promise<Catego
     };
   }
   try {
-    const result = await pruneAdapter.pruneOrphans();
+    const result = await Promise.race([
+      pruneAdapter.pruneOrphans(),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(new Error(`WP-CLI orphan scan timed out after ${ORPHANS_TIMEOUT_MS / 1000}s`)),
+          ORPHANS_TIMEOUT_MS,
+        ),
+      ),
+    ]);
     return {
       count: result.orphanFiles.length,
       examples: result.orphanFiles.slice(0, 5),
@@ -308,6 +334,7 @@ function printBriefing(json: boolean, result: BriefingResult): void {
     }
     info(`  ${label}: ${c.count}`);
     for (const example of c.examples) info(`    ${example}`);
+    if (c.note) info(`    (${c.note})`);
   }
 
   info(`\n  Total issues: ${result.totalIssues}`);

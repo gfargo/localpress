@@ -91,6 +91,8 @@ interface CategorySummary {
   examples: string[];
   available: boolean;
   unavailableReason?: string;
+  /** Informational note when the check ran but only over a bounded subset (not an error). */
+  note?: string;
 }
 
 interface BriefingResult {
@@ -117,15 +119,19 @@ interface BriefingResult {
   `runA11yCheck`, `runOrphansCheck`) catches its own errors and reports
   `available: false` with `unavailableReason` rather than letting one
   category's failure abort the whole call.
-- **Interactive-latency bound (Requirement 2.2)**: `detectBrokenRefs` does up
-  to 4 full post/page collection scans per attachment
-  (`RestAdapter.findReferences`), which is O(items × posts) — needs a bound
-  on item count before it's safe for an interactive Kiro round-trip on a
-  library of any real size. The WP-CLI orphan scan runs over SSH and has no
-  inherent upper bound either; it needs a timeout so a slow/hung connection
-  can't block the whole briefing. Exact limits to be tuned against a real
-  site during manual testing (see tasks.md item 8) rather than guessed
-  up front.
+- **Broken-refs is bounded, not unbounded (Requirement 2.2)**: `detectBrokenRefs`
+  does up to 4 full post/page collection scans per attachment
+  (`RestAdapter.findReferences`), which is O(items × posts). Discovered via
+  live-testing against a 412-attachment site that this took minutes
+  unbounded. Capped to the first 30 attachments (`BROKEN_REFS_SCAN_LIMIT`),
+  with a `note` on the category when truncated pointing to
+  `localpress audit --broken-refs` for a full scan.
+- **Orphan scan is time-boxed, not unbounded (Requirement 2.1, 2.2)**: WP-CLI
+  over SSH can hang or run long on a slow connection or large uploads
+  directory. Wrapped in a 20-second `Promise.race` timeout
+  (`ORPHANS_TIMEOUT_MS`); on timeout the category reports
+  `available: false` with a clear reason instead of blocking the rest of
+  the briefing.
 - **Ollama unreachable**: `isOllamaAvailable()` checked before attempting
   the narrative pass. If unreachable, `narrative: null` and
   `narrativeUnavailable: true` — the structured summary is still returned
@@ -149,7 +155,8 @@ against fake adapters / mocked `fetch` (no live network):
   Ollama when `totalIssues` is 0; marks the narrative unavailable (not an
   error) when Ollama is unreachable.
 
-A manual smoke test against a real WordPress site (see tasks.md item 8) is
-required before calling this done — mocked-fetch unit tests can't catch
-real-world scale problems (e.g. a media library large enough to make an
-unbounded scan slow).
+Manual smoke test against a real WordPress site (`wp.griffen.codes`, 412
+attachments / 43 posts) is documented in tasks.md item 8 — this is what
+surfaced the broken-refs/orphan-scan performance issues that the Error
+Handling section above addresses. Mocked-fetch unit tests alone didn't catch
+this real-world scale problem.
