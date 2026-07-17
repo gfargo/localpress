@@ -164,6 +164,72 @@ export async function generateCaption(
   };
 }
 
+export interface GenerateTextOptions {
+  model?: string;
+  ollamaUrl?: string;
+  /** Hard cap on generated tokens. Defaults to a higher ceiling than vision captions since this is prose, not alt-text. */
+  maxTokens?: number;
+}
+
+export interface GenerateTextResult {
+  text: string;
+  model: string;
+  durationMs: number;
+}
+
+/**
+ * Plain text-in, text-out Ollama call — no image payload. Used for
+ * synthesizing a natural-language narrative from a structured summary
+ * (e.g. `site_briefing`'s aggregated audit results), not for vision tasks.
+ */
+export async function generateText(
+  prompt: string,
+  options: GenerateTextOptions = {},
+): Promise<GenerateTextResult> {
+  const baseUrl = options.ollamaUrl ?? DEFAULT_OLLAMA_URL;
+  const model = options.model ?? DEFAULT_OLLAMA_MODEL;
+  const start = Date.now();
+
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        prompt,
+        stream: false,
+        options: { num_predict: options.maxTokens ?? 400 },
+      }),
+      signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error(
+        `Ollama did not respond within ${GENERATE_TIMEOUT_MS / 1000}s (model may be wedged or too slow for this hardware).`,
+      );
+    }
+    throw err;
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Ollama returned ${res.status}: ${text}`);
+  }
+
+  const data = (await res.json()) as OllamaGenerateResponse;
+  if (data.error) throw new Error(`Ollama error: ${data.error}`);
+  if (!data.response || data.response.trim().length === 0) {
+    throw new Error('Ollama returned an empty response.');
+  }
+
+  return {
+    text: data.response.trim(),
+    model,
+    durationMs: Date.now() - start,
+  };
+}
+
 /**
  * Heuristic: does this caption look like garbage from a confused model?
  *

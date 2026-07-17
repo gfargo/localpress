@@ -26,7 +26,7 @@ const DEFAULT_THRESHOLD = 1024 * 1024; // 1 MB
 /** Flag an image as oversized if it's this many times larger than its largest WP size. */
 const DISPLAY_SIZE_RATIO = 2.0;
 
-interface AuditFinding {
+export interface AuditFinding {
   type:
     | 'unoptimized'
     | 'large'
@@ -533,7 +533,10 @@ function hammingDistance(a: bigint, b: bigint): number {
  * Attachments with zero references are unattached media, not broken refs —
  * that's what --unattached is for.
  */
-async function detectBrokenRefs(items: MediaItem[], adapter: WpBackend): Promise<AuditFinding[]> {
+export async function detectBrokenRefs(
+  items: MediaItem[],
+  adapter: WpBackend,
+): Promise<AuditFinding[]> {
   const findings: AuditFinding[] = [];
 
   const CONCURRENCY = 10;
