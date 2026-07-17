@@ -115,12 +115,12 @@ localpress a11y
 
 ---
 
-## 38+ commands
+## 39+ commands
 
 | Category | Commands |
 |----------|----------|
 | **Setup** | `init`, `sites`, `doctor`, `config` |
-| **Discovery** | `list`, `show`, `stats`, `audit`, `references` |
+| **Discovery** | `list`, `show`, `stats`, `audit`, `references`, `briefing` |
 | **Processing** | `optimize`, `convert`, `resize`, `remove-bg`, `caption`, `metadata` |
 | **AI Vision** | `title`, `describe`, `classify`, `tag`, `vision`, `rename` |
 | **Content** | `posts list/show/create/update/delete` |
@@ -139,7 +139,7 @@ All commands accept `--json` for machine-readable output and `--help` for usage 
 
 ## AI agent integration (MCP)
 
-localpress ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server with 40+ typed tools. Add it to any MCP host:
+localpress ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server with 47+ typed tools. Add it to any MCP host:
 
 ```jsonc
 // Claude Desktop, Cursor, VS Code, Kiro, etc.
@@ -150,11 +150,31 @@ localpress ships a built-in [Model Context Protocol](https://modelcontextprotoco
 }
 ```
 
-The agent gets typed schemas for every operation — optimize, caption, posts CRUD, accessibility audit, remove-bg, export/import, delete, undo, and more.
+**Kiro** ([`.kiro/settings/mcp.json`](.kiro/settings/mcp.json), workspace-scoped):
+
+```jsonc
+{
+  "mcpServers": {
+    "localpress": {
+      "command": "localpress",
+      "args": ["mcp"],
+      "autoApprove": ["sites_list", "doctor", "list", "stats", "show", "audit", "site_briefing"]
+    }
+  }
+}
+```
+
+`autoApprove` lists read-only tools Kiro can call without a per-call confirmation prompt. WordPress credentials live in localpress's own config (`localpress init`), never in this file — there's nothing to reference via an env var here.
+
+The agent gets typed schemas for every operation — optimize, caption, posts CRUD, accessibility audit, remove-bg, export/import, delete, undo, site briefing, and more.
 
 Structured JSON results, capability discovery via resources, and concurrency control on all bulk operations.
 
 A markdown **skill** (`skill/SKILL.md`) is also available for agents that prefer shelling out to the CLI directly.
+
+### Kiro Birthday Challenge — `site_briefing`
+
+Built for Kiro's birthday-week "Custom MCP Integration" challenge: `site_briefing` is a new MCP tool that answers "what does my WordPress site need today?" in one call. It aggregates every check localpress already knows how to run — unoptimized images, missing alt text, broken content references, orphaned media, and accessibility issues — into a structured summary, then synthesizes a short plain-English triage with a local Ollama text pass (no cloud API). Ask Kiro "what does my WordPress site need today?" and it calls `site_briefing` against a real site and reports back in plain English instead of you running five separate audits yourself.
 
 ---
 
@@ -169,6 +189,7 @@ A markdown **skill** (`skill/SKILL.md`) is also available for agents that prefer
 - **Multilingual captions** — `caption --language French` generates alt text in any language the Ollama model supports.
 - **Posts & pages** — full CRUD for posts, pages, and custom post types. Create drafts, publish, update content, manage categories/tags.
 - **Accessibility audit** — `a11y` checks heading hierarchy, generic link text, missing img alt, and empty links across all published content.
+- **Site briefing** — `briefing` (and the `site_briefing` MCP tool) rolls up every check above into one summary plus a plain-English Ollama narrative, cached per-site for fast repeat calls (`--fresh` forces a live re-scan).
 
 ---
 
@@ -176,7 +197,7 @@ A markdown **skill** (`skill/SKILL.md`) is also available for agents that prefer
 
 ```text
 ┌──────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  MCP Server (40+ │───▶│  localpress CLI  │───▶│  Remote WP site │
+│  MCP Server (47+ │───▶│  localpress CLI  │───▶│  Remote WP site │
 │  tools) / Skill  │    │  (TS + Bun)      │    │  (REST / SSH)   │
 └──────────────────┘    └──────────────────┘    └─────────────────┘
                                 │
