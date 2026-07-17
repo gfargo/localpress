@@ -154,44 +154,17 @@ export async function runMediaChecks(
   missingAlt: CategorySummary;
   brokenRefs: CategorySummary;
 }> {
+  let items: Awaited<ReturnType<typeof fetchAllMedia>>;
   try {
-    const items = await fetchAllMedia(adapter);
-    const processedIds = db.listProcessedWpIds(siteName);
-
-    const unoptimizedItems = items.filter((i) => !processedIds.has(i.id));
-    const missingAltItems = items.filter((i) => !i.altText || i.altText.trim() === '');
-
-    const brokenRefCandidates = items.slice(0, BROKEN_REFS_SCAN_LIMIT);
-    const brokenRefFindings = await detectBrokenRefs(brokenRefCandidates, adapter);
-    const brokenRefsTruncated = items.length > BROKEN_REFS_SCAN_LIMIT;
-
-    return {
-      unoptimized: {
-        count: unoptimizedItems.length,
-        examples: unoptimizedItems.slice(0, 5).map((i) => i.filename),
-        available: true,
-      },
-      missingAlt: {
-        count: missingAltItems.length,
-        examples: missingAltItems.slice(0, 5).map((i) => i.filename),
-        available: true,
-      },
-      brokenRefs: {
-        count: brokenRefFindings.length,
-        examples: brokenRefFindings.slice(0, 5).map((f) => f.filename),
-        available: true,
-        note: brokenRefsTruncated
-          ? `Checked ${BROKEN_REFS_SCAN_LIMIT} of ${items.length} attachments (bounded for interactive use) — run \`localpress audit --broken-refs\` for a full scan.`
-          : undefined,
-      },
-    };
+    items = await fetchAllMedia(adapter);
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
+    // Nothing below can proceed without the media list — all three
+    // categories genuinely depend on this.
     const unavailable: CategorySummary = {
       count: 0,
       examples: [],
       available: false,
-      unavailableReason: reason,
+      unavailableReason: err instanceof Error ? err.message : String(err),
     };
     return {
       unoptimized: unavailable,
@@ -199,6 +172,58 @@ export async function runMediaChecks(
       brokenRefs: { ...unavailable },
     };
   }
+
+  // Each of the three checks below is isolated so a failure in one (e.g. a
+  // locked local SQLite file) doesn't blank out categories that don't
+  // actually depend on it.
+  let unoptimized: CategorySummary;
+  try {
+    const processedIds = db.listProcessedWpIds(siteName);
+    const unoptimizedItems = items.filter((i) => !processedIds.has(i.id));
+    unoptimized = {
+      count: unoptimizedItems.length,
+      examples: unoptimizedItems.slice(0, 5).map((i) => i.filename),
+      available: true,
+    };
+  } catch (err) {
+    unoptimized = {
+      count: 0,
+      examples: [],
+      available: false,
+      unavailableReason: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const missingAltItems = items.filter((i) => !i.altText || i.altText.trim() === '');
+  const missingAlt: CategorySummary = {
+    count: missingAltItems.length,
+    examples: missingAltItems.slice(0, 5).map((i) => i.filename),
+    available: true,
+  };
+
+  let brokenRefs: CategorySummary;
+  try {
+    const brokenRefCandidates = items.slice(0, BROKEN_REFS_SCAN_LIMIT);
+    const brokenRefFindings = await detectBrokenRefs(brokenRefCandidates, adapter);
+    const brokenRefsTruncated = items.length > BROKEN_REFS_SCAN_LIMIT;
+    brokenRefs = {
+      count: brokenRefFindings.length,
+      examples: brokenRefFindings.slice(0, 5).map((f) => f.filename),
+      available: true,
+      note: brokenRefsTruncated
+        ? `Checked ${BROKEN_REFS_SCAN_LIMIT} of ${items.length} attachments (bounded for interactive use) — run \`localpress audit --broken-refs\` for a full scan.`
+        : undefined,
+    };
+  } catch (err) {
+    brokenRefs = {
+      count: 0,
+      examples: [],
+      available: false,
+      unavailableReason: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  return { unoptimized, missingAlt, brokenRefs };
 }
 
 export async function runA11yCheck(site: SiteConfig): Promise<CategorySummary> {
@@ -237,16 +262,17 @@ export async function runOrphansCheck(resolver: AdapterResolver): Promise<Catego
       unavailableReason: 'Requires WP-CLI over SSH — configure SSH access for this site to enable.',
     };
   }
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
       pruneAdapter.pruneOrphans(),
-      new Promise<never>((_, reject) =>
-        setTimeout(
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(
           () =>
             reject(new Error(`WP-CLI orphan scan timed out after ${ORPHANS_TIMEOUT_MS / 1000}s`)),
           ORPHANS_TIMEOUT_MS,
-        ),
-      ),
+        );
+      }),
     ]);
     return {
       count: result.orphanFiles.length,
@@ -260,6 +286,11 @@ export async function runOrphansCheck(resolver: AdapterResolver): Promise<Catego
       available: false,
       unavailableReason: err instanceof Error ? err.message : String(err),
     };
+  } finally {
+    // Without this, a fast orphan scan (finishing well before the timeout)
+    // leaves the timer pending and keeps the CLI process alive for up to
+    // ORPHANS_TIMEOUT_MS after everything else has already completed.
+    clearTimeout(timeoutHandle);
   }
 }
 

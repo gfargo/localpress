@@ -177,6 +177,23 @@ describe('runMediaChecks', () => {
     expect(result.missingAlt.available).toBe(false);
     expect(result.brokenRefs.available).toBe(false);
   });
+
+  test('isolates a local-db failure to just the unoptimized category', async () => {
+    const items = [makeItem(1, { altText: '' }), makeItem(2, { altText: 'has alt' })];
+    const adapter = new FakeMediaAdapter(items);
+    const db = SiteDb.init(':memory:');
+    db.ensureSite('test-briefing-site', 'https://example.test');
+    db.close(); // Any query against a closed handle throws — simulates a locked/corrupt local db.
+
+    const result = await runMediaChecks(adapter, db, 'test-briefing-site');
+
+    // Only unoptimized depends on the local db (listProcessedWpIds); missingAlt
+    // and brokenRefs only need the media list, which the adapter still served.
+    expect(result.unoptimized.available).toBe(false);
+    expect(result.missingAlt.available).toBe(true);
+    expect(result.missingAlt.count).toBe(1);
+    expect(result.brokenRefs.available).toBe(true);
+  });
 });
 
 describe('runOrphansCheck', () => {
