@@ -16,6 +16,7 @@ import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { MediaItem } from '../../adapters/types.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 export function registerRegenerateCommand(program: Command): void {
   program
@@ -64,12 +65,7 @@ export function registerRegenerateCommand(program: Command): void {
           process.exit(2);
         }
       } else {
-        // --all: list all attachments.
-        if (!parentOpts.apply && !parentOpts.dryRun) {
-          // Default to dry-run for bulk.
-          info('Dry-run mode (pass --apply to execute):\n');
-        }
-
+        // --all: list all attachments (read-only, safe to do before the dry-run gate).
         const listAdapter = resolver.resolve('list');
         let allItems: MediaItem[] = [];
         let page = 1;
@@ -86,14 +82,17 @@ export function registerRegenerateCommand(program: Command): void {
           info('No attachments found.');
           return;
         }
+      }
 
-        if (!parentOpts.apply) {
-          info(`Would regenerate thumbnails for ${ids.length} attachment(s).`);
-          if (parentOpts.json) {
-            printJson({ dryRun: true, count: ids.length, ids });
-          }
-          return;
+      const isDryRun = resolveDryRun(parentOpts, isBulk);
+      if (isDryRun) {
+        info(
+          `Dry-run: would regenerate thumbnails for ${ids.length} attachment(s). Pass --apply to execute.`,
+        );
+        if (parentOpts.json) {
+          printJson({ dryRun: true, count: ids.length, ids });
         }
+        return;
       }
 
       // Execute regeneration.

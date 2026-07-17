@@ -38,6 +38,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 type Field = 'alt' | 'title' | 'description' | 'tags' | 'classify';
 const ALL_FIELDS: readonly Field[] = ['alt', 'title', 'description', 'tags', 'classify'] as const;
@@ -116,7 +117,9 @@ export function registerVisionCommand(program: Command): void {
         process.exit(2);
       }
 
-      const apply = Boolean(parentOpts.apply);
+      // Print-only by default (even for a single explicit ID) — pass --apply to
+      // write.
+      const apply = !resolveDryRun(parentOpts, true);
       if (!apply) {
         info(
           '  Print-only mode. Re-run with --apply to write the generated fields back to WordPress.',

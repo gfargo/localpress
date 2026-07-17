@@ -26,6 +26,7 @@ import type { ImageFormat } from '../../engine/image/types.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { resolveDryRun } from '../utils/run-mode.ts';
 
 /** Image extensions we recognize for import. */
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.avif', '.gif', '.svg']);
@@ -279,7 +280,7 @@ export function registerImportCommand(program: Command): void {
 
       const manifestIndex = manifest && preserveMetadata ? buildManifestIndex(manifest) : null;
 
-      if (parentOpts.dryRun) {
+      if (resolveDryRun(parentOpts, false)) {
         info(`Would import ${filesToImport.length} file(s) to ${site.name} (${site.url})`);
         if (options.optimize) info(`  with optimization (quality=${options.quality ?? 'default'})`);
         if (options.to) info(`  converting to: ${options.to}`);

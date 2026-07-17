@@ -156,20 +156,20 @@ export function registerRenameCommand(program: Command): void {
             continue;
           }
 
-          // Always upsert first (FK safety for processing_history).
-          db.upsertAttachment({
-            siteName: site.name,
-            wpId: item.id,
-            sourceUrl: item.url,
-            sourceHash: null,
-            sizeBytes: item.sizeBytes ?? null,
-            width: item.width ?? null,
-            height: item.height ?? null,
-            mimeType: item.mimeType,
-            lastSeenAt: Date.now(),
-          });
-
           if (!dryRun) {
+            // Upsert first (FK safety for processing_history).
+            db.upsertAttachment({
+              siteName: site.name,
+              wpId: item.id,
+              sourceUrl: item.url,
+              sourceHash: null,
+              sizeBytes: item.sizeBytes ?? null,
+              width: item.width ?? null,
+              height: item.height ?? null,
+              mimeType: item.mimeType,
+              lastSeenAt: Date.now(),
+            });
+
             if (session) {
               captureSnapshot(snapshotStore, {
                 siteName: site.name,
