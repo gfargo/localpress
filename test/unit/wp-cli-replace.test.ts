@@ -76,14 +76,17 @@ function resetState(): void {
   state.searchReplaceShouldFail = null;
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
+// Delegate the pure helpers to the real implementations rather than
+// reimplementing them — if this mock ever leaks into another file (e.g. via
+// a mock.module ordering race), a diverging fake here would corrupt that
+// file's assertions on the real sshDestination/buildSshArgs/shellQuote
+// behavior. Only sshExec/scpUpload (the actual I/O) are faked.
+const { shellQuote, sshDestination, buildSshArgs } = actualSsh;
 
 mock.module('../../src/adapters/ssh.ts', () => ({
   shellQuote,
-  sshDestination: (ssh: SiteConfig['ssh']) => `${ssh?.user}@${ssh?.host}`,
-  buildSshArgs: () => [] as string[],
+  sshDestination,
+  buildSshArgs,
   scpUpload: mock(async () => ok('')),
   sshExec: mock(async (_ssh: unknown, command: string) => {
     state.calls.push(command);
