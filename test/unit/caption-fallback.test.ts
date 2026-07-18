@@ -180,6 +180,46 @@ describe('generateCaptionWithFallback — fallback error path', () => {
     expect(callCount).toBe(2);
   });
 
+  test('returns the longer caption when both primary and fallback are garbage', async () => {
+    let callCount = 0;
+    globalThis.fetch = (async (input: string | URL, _init?: RequestInit): Promise<Response> => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.endsWith('/api/tags')) {
+        return new Response(
+          JSON.stringify({
+            models: [
+              { name: 'primary', size: 1 },
+              { name: 'fallback', size: 1 },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (url.endsWith('/api/generate')) {
+        callCount++;
+        if (callCount === 1) {
+          return ollamaResponse('[0.1, 0.2, 0.3]'); // garbage: coordinate array
+        }
+        return ollamaResponse('A.'); // garbage: shorter than primary
+      }
+
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const buf = tinyPngBuffer();
+    const result = await generateCaptionWithFallback(buf, {
+      model: 'primary',
+      fallbackModel: 'fallback',
+      ollamaUrl: 'http://localhost:11434',
+    });
+
+    // Neither result is usable, so we keep the longer of the two garbage strings.
+    expect(result.caption).toBe('[0.1, 0.2, 0.3]');
+    expect(callCount).toBe(2);
+  });
+
   test('skips fallback when primary result looks fine', async () => {
     let callCount = 0;
     globalThis.fetch = (async (input: string | URL, _init?: RequestInit): Promise<Response> => {
