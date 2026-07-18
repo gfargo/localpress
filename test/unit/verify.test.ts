@@ -1,20 +1,43 @@
 /**
- * Unit tests for the `verify --hash` file-comparison helper.
+ * Unit tests for the `localpress verify` command registration and the
+ * `verify --hash` file-comparison helper.
  *
- * Covers OSS-902: the remote file fetch must send auth headers, and any
+ * Includes a regression test for #195: `verify` was registered with a
+ * required `<ids...>` positional, which made commander reject `verify --all`
+ * before the action ever ran. Locks in the fix (`[ids...]`, optional).
+ *
+ * Also covers OSS-902: the remote file fetch must send auth headers, and any
  * failure to actually perform the comparison must be reported as
  * `verified: false` (never silently treated as a match).
  */
 
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { verifyRemoteHash } from '../../src/cli/commands/verify.ts';
+import { Command } from 'commander';
+import { registerVerifyCommand, verifyRemoteHash } from '../../src/cli/commands/verify.ts';
 
 const AUTH_HEADER = 'Basic dXNlcjpwYXNz';
 
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
+
+describe('verify command registration', () => {
+  test('verify command is registered in the CLI', async () => {
+    const mod = await import('../../src/cli/commands/verify.ts');
+    expect(mod.registerVerifyCommand).toBeFunction();
+  });
+
+  test('the ids positional is optional, so --all is reachable', () => {
+    const program = new Command();
+    registerVerifyCommand(program);
+
+    const verify = program.commands.find((cmd) => cmd.name() === 'verify');
+    expect(verify).toBeDefined();
+    expect(verify?.registeredArguments).toHaveLength(1);
+    expect(verify?.registeredArguments[0]?.required).toBe(false);
+  });
+});
 
 describe('verifyRemoteHash', () => {
   test('matching bytes: verified true, mismatch false', async () => {

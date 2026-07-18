@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { invokeCli } from './invoke.ts';
+import { type CliResult, invokeCli } from './invoke.ts';
 
 /**
  * Common args every tool accepts.
@@ -158,6 +158,43 @@ export function mergeBatchedOutputs(
 }
 
 /**
+ * Decide what to feed the merger for one chunk's CLI result.
+ *
+ * `optimize`/`caption` print their full `--json` result (processed/failures/
+ * results) and *then* call `process.exit(1)` whenever any item in the chunk
+ * failed (see optimize.ts:782, caption.ts's equivalent) — so a non-zero exit
+ * code does not mean the printed JSON is untrustworthy. We must parse and
+ * merge that JSON regardless of exit code, or we silently drop successful
+ * results that already happened on the live site. Only fall back to a
+ * synthetic `{ failures: chunkSize }` when there's no parseable JSON object
+ * to trust (hard crash, timeout, stderr-only error).
+ */
+export function resolveChunkOutput(
+  result: Pick<CliResult, 'ok' | 'stdout' | 'exitCode'>,
+  chunkSize: number,
+  batchNumber: number,
+): { output: Record<string, unknown>; stderrNote?: string } {
+  if (
+    typeof result.stdout === 'object' &&
+    result.stdout !== null &&
+    !Array.isArray(result.stdout)
+  ) {
+    const output = result.stdout as Record<string, unknown>;
+    return result.ok
+      ? { output }
+      : {
+          output,
+          stderrNote: `Batch ${batchNumber} exited ${result.exitCode} (partial failure — counts derived from JSON)`,
+        };
+  }
+
+  return {
+    output: { failures: chunkSize },
+    stderrNote: `Batch ${batchNumber} failed (exit ${result.exitCode})`,
+  };
+}
+
+/**
  * Run a processing command in batches when many IDs are passed.
  * Splits the ID array into chunks of BATCH_CHUNK_SIZE, invokes the CLI
  * for each chunk sequentially, and merges the JSON results.
@@ -186,13 +223,13 @@ async function runCliBatched(
 
     if (result.stderr) allStderr += `${result.stderr}\n`;
 
-    if (result.ok && typeof result.stdout === 'object' && result.stdout !== null) {
-      chunkOutputs.push(result.stdout as Record<string, unknown>);
-    } else if (!result.ok) {
-      // Partial failure — record the error but continue with remaining chunks.
-      allStderr += `Batch ${Math.floor(i / BATCH_CHUNK_SIZE) + 1} failed (exit ${result.exitCode})\n`;
-      chunkOutputs.push({ failures: chunk.length });
-    }
+    const { output, stderrNote } = resolveChunkOutput(
+      result,
+      chunk.length,
+      Math.floor(i / BATCH_CHUNK_SIZE) + 1,
+    );
+    if (stderrNote) allStderr += `${stderrNote}\n`;
+    chunkOutputs.push(output);
   }
 
   const merged = mergeBatchedOutputs(chunkOutputs);

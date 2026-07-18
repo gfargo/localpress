@@ -147,4 +147,63 @@ describe('shouldSkipOptimize', () => {
     const differentOpts: OptimizeOptions = { toFormat: 'avif', quality: 80 };
     expect(shouldSkipOptimize(last, 'original-hash', differentOpts, false)).toBe(false);
   });
+
+  // --- Reverted rows (undo applied) — OSS-919 / localpress#199 -------------
+  // A row with revertedAt set must always be treated as non-skippable so that
+  // `optimize → undo → optimize` (with identical options and unchanged source)
+  // re-optimizes instead of skipping indefinitely.
+
+  test('upload-as-new + reverted: re-optimizes (exact bug scenario from OSS-919)', () => {
+    // Simulate: optimize ran and created a new attachment (#123). Then undo
+    // was called, setting revertedAt. The source bytes were never touched, so
+    // the live hash still matches the recorded sourceHash — but the row is
+    // reverted, so we must NOT skip.
+    const last = record({
+      sourceHash: 'original-hash',
+      resultHash: 'optimized-hash',
+      resultWpId: 123,
+      revertedAt: Date.now(),
+      paramsJson: JSON.stringify(OPTS),
+    });
+    expect(shouldSkipOptimize(last, 'original-hash', OPTS, false)).toBe(false);
+  });
+
+  test('replace-in-place + reverted: re-optimizes (guard against future regression)', () => {
+    // For completeness: in-place path also returns false when reverted,
+    // even though it happened to escape via hash change before this fix.
+    const last = record({
+      sourceHash: 'original-hash',
+      resultHash: 'result-hash',
+      resultWpId: null,
+      revertedAt: Date.now(),
+      paramsJson: JSON.stringify(OPTS),
+    });
+    expect(shouldSkipOptimize(last, 'result-hash', OPTS, false)).toBe(false);
+  });
+
+  test('reverted skipped-status row: re-optimizes', () => {
+    // A status:'skipped' row that was subsequently reverted must also be
+    // re-runnable (the revertedAt guard fires before any hash comparison).
+    const skippedOpts: OptimizeOptions = { toFormat: 'webp' };
+    const last = record({
+      status: 'skipped',
+      sourceHash: 'source-hash',
+      resultHash: 'source-hash',
+      revertedAt: Date.now(),
+      paramsJson: JSON.stringify(skippedOpts),
+    });
+    expect(shouldSkipOptimize(last, 'source-hash', skippedOpts, false)).toBe(false);
+  });
+
+  test('non-reverted upload-as-new: still skips (existing idempotency unchanged)', () => {
+    // Confirm the fix does not regress the ordinary no-undo path.
+    const last = record({
+      sourceHash: 'original-hash',
+      resultHash: 'optimized-hash',
+      resultWpId: 123,
+      revertedAt: null,
+      paramsJson: JSON.stringify(OPTS),
+    });
+    expect(shouldSkipOptimize(last, 'original-hash', OPTS, false)).toBe(true);
+  });
 });

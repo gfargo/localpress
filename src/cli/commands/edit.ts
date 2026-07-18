@@ -79,10 +79,28 @@ export function registerEditCommand(program: Command): void {
       const editorDesc = describeEditor(options.with);
       info(`  Opening in ${editorDesc}...`);
 
+      let cleanedUp = false;
+      const cleanupTemp = () => {
+        if (cleanedUp || options.keepFile || options.to) return;
+        cleanedUp = true;
+        try {
+          rmSync(destDir, { recursive: true, force: true });
+        } catch {
+          // Best effort.
+        }
+      };
+
       try {
-        openInEditor(localPath, options.with);
+        openInEditor(localPath, options.with, (err) => {
+          error(`Could not open editor "${editorDesc}" — is it installed and on your PATH?`);
+          error(`  (${err.message})`);
+          error('  Use --with <app> to pick a different editor, or --keep-file to keep the file.');
+          cleanupTemp();
+          process.exit(1);
+        });
       } catch (err) {
         error(`Failed to open editor: ${err instanceof Error ? err.message : String(err)}`);
+        cleanupTemp();
         process.exit(1);
       }
 
@@ -230,13 +248,7 @@ export function registerEditCommand(program: Command): void {
       await watcher.close();
       db.close();
 
-      if (!options.keepFile && !options.to) {
-        try {
-          rmSync(destDir, { recursive: true, force: true });
-        } catch {
-          // Best effort.
-        }
-      }
+      cleanupTemp();
 
       info('');
       info(`  Done. ${uploadCount} change(s) synced.`);
