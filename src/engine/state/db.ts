@@ -7,7 +7,7 @@
 
 import { Database } from 'bun:sqlite';
 
-import { INITIAL_SCHEMA, MIGRATIONS, SCHEMA_VERSION } from './schema.ts';
+import { INITIAL_SCHEMA, MIGRATIONS, type Migration, SCHEMA_VERSION } from './schema.ts';
 
 export interface AttachmentRecord {
   siteName: string;
@@ -62,24 +62,7 @@ export class SiteDb {
     // Apply the initial schema (idempotent — uses IF NOT EXISTS).
     db.exec(INITIAL_SCHEMA);
 
-    const stored = getStoredSchemaVersion(db);
-
-    // Run any migrations newer than the stored version.
-    for (const migration of MIGRATIONS) {
-      if (migration.version > stored) {
-        db.exec(migration.up);
-      }
-    }
-
-    // Stamp the schema version only when it actually changed, so read-only
-    // commands (stats, history) don't take a write lock just by opening the DB.
-    if (stored !== SCHEMA_VERSION) {
-      db.run(
-        `INSERT INTO schema_version (version) VALUES (?)
-         ON CONFLICT (version) DO UPDATE SET version = excluded.version`,
-        [SCHEMA_VERSION],
-      );
-    }
+    runMigrations(db);
 
     return new SiteDb(db);
   }
@@ -674,6 +657,65 @@ export function getStoredSchemaVersion(db: Database): number {
   } catch {
     // Table may not exist yet on first run.
     return 0;
+  }
+}
+
+/**
+ * Run any pending migrations. Read-only opens at the current SCHEMA_VERSION
+ * take no write lock (so `stats`/`history` don't contend with a `watch`
+ * daemon just by opening the DB) — only DBs behind the target version pay
+ * for a transaction.
+ */
+function runMigrations(db: Database): void {
+  const stored = getStoredSchemaVersion(db);
+  if (stored >= SCHEMA_VERSION) {
+    return;
+  }
+
+  for (const migration of MIGRATIONS) {
+    applyMigration(db, migration);
+  }
+}
+
+/**
+ * Apply a single migration atomically: BEGIN IMMEDIATE takes the write lock
+ * up front (other connections wait via PRAGMA busy_timeout), the stored
+ * version is re-read *inside* the lock so a competing connection that already
+ * applied this migration is a no-op here, and the DDL + version stamp commit
+ * together — an interrupted process leaves the DB fully at the old version or
+ * fully at the new one, never in between.
+ */
+function applyMigration(db: Database, migration: Migration): void {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const current = getStoredSchemaVersion(db);
+    if (migration.version <= current) {
+      db.exec('COMMIT');
+      return;
+    }
+
+    try {
+      db.exec(migration.up);
+    } catch (err) {
+      // A crash between a previous run's ALTER and its version stamp leaves
+      // the column present but the version un-bumped; treat "already applied"
+      // DDL as success instead of bricking every subsequent init.
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column name/i.test(message)) {
+        throw err;
+      }
+    }
+
+    db.run(
+      `INSERT INTO schema_version (version) VALUES (?)
+       ON CONFLICT (version) DO UPDATE SET version = excluded.version`,
+      [migration.version],
+    );
+
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
   }
 }
 
