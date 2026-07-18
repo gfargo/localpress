@@ -41,7 +41,7 @@ interface VerifyResult {
 
 export function registerVerifyCommand(program: Command): void {
   program
-    .command('verify <ids...>')
+    .command('verify [ids...]')
     .description('Cross-check local DB state against remote WordPress for one or more attachments')
     .option('--hash', 'download remote file and verify SHA-256 hash (slower)')
     .option('--all', 'verify all locally-tracked attachments')
@@ -56,11 +56,19 @@ export function registerVerifyCommand(program: Command): void {
 
       let targetIds: number[];
 
-      if (options.all) {
+      if (idStrs.length > 0) {
+        targetIds = parseAttachmentIds(idStrs);
+      } else if (options.all) {
         const attachments = db.listAttachments(site.name);
         targetIds = attachments.map((a) => a.wpId);
       } else {
-        targetIds = parseAttachmentIds(idStrs);
+        error(
+          'Specify attachment IDs, or use --all to verify all locally-tracked attachments.\n' +
+            'Example: localpress verify 123 124\n' +
+            '         localpress verify --all',
+        );
+        db.close();
+        process.exit(2);
       }
 
       if (targetIds.length === 0) {

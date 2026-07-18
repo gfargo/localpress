@@ -280,6 +280,23 @@ export function registerRemoveBgCommand(program: Command): void {
               resultWpId = uploaded.id;
             }
 
+            // Update the attachment row to reflect the actual post-op state.
+            // `resultWpId === id` means the original was replaced in place —
+            // the live file now IS the (always-PNG) background-removed
+            // result, so the record `verify` compares against must match.
+            const wasReplacedInPlace = resultWpId === id;
+            db.upsertAttachment({
+              siteName: site.name,
+              wpId: item.id,
+              sourceUrl: item.url,
+              sourceHash: wasReplacedInPlace ? resultHash : sourceHash,
+              sizeBytes: wasReplacedInPlace ? resultBytes.length : sourceBytes.length,
+              width: item.width ?? null,
+              height: item.height ?? null,
+              mimeType: wasReplacedInPlace ? 'image/png' : item.mimeType,
+              lastSeenAt: Date.now(),
+            });
+
             // Record in SQLite.
             db.recordProcessing({
               siteName: site.name,
@@ -528,16 +545,21 @@ export function registerRemoveBgCommand(program: Command): void {
             }
           }
 
-          // Record in SQLite.
+          // Record in SQLite. `resultWpId === item.id` means the original
+          // attachment was replaced in place — the live file now IS the
+          // background-removed (always PNG) result, so the attachments
+          // table (which `verify` compares against) must reflect that, not
+          // the pre-processing bytes/mime.
+          const wasReplacedInPlace = resultWpId === item.id;
           db.upsertAttachment({
             siteName: site.name,
             wpId: item.id,
             sourceUrl: item.url,
-            sourceHash,
-            sizeBytes: sourceBytes.length,
+            sourceHash: wasReplacedInPlace ? resultHash : sourceHash,
+            sizeBytes: wasReplacedInPlace ? resultBytes.length : sourceBytes.length,
             width: item.width ?? null,
             height: item.height ?? null,
-            mimeType: item.mimeType,
+            mimeType: wasReplacedInPlace ? 'image/png' : item.mimeType,
             lastSeenAt: Date.now(),
           });
           db.recordProcessing({

@@ -1001,3 +1001,164 @@ describe('concurrent access (localpress#114)', () => {
     }
   }, 10_000);
 });
+
+describe('schema migration atomicity & idempotency (localpress#194)', () => {
+  /** Read pragma_table_info for a table on a fresh readonly connection. */
+  function columnNames(dbPath: string, table: string): string[] {
+    const conn = new Database(dbPath, { readonly: true });
+    try {
+      const rows = conn.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      return rows.map((row) => row.name);
+    } finally {
+      conn.close();
+    }
+  }
+
+  /** Simulate a process killed between the v5 ALTER and its version stamp. */
+  function revertStampToV4(dbPath: string): void {
+    const conn = new Database(dbPath);
+    try {
+      conn.exec('DELETE FROM schema_version WHERE version = 5');
+    } finally {
+      conn.close();
+    }
+  }
+
+  test('fresh init reaches v5 with reverted_at present', () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'localpress-migration-test-'));
+    const dbPath = join(tmpRoot, 'site.db');
+    try {
+      const db = SiteDb.init(dbPath);
+      db.close();
+
+      expect(columnNames(dbPath, 'processing_history')).toContain('reverted_at');
+
+      const conn = new Database(dbPath, { readonly: true });
+      try {
+        const row = conn.query('SELECT MAX(version) as version FROM schema_version').get() as {
+          version: number;
+        };
+        expect(row.version).toBe(SCHEMA_VERSION);
+      } finally {
+        conn.close();
+      }
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('re-running init after an interrupted v5 stamp does not throw "duplicate column name"', () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'localpress-migration-test-'));
+    const dbPath = join(tmpRoot, 'site.db');
+    try {
+      // Get to a fully-migrated DB, then roll the stamp back to v4 while
+      // leaving the ALTER's column in place — simulating a process killed
+      // between the ALTER and the version stamp.
+      SiteDb.init(dbPath).close();
+      revertStampToV4(dbPath);
+      expect(columnNames(dbPath, 'processing_history')).toContain('reverted_at');
+
+      let db2: SiteDb | undefined;
+      expect(() => {
+        db2 = SiteDb.init(dbPath);
+      }).not.toThrow();
+      db2?.close();
+
+      // The DB should be fully recovered to v5, not stuck re-throwing.
+      const conn = new Database(dbPath, { readonly: true });
+      try {
+        const row = conn.query('SELECT MAX(version) as version FROM schema_version').get() as {
+          version: number;
+        };
+        expect(row.version).toBe(SCHEMA_VERSION);
+      } finally {
+        conn.close();
+      }
+      expect(columnNames(dbPath, 'processing_history')).toContain('reverted_at');
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('two connections concurrently migrating a v4-with-column DB both end at v5 without throwing', async () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'localpress-migration-test-'));
+    const dbPath = join(tmpRoot, 'site.db');
+    try {
+      SiteDb.init(dbPath).close();
+      revertStampToV4(dbPath);
+
+      // Hold the write lock briefly so the second init's migration loop has
+      // to wait (via busy_timeout) and re-check the stored version under
+      // the lock before applying its own ALTER.
+      const holdMs = 200;
+      const scriptPath = join(
+        tmpdir(),
+        `localpress-migration-holder-${Date.now()}-${Math.random().toString(36).slice(2)}.ts`,
+      );
+      writeFileSync(
+        scriptPath,
+        `
+        import { Database } from 'bun:sqlite';
+        const db = new Database(${JSON.stringify(dbPath)});
+        db.exec('BEGIN IMMEDIATE');
+        await Bun.sleep(${holdMs});
+        db.exec('COMMIT');
+        db.close();
+        `,
+      );
+      const proc = Bun.spawn([process.execPath, 'run', scriptPath], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      await Bun.sleep(50);
+
+      let db2: SiteDb | undefined;
+      expect(() => {
+        db2 = SiteDb.init(dbPath);
+      }).not.toThrow();
+      db2?.close();
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const conn = new Database(dbPath, { readonly: true });
+      try {
+        const row = conn.query('SELECT MAX(version) as version FROM schema_version').get() as {
+          version: number;
+        };
+        expect(row.version).toBe(SCHEMA_VERSION);
+      } finally {
+        conn.close();
+      }
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  test('re-opening at the same schema version still takes no write lock (early-out preserved)', () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'localpress-migration-test-'));
+    const dbPath = join(tmpRoot, 'site.db');
+    try {
+      const db1 = SiteDb.init(dbPath);
+      db1.close();
+
+      const readVersionRows = () => {
+        const conn = new Database(dbPath, { readonly: true });
+        try {
+          return conn.query('SELECT version, rowid FROM schema_version').all();
+        } finally {
+          conn.close();
+        }
+      };
+
+      const before = readVersionRows();
+      const db2 = SiteDb.init(dbPath);
+      db2.close();
+      const after = readVersionRows();
+
+      expect(after).toEqual(before);
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});

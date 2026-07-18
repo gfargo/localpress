@@ -205,6 +205,19 @@ describe('WpCliAdapter#upload', () => {
     const remoteTmp = scpCalls[0].remotePath;
     expect(sshCalls.some((c) => c === `rm -f ${shellQuote(remoteTmp)}`)).toBe(true);
   });
+
+  test('sanitizes filenames with spaces or shell metacharacters in the scp remote path', async () => {
+    const adapter = new WpCliAdapter(site);
+    await adapter.upload(Buffer.from('a'), { filename: 'my photo.png' });
+    await adapter.upload(Buffer.from('b'), { filename: '$(id).png' });
+    await adapter.upload(Buffer.from('c'), { filename: '`whoami`.png' });
+
+    expect(scpCalls).toHaveLength(3);
+    for (const call of scpCalls) {
+      expect(call.remotePath).toMatch(/^\/tmp\/localpress-upload-[A-Za-z0-9._-]+$/);
+      expect(call.remotePath).not.toMatch(/\s|[$`;]/);
+    }
+  });
 });
 
 describe('WpCliAdapter#replaceInPlace', () => {

@@ -16,6 +16,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Capability, MediaItem, ReplaceOptions, WpBackend } from '../../src/adapters/types.ts';
+import { WpApiError } from '../../src/adapters/types.ts';
 import type { ResolverLike } from '../../src/cli/commands/undo.ts';
 import { restoreSnapshot } from '../../src/cli/commands/undo.ts';
 import { SnapshotStore } from '../../src/engine/history/store.ts';
@@ -286,5 +287,73 @@ describe('restoreSnapshot', () => {
     expect(outcome.status).toBe('partial');
     expect(outcome.newAttachmentId).toBe(999);
     expect(uploadedBytes?.toString()).toBe('original bytes');
+  });
+
+  test('replace-in-place available but attachment deleted (404): falls through to upload-as-new (issue #191)', async () => {
+    const snap = captureBinarySnapshot('photo.jpg', 'image/jpeg', Buffer.from('original bytes'));
+
+    const getBackend = makeFakeBackend({
+      name: 'wp-cli',
+      getMedia: async (): Promise<MediaItem> => {
+        throw new WpApiError('WordPress REST API error: 404 Not Found', 404);
+      },
+    });
+    let uploadedBytes: Buffer | undefined;
+    const uploadBackend = makeFakeBackend({
+      name: 'wp-cli',
+      upload: async (bytes): Promise<MediaItem> => {
+        uploadedBytes = bytes;
+        return {
+          id: 999,
+          title: 'photo',
+          filename: 'photo.jpg',
+          url: 'https://example.test/photo-999.jpg',
+          mimeType: 'image/jpeg',
+          uploadedAt: '2024-01-01',
+        };
+      },
+    });
+
+    const resolver: ResolverLike = {
+      resolve: (c) => {
+        if (c === 'get') return getBackend;
+        if (c === 'upload') return uploadBackend;
+        throw new Error(`unexpected resolve('${c}')`);
+      },
+      tryResolve: (c) => (c === 'replace-in-place' ? getBackend : null),
+    };
+
+    const writeSpy = spyOn(process.stderr, 'write').mockImplementation(() => true);
+    let outcome: Awaited<ReturnType<typeof restoreSnapshot>>;
+    try {
+      outcome = await restoreSnapshot(snap, resolver, store, false);
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    expect(outcome.status).toBe('partial');
+    expect(outcome.newAttachmentId).toBe(999);
+    expect(uploadedBytes?.toString()).toBe('original bytes');
+  });
+
+  test('replace-in-place available and getMedia fails with a non-404 error: rejects instead of falling through', async () => {
+    const snap = captureBinarySnapshot('photo.jpg', 'image/jpeg', Buffer.from('original bytes'));
+
+    const getBackend = makeFakeBackend({
+      name: 'wp-cli',
+      getMedia: async (): Promise<MediaItem> => {
+        throw new WpApiError('WordPress REST API error: 500 Internal Server Error', 500);
+      },
+    });
+
+    const resolver: ResolverLike = {
+      resolve: (c) => {
+        if (c === 'get') return getBackend;
+        throw new Error(`unexpected resolve('${c}')`);
+      },
+      tryResolve: (c) => (c === 'replace-in-place' ? getBackend : null),
+    };
+
+    await expect(restoreSnapshot(snap, resolver, store, false)).rejects.toThrow('500');
   });
 });

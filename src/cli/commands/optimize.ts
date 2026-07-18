@@ -365,11 +365,21 @@ export function registerOptimizeCommand(program: Command): void {
               resultWpId = uploaded.id;
             }
 
-            recordSuccess(db, site.name, item, sourceHash, resultHash, {}, 0, {
-              bytesBefore: sourceBytes.length,
-              bytesAfter: resultBytes.length,
-              resultWpId: resultWpId !== item.id ? resultWpId : null,
-            });
+            recordSuccess(
+              db,
+              site.name,
+              item,
+              sourceHash,
+              resultHash,
+              resultMimeType ?? item.mimeType,
+              {},
+              0,
+              {
+                bytesBefore: sourceBytes.length,
+                bytesAfter: resultBytes.length,
+                resultWpId: resultWpId !== item.id ? resultWpId : null,
+              },
+            );
 
             if (historySession) {
               closeHistorySession(snapshotStore, historySession, {
@@ -611,6 +621,7 @@ export function registerOptimizeCommand(program: Command): void {
               item,
               sourceHash,
               sourceHash,
+              item.mimeType,
               perItemOpts,
               durationMs,
               {
@@ -649,6 +660,7 @@ export function registerOptimizeCommand(program: Command): void {
           // 3. Upload the result.
           let resultWpId: number | null = null;
           let rewrittenUrls: number | undefined;
+          const outputMime = formatToMime(result.after.format);
 
           if (!options.keepOriginal && options.replaceInPlace !== false) {
             // Try replace-in-place.
@@ -656,7 +668,6 @@ export function registerOptimizeCommand(program: Command): void {
             if (replaceAdapter) {
               info('    ↳ Replacing in-place...');
               // Detect format change for metadata update.
-              const outputMime = formatToMime(result.after.format);
               const formatChanged = outputMime !== item.mimeType;
               const newExt = formatChanged ? mimeToExtension(outputMime) : undefined;
 
@@ -733,11 +744,21 @@ export function registerOptimizeCommand(program: Command): void {
           }
 
           // 4. Record in SQLite.
-          recordSuccess(db, site.name, item, sourceHash, resultHash, perItemOpts, durationMs, {
-            bytesBefore: sourceBytes.length,
-            bytesAfter: result.bytes.length,
-            resultWpId: resultWpId !== item.id ? resultWpId : null,
-          });
+          recordSuccess(
+            db,
+            site.name,
+            item,
+            sourceHash,
+            resultHash,
+            outputMime,
+            perItemOpts,
+            durationMs,
+            {
+              bytesBefore: sourceBytes.length,
+              bytesAfter: result.bytes.length,
+              resultWpId: resultWpId !== item.id ? resultWpId : null,
+            },
+          );
 
           // 5. Mirror to WP post meta (best-effort).
           try {
@@ -858,9 +879,15 @@ export function registerOptimizeCommand(program: Command): void {
  *     Without this branch every re-run re-optimized and uploaded yet another
  *     duplicate attachment. Skip when the source bytes are unchanged.
  *
- * After `undo` restores the original bytes, an in-place file's hash reverts to
- * the old sourceHash (≠ resultHash), so the replace-in-place branch naturally
- * returns false and re-optimization proceeds.
+ * Any row with `revertedAt` set (i.e. an `undo` has been applied) is treated as
+ * non-skippable, regardless of write path. This is the entire point of the
+ * `reverted_at` column (db.ts:173-174): the row stays in history for auditing but
+ * must not block the attachment from being re-optimized. Without this guard, the
+ * upload-as-new path would skip forever after undo because the source bytes are
+ * never touched and its hash still matches the recorded `sourceHash`. The
+ * replace-in-place path happened to escape by accident (hash reverts after undo),
+ * but making the check explicit here ensures correct behaviour for both paths.
+ * See OSS-919 / localpress#199.
  */
 export function shouldSkipOptimize(
   lastProcessing: ProcessingHistoryRecord | null,
@@ -870,6 +897,11 @@ export function shouldSkipOptimize(
 ): boolean {
   if (force) return false;
   if (!lastProcessing || lastProcessing.status === 'failure') return false;
+  // An undone (reverted) run must become eligible again — that is the whole
+  // point of the reverted_at column (db.ts). Without this, a REST-only
+  // upload-as-new run whose source was never touched would keep matching
+  // sourceHash and skip forever after undo. See OSS-919 / localpress#199.
+  if (lastProcessing.revertedAt !== null) return false;
   if (lastProcessing.paramsJson !== JSON.stringify(perItemOpts)) return false;
 
   if (lastProcessing.resultWpId === null) {
@@ -889,20 +921,27 @@ function recordSuccess(
   item: MediaItem,
   sourceHash: string,
   resultHash: string,
+  resultMimeType: string,
   opts: OptimizeOptions,
   durationMs: number,
   sizes: { bytesBefore: number; bytesAfter: number; resultWpId: number | null },
   status: 'success' | 'skipped' = 'success',
 ): void {
+  // `resultWpId === null` means the original attachment was replaced in
+  // place, so the live file now IS the processed result — the attachments
+  // table (which `verify` compares against) must reflect that, not the
+  // pre-processing bytes. When a new attachment was uploaded instead, the
+  // original item.id was never touched, so its record stays as-is.
+  const wasReplacedInPlace = sizes.resultWpId === null;
   db.upsertAttachment({
     siteName,
     wpId: item.id,
     sourceUrl: item.url,
-    sourceHash,
-    sizeBytes: sizes.bytesBefore,
+    sourceHash: wasReplacedInPlace ? resultHash : sourceHash,
+    sizeBytes: wasReplacedInPlace ? sizes.bytesAfter : sizes.bytesBefore,
     width: item.width ?? null,
     height: item.height ?? null,
-    mimeType: item.mimeType,
+    mimeType: wasReplacedInPlace ? resultMimeType : item.mimeType,
     lastSeenAt: Date.now(),
   });
   db.recordProcessing({

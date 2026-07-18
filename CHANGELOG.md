@@ -5,6 +5,18 @@ All notable changes to localpress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1](https://github.com/gfargo/localpress/compare/v2.4.0...v2.4.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* **mcp:** trust partial-failure batch JSON instead of discarding it ([#225](https://github.com/gfargo/localpress/issues/225)) ([a0a4a50](https://github.com/gfargo/localpress/commit/a0a4a504056e2467914fef0e7c059e887fb247ce))
+* **optimize:** treat reverted rows as non-skippable in shouldSkipOptimize ([#237](https://github.com/gfargo/localpress/issues/237)) ([e2f5a57](https://github.com/gfargo/localpress/commit/e2f5a5784d0bd4b7020782383adc71b7ea95b078))
+* **rest:** fall back to view context when context=edit is forbidden ([#233](https://github.com/gfargo/localpress/issues/233)) ([1a9ec4f](https://github.com/gfargo/localpress/commit/1a9ec4fe3cf69afb542057b0b154736d93ae8fb0))
+* **ssh:** sanitize scp upload filenames to prevent breakage and injection ([#234](https://github.com/gfargo/localpress/issues/234)) ([568780d](https://github.com/gfargo/localpress/commit/568780d063793cc01ca25a4668a0498bb36c7b4e))
+* **undo:** fall through to upload-as-new when restoring a deleted attachment ([#231](https://github.com/gfargo/localpress/issues/231)) ([800beee](https://github.com/gfargo/localpress/commit/800beee1580b850c09b705e619d810fe59bb660b))
+* **verify:** make --all reachable by relaxing required ids positional ([#230](https://github.com/gfargo/localpress/issues/230)) ([23adc16](https://github.com/gfargo/localpress/commit/23adc161d3e7e8c91c635e743a47244eabae36ec))
+
 ## [2.4.0](https://github.com/gfargo/localpress/compare/v2.3.0...v2.4.0) (2026-07-17)
 
 
