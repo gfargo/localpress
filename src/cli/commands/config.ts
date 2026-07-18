@@ -297,6 +297,15 @@ const SETTABLE_KEYS: Record<
       c.defaults.captionModel = trimmed;
     },
   },
+  'defaults.captionFallbackModel': {
+    get: (c) => c.defaults?.captionFallbackModel,
+    set: (c, v) => {
+      const trimmed = v.trim();
+      if (!trimmed) throw new Error('captionFallbackModel must be a non-empty Ollama model name');
+      if (!c.defaults) c.defaults = {};
+      c.defaults.captionFallbackModel = trimmed;
+    },
+  },
   'history.enabled': {
     get: (c) => c.history?.enabled ?? true,
     set: (c, v) => {

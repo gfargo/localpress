@@ -99,6 +99,11 @@ export function registerCaptionCommand(program: Command): void {
       const effectiveModel: string =
         options.model ?? config.defaults?.captionModel ?? DEFAULT_OLLAMA_MODEL;
 
+      // Resolve the effective fallback model:
+      //   --fallback-model flag > config.defaults.captionFallbackModel
+      const effectiveFallbackModel: string | undefined =
+        options.fallbackModel ?? config.defaults?.captionFallbackModel;
+
       // Validate Ollama is reachable before doing any work.
       if (!(await isOllamaAvailable(options.ollamaUrl))) {
         error(
@@ -113,12 +118,13 @@ export function registerCaptionCommand(program: Command): void {
       try {
         const installed = await listOllamaModels(options.ollamaUrl);
         const installedNames = installed.map((m) => m.name);
-        const hasMatch = installedNames.some(
-          (n) =>
-            n === effectiveModel ||
-            n === `${effectiveModel}:latest` ||
-            n.startsWith(`${effectiveModel}:`),
-        );
+
+        const modelMatches = (name: string) =>
+          installedNames.some(
+            (n) => n === name || n === `${name}:latest` || n.startsWith(`${name}:`),
+          );
+
+        const hasMatch = modelMatches(effectiveModel);
 
         if (!hasMatch) {
           const visionModels = installedNames.filter((n) =>
@@ -139,6 +145,16 @@ export function registerCaptionCommand(program: Command): void {
             `Ollama model '${effectiveModel}' is not available on ${options.ollamaUrl}.${visionList}\n\n  Pull the requested model:\n    ollama pull ${effectiveModel}\n\n${remediation}`,
           );
           process.exit(2);
+        }
+
+        // Also validate the fallback model when set and different from primary.
+        if (effectiveFallbackModel && effectiveFallbackModel !== effectiveModel) {
+          if (!modelMatches(effectiveFallbackModel)) {
+            error(
+              `Fallback model '${effectiveFallbackModel}' is not installed on ${options.ollamaUrl}.\n\n  Pull it:  ollama pull ${effectiveFallbackModel}\n\n  Or remove it:\n    localpress config set defaults.captionFallbackModel <installed-model>\n`,
+            );
+            process.exit(2);
+          }
         }
       } catch (preflightErr) {
         // If the pre-flight check itself fails (e.g. network blip after the
@@ -265,11 +281,7 @@ export function registerCaptionCommand(program: Command): void {
 
           const result = await generateCaptionWithFallback(imageBuffer, {
             model: effectiveModel,
-            fallbackModel:
-              options.fallbackModel ??
-              ((config.defaults as Record<string, unknown>)?.captionFallbackModel as
-                | string
-                | undefined),
+            fallbackModel: effectiveFallbackModel,
             prompt: options.prompt,
             ollamaUrl: options.ollamaUrl,
             language: options.language,

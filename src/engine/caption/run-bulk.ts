@@ -58,11 +58,13 @@ export interface BulkRunOptions {
 
 /**
  * Pre-flight: confirm Ollama is reachable and the requested model is installed.
+ * Optionally validates a fallback model as well (when set and different from the primary).
  * Returns null on success, an error message string on failure.
  */
 export async function preflightOllama(
   effectiveModel: string,
   ollamaUrl: string,
+  fallbackModel?: string,
 ): Promise<string | null> {
   if (!(await isOllamaAvailable(ollamaUrl))) {
     return `Ollama is not running at ${ollamaUrl}.\n\n  Start it:       ollama serve\n  Pull a model:   ollama pull ${effectiveModel}\n\n  Setup guide:    https://localpress.griffen.codes/docs/ollama-setup`;
@@ -71,12 +73,11 @@ export async function preflightOllama(
   try {
     const installed = await listOllamaModels(ollamaUrl);
     const installedNames = installed.map((m) => m.name);
-    const hasMatch = installedNames.some(
-      (n) =>
-        n === effectiveModel ||
-        n === `${effectiveModel}:latest` ||
-        n.startsWith(`${effectiveModel}:`),
-    );
+
+    const modelMatches = (name: string) =>
+      installedNames.some((n) => n === name || n === `${name}:latest` || n.startsWith(`${name}:`));
+
+    const hasMatch = modelMatches(effectiveModel);
 
     if (!hasMatch) {
       const visionModels = installedNames.filter((n) =>
@@ -94,6 +95,11 @@ export async function preflightOllama(
           : '  Recommended starter model:\n    ollama pull moondream\n';
 
       return `Ollama model '${effectiveModel}' is not available on ${ollamaUrl}.${visionList}\n\n  Pull the requested model:\n    ollama pull ${effectiveModel}\n\n${remediation}`;
+    }
+
+    // Validate the fallback model when set and different from the primary.
+    if (fallbackModel && fallbackModel !== effectiveModel && !modelMatches(fallbackModel)) {
+      return `Fallback model '${fallbackModel}' is not installed on ${ollamaUrl}.\n\n  Pull it:  ollama pull ${fallbackModel}\n\n  Or remove it:\n    localpress config set defaults.captionFallbackModel <installed-model>\n`;
     }
   } catch {
     // Pre-flight call itself failed — don't block the run on a flaky check.

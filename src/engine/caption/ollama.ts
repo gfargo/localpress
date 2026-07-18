@@ -270,10 +270,21 @@ export async function generateCaptionWithFallback(
   }
 
   // Retry with the fallback model.
-  const fallbackResult = await generateCaption(imageBuffer, {
-    ...options,
-    model: options.fallbackModel,
-  });
+  const fallbackResult = await (async () => {
+    try {
+      return await generateCaption(imageBuffer, {
+        ...options,
+        model: options.fallbackModel,
+      });
+    } catch {
+      // Fallback call itself failed — return the valid primary result.
+      return null;
+    }
+  })();
+
+  if (fallbackResult === null) {
+    return result;
+  }
 
   // If the fallback also produces garbage, return whichever is longer
   // (marginally better than nothing).

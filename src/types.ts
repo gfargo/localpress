@@ -82,6 +82,8 @@ export interface Config {
     concurrency?: number;
     /** Default Ollama vision model for `caption` (e.g. "moondream", "llava-llama3:latest"). */
     captionModel?: string;
+    /** Fallback Ollama vision model used when the primary model returns garbage output. */
+    captionFallbackModel?: string;
   };
   /** Time-machine / undo retention settings. */
   history?: {

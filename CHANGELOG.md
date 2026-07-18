@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
+* **caption:** `defaults.captionFallbackModel` config key now settable; pre-flight validates fallback model; fallback call is crash-safe; `--fallback-model` flag wired to title/describe/tag/vision ([#200](https://github.com/gfargo/localpress/issues/200))
 * **dry-run:** gate explicit-ID mutation paths behind resolveDryRun ([#219](https://github.com/gfargo/localpress/issues/219)) ([af0c39d](https://github.com/gfargo/localpress/commit/af0c39d8945e4e7e4ad3d789d4251886bb6c9a04))
 * **mcp:** preserve per-command JSON shape in batched tool results ([#220](https://github.com/gfargo/localpress/issues/220)) ([c738485](https://github.com/gfargo/localpress/commit/c738485d96f24c29078636cb28eb3e4344ce3f78))
 * **mcp:** sites_list empty body, history_list operation enum, posts content E2BIG ([#221](https://github.com/gfargo/localpress/issues/221)) ([459c328](https://github.com/gfargo/localpress/commit/459c32890a953955d60b0e6ee61583660c70a529))
