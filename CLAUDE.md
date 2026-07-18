@@ -1,6 +1,6 @@
 # CLAUDE.md — handoff for the next agent
 
-You're picking up `localpress` at **v2.1.0**. All 37 CLI commands are implemented and working, including a first-party MCP server. The project compiles, tests pass, and the CLI boots cleanly.
+You're picking up `localpress` at **v2.1.0**. All 39 CLI commands are implemented and working, including a first-party MCP server. The project compiles, tests pass, and the CLI boots cleanly.
 
 **Read in this order before writing any code:**
 
@@ -18,10 +18,10 @@ You're picking up `localpress` at **v2.1.0**. All 37 CLI commands are implemente
 
 ### What's implemented
 
-**37 CLI commands**, grouped by area:
+**39 CLI commands**, grouped by area:
 
 - **Setup:** `init` (Ink wizard), `sites` (list/add/use/remove/run), `doctor` (capability matrix + plugin detection + `--fix`), `config` (get/set/list, named optimization profiles)
-- **Discovery & audit:** `list` (filters, sort, interactive TUI `-i`), `show`, `stats` (cumulative SQLite stats, `--all-sites`), `audit` (unoptimized/large/missing-alt/orphans/display-size/duplicates/broken-refs/`--quality`/`--ocr-text`), `references` (fast + full scan, `--update-to` rewriting), `a11y` (WCAG audit for post/page content)
+- **Discovery & audit:** `list` (filters, sort, interactive TUI `-i`), `show`, `stats` (cumulative SQLite stats, `--all-sites`), `audit` (unoptimized/large/missing-alt/orphans/display-size/duplicates/broken-refs/`--quality`/`--ocr-text`), `references` (fast + full scan, `--update-to` rewriting), `a11y` (WCAG audit for post/page content), `briefing` (aggregated site-health digest + Ollama narrative)
 - **AI enrichment (local Ollama vision, no cloud):** `caption` (alt text), `title`, `describe`, `classify` (screenshot/photo/illustration/diagram, feeds `optimize` format defaults), `tag`, `vision` (composed alt+title+description+tags+classify in one pass), `metadata` (manual alt/title/caption/description writes)
 - **Processing:** `optimize` (+ `--preview`, `--target-size`), `convert`, `resize`, `remove-bg` (ONNX + system rembg + `--preview`), `regenerate` (thumbnails), `rename` (slug rename, `--smart`)
 - **Content management:** `posts` (list/show/create/update/delete for posts, pages, and custom post types), `delete` (attachments, trash or `--force`)
@@ -69,7 +69,7 @@ You're picking up `localpress` at **v2.1.0**. All 37 CLI commands are implemente
 - Full config listing with password redaction
 
 **MCP server (`localpress mcp`):**
-- First-party Model Context Protocol server exposing 40+ typed tools + resources — the CLI's full capability surface (media CRUD, posts CRUD, a11y audit, history/undo, export/import, health_check, search_by_url) available directly to any MCP-speaking agent host
+- First-party Model Context Protocol server exposing 47+ typed tools + resources — the CLI's full capability surface (media CRUD, posts CRUD, a11y audit, history/undo, export/import, health_check, search_by_url) available directly to any MCP-speaking agent host
 - See `src/cli/mcp/{server,tools,invoke,resources}.ts` and the README's MCP section for setup
 
 **Distribution:**
@@ -193,7 +193,7 @@ localpress/
 │   │   ├── index.ts                  ← entry point; commander setup, 37 commands
 │   │   ├── commands/                 ← one file per command (37 total)
 │   │   │   ├── init.ts, sites.ts, doctor.ts, config.ts
-│   │   │   ├── list.ts, show.ts, stats.ts, audit.ts, references.ts, a11y.ts
+│   │   │   ├── list.ts, show.ts, stats.ts, audit.ts, references.ts, a11y.ts, briefing.ts
 │   │   │   ├── caption.ts, title.ts, describe.ts, classify.ts, tag.ts, vision.ts, metadata.ts
 │   │   │   ├── optimize.ts, convert.ts, resize.ts, remove-bg.ts, regenerate.ts, rename.ts
 │   │   │   ├── posts.ts, delete.ts
@@ -206,7 +206,7 @@ localpress/
 │   │   │   └── HistoryBrowser.tsx    ← Ink TUI for history/undo browsing
 │   │   ├── mcp/
 │   │   │   ├── server.ts             ← MCP server entry (localpress mcp)
-│   │   │   ├── tools.ts              ← tool definitions (40+ typed tools)
+│   │   │   ├── tools.ts              ← tool definitions (47+ typed tools)
 │   │   │   ├── invoke.ts             ← tool → CLI invocation bridge
 │   │   │   └── resources.ts          ← MCP resources
 │   │   └── utils/

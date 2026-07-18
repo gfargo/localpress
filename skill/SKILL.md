@@ -645,6 +645,40 @@ Global `--dry-run` returns `{ "dryRun": true, "force": false, "ids": [123, 124] 
 }
 ```
 
+### Site briefing
+
+```bash
+# "What does my site need today?" — aggregates unoptimized/missing-alt/
+# broken-refs/orphans/a11y into one summary + a plain-English Ollama narrative.
+# Cached per-site; repeat calls are fast unless --fresh is passed.
+localpress briefing --json
+localpress briefing --fresh --json
+localpress briefing --model llava-llama3:latest --json
+```
+
+#### `briefing --json` output
+
+```json
+{
+  "site": "production",
+  "generatedAt": "2026-07-17T20:00:00.000Z",
+  "fresh": true,
+  "categories": {
+    "unoptimized": { "count": 4, "examples": ["banner.jpg", "hero.png"], "available": true },
+    "missingAlt": { "count": 2, "examples": ["gallery-1.jpg"], "available": true },
+    "brokenRefs": { "count": 0, "examples": [], "available": true },
+    "orphans": { "count": 0, "examples": [], "available": false, "unavailableReason": "Requires WP-CLI over SSH — configure SSH access for this site to enable." },
+    "a11y": { "count": 1, "examples": ["\"Summer Sale\": Link text \"click here\" is not descriptive of its destination"], "available": true }
+  },
+  "totalIssues": 7,
+  "clean": false,
+  "narrative": "Your site is in decent shape overall...",
+  "narrativeUnavailable": false
+}
+```
+
+Read-only — never writes to WordPress. `orphans` is marked `available: false` (not an error) when WP-CLI isn't configured for the site. `narrative` is `null` with `narrativeUnavailable: true` when Ollama isn't reachable; the structured summary is unaffected either way. When `totalIssues` is 0, `narrative` is a canned "all clean" message that doesn't require Ollama.
+
 ### Round-trip editing
 
 ```bash
@@ -891,7 +925,7 @@ If replace-in-place is unavailable when restoring a binary snapshot, `undo` fall
 localpress mcp
 ```
 
-The MCP server exposes the same functionality as the CLI (20 tools + 3 resources as of v1.14, one MCP tool per CLI command family) by shelling out to the CLI's own `--json` output internally. If the user already has localpress configured as an MCP server in their host, prefer calling its tools directly over shelling out to the `localpress` binary yourself — see .wiki/MCP-Setup.md in the repo for host configuration.
+The MCP server exposes the same functionality as the CLI (47+ tools + 4 resources, one MCP tool per CLI command family, plus composite tools like `health_check` and `site_briefing`) by shelling out to the CLI's own `--json` output internally. If the user already has localpress configured as an MCP server in their host, prefer calling its tools directly over shelling out to the `localpress` binary yourself — see .wiki/MCP-Setup.md in the repo for host configuration.
 
 ## Global flags
 

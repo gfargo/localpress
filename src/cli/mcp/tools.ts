@@ -1399,6 +1399,30 @@ export function registerTools(server: McpServer): void {
   );
 
   server.registerTool(
+    'site_briefing',
+    {
+      title: "Site health briefing ('what does my site need today?')",
+      description:
+        'Aggregates every check localpress knows how to run — unoptimized images, missing alt text, broken content references, orphaned media (if WP-CLI is configured), and accessibility issues — into one structured summary plus a short plain-English narrative synthesized by a local Ollama text pass. Read-only. Cached per-site; pass fresh=true to bypass the cache and re-run everything live.',
+      inputSchema: {
+        ...commonSiteArg,
+        fresh: z.boolean().optional().describe('Bypass the cache and re-run every check live'),
+        model: z
+          .string()
+          .optional()
+          .describe('Ollama model for the narrative pass (default: config default or moondream)'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['briefing'];
+      flag(argv, '--fresh', a.fresh);
+      opt(argv, '--model', a.model);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
     'posts_list',
     {
       title: 'List posts or pages',
