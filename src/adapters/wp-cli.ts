@@ -76,6 +76,17 @@ export class WpCliAdapter implements WpBackend {
   }
 
   /**
+   * Execute a raw SQL string against the WordPress database via `wp db query`.
+   * The SQL argument is shell-quoted with shellQuote() so the remote shell
+   * cannot interpret embedded `"`, backticks, `$`, or `;` from attacker-
+   * controlled data.  SQL string/LIKE metacharacters must be handled by the
+   * caller using escapeSqlLike() / sqlStringLiteral() before building the SQL.
+   */
+  private async dbQuery(sql: string, extraFlags = '--skip-column-names'): Promise<string> {
+    return this.wp(`db query ${shellQuote(sql)} ${extraFlags}`);
+  }
+
+  /**
    * Fetch all values stored under a post meta key, distinguishing "key
    * absent" (empty array, exit 0) from a real WP-CLI failure (which `wp()`
    * already throws on). Avoids the `|| echo` shell fallback that masked
@@ -610,8 +621,8 @@ export class WpCliAdapter implements WpBackend {
     const references: Reference[] = [];
 
     // Featured images — same as REST fast scan but via WP-CLI.
-    const featuredOutput = await this.wp(
-      `db query "SELECT post_id FROM wp_postmeta WHERE meta_key='_thumbnail_id' AND meta_value='${id}'" --skip-column-names`,
+    const featuredOutput = await this.dbQuery(
+      `SELECT post_id FROM wp_postmeta WHERE meta_key='_thumbnail_id' AND meta_value='${id}'`,
     );
     for (const postIdStr of featuredOutput.split('\n').filter(Boolean)) {
       const postId = Number.parseInt(postIdStr.trim(), 10);
@@ -642,8 +653,8 @@ export class WpCliAdapter implements WpBackend {
     // anchored regex applied to post_content below, same as REST's
     // countBlockReferences() in rest.ts.
     const blockPattern = `"id":${id}`;
-    const blockOutput = await this.wp(
-      `db query "SELECT ID, post_title, post_type, post_content FROM wp_posts WHERE post_status='publish' AND post_content LIKE '%${blockPattern}%'" --skip-column-names`,
+    const blockOutput = await this.dbQuery(
+      `SELECT ID, post_title, post_type, post_content FROM wp_posts WHERE post_status='publish' AND post_content LIKE '%${blockPattern}%'`,
     );
     for (const line of blockOutput.split('\n').filter(Boolean)) {
       const parts = line.split('\t');
@@ -671,9 +682,13 @@ export class WpCliAdapter implements WpBackend {
 
       if (url) {
         // Search post content for the URL.
-        const urlPattern = url.replace(/https?:\/\//, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const contentOutput = await this.wp(
-          `db query "SELECT ID, post_title, post_type FROM wp_posts WHERE post_status='publish' AND post_content LIKE '%${urlPattern}%'" --skip-column-names`,
+        // Strip scheme (http(s)://) so the LIKE matches regardless of scheme,
+        // then apply SQL string + LIKE metacharacter escaping so attacker-
+        // controlled filename characters cannot break the SQL or the shell.
+        const strippedUrl = url.replace(/https?:\/\//, '');
+        const likePattern = escapeSqlLike(strippedUrl);
+        const contentOutput = await this.dbQuery(
+          `SELECT ID, post_title, post_type FROM wp_posts WHERE post_status='publish' AND post_content LIKE '%${likePattern}%'`,
         );
         for (const line of contentOutput.split('\n').filter(Boolean)) {
           const parts = line.split('\t');
@@ -692,8 +707,8 @@ export class WpCliAdapter implements WpBackend {
       }
 
       // Search post meta for the attachment ID.
-      const metaOutput = await this.wp(
-        `db query "SELECT post_id, meta_key FROM wp_postmeta WHERE meta_value='${id}' AND meta_key NOT LIKE '\\_%'" --skip-column-names`,
+      const metaOutput = await this.dbQuery(
+        `SELECT post_id, meta_key FROM wp_postmeta WHERE meta_value='${id}' AND meta_key NOT LIKE '\\_%'`,
       );
       for (const line of metaOutput.split('\n').filter(Boolean)) {
         const parts = line.split('\t');
@@ -740,6 +755,55 @@ export function matchesBlockId(content: string, attachmentId: number): boolean {
     `wp:(?:image|gallery|cover|media-text)[^}]*"id"\\s*:\\s*${attachmentId}\\b`,
   );
   return pattern.test(content);
+}
+
+/**
+ * Escape a string value for safe use inside a MySQL LIKE clause.
+ *
+ * MySQL's default escape character for LIKE is `\`.  This function escapes:
+ *   - `\`  → `\\`  (must be first to avoid double-escaping)
+ *   - `%`  → `\%`  (LIKE wildcard)
+ *   - `_`  → `\_`  (LIKE single-char wildcard)
+ *   - `'`  → `''`  (SQL string-literal delimiter — SQL standard double-quote idiom)
+ *
+ * Both LIKE-metacharacter and SQL-string-literal escaping are folded into this
+ * one function so callers cannot forget to apply one layer.  The escaping order
+ * is: backslash first (to avoid double-escaping), then LIKE wildcards, then the
+ * single-quote SQL literal delimiter.
+ *
+ * The caller is responsible for enclosing the result in SQL string delimiters
+ * (`'…'`) within the query.  shellQuote() on the full SQL statement then
+ * ensures the backslashes reach MySQL unchanged.
+ *
+ * NOTE: This relies on MySQL's default LIKE escape character (`\`).  Sites
+ * running with `NO_BACKSLASH_ESCAPES` set would need an explicit
+ * `ESCAPE '\\'` clause, but localpress already assumes default behaviour
+ * elsewhere (e.g. the existing `'\_%'` expression).
+ */
+export function escapeSqlLike(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\') // \ → \\ (first, to avoid double-escaping)
+    .replace(/%/g, '\\%') // % → \%
+    .replace(/_/g, '\\_') // _ → \_
+    .replace(/'/g, "''"); // ' → '' (SQL string literal — must not break the enclosing '…')
+}
+
+/**
+ * Escape a string value for safe embedding inside a MySQL single-quoted
+ * string literal (i.e. between `'` and `'`).
+ *
+ * Escapes:
+ *   - `\`  → `\\`  (must be first)
+ *   - `'`  → `''`  (SQL standard double-quote idiom)
+ *
+ * Example: `"it's alive"` → `"it''s alive"`, suitable for `'it''s alive'`.
+ *
+ * Does NOT escape LIKE metacharacters — use escapeSqlLike() for LIKE clauses.
+ */
+export function sqlStringLiteral(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\') // \ → \\ (first)
+    .replace(/'/g, "''"); // ' → ''
 }
 
 // -- WP-CLI response types ----------------------------------------------------
