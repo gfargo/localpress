@@ -199,6 +199,39 @@ export function registerRemoveBgCommand(program: Command): void {
               lastSeenAt: Date.now(),
             });
 
+            // Time-machine: snapshot the pre-write bytes so the one-click
+            // apply is undoable, mirroring the non-preview flow.
+            const historyConfig = resolveHistoryConfig(config.history);
+            const snapshotStore = openSnapshotStore(db, getConfigDir());
+            const historySession = historyConfig.enabled
+              ? openHistorySession(snapshotStore, site.name, 'remove-bg', {
+                  preview: true,
+                  keepOriginal: options.keepOriginal ?? false,
+                })
+              : null;
+
+            if (historySession) {
+              captureSnapshot(snapshotStore, {
+                siteName: site.name,
+                sessionId: historySession.id,
+                attachmentId: item.id,
+                operation: 'remove-bg',
+                sourceBytes,
+                beforeHash: sourceHash,
+                beforeMeta: {
+                  filename: item.filename,
+                  mimeType: item.mimeType,
+                  altText: item.altText,
+                  title: item.title,
+                  caption: item.caption,
+                  description: item.description,
+                  width: item.width,
+                  height: item.height,
+                  sizeBytes: sourceBytes.length,
+                },
+              });
+            }
+
             let resultWpId: number | null = null;
             let rewriteMessage = '';
 
@@ -263,6 +296,12 @@ export function registerRemoveBgCommand(program: Command): void {
               status: 'success',
               errorMessage: null,
             });
+
+            if (historySession) {
+              closeHistorySession(snapshotStore, historySession, {
+                maxSizeBytes: historyConfig.maxSizeBytes,
+              });
+            }
 
             db.close();
             return { wpId: resultWpId, message: `Uploaded as #${resultWpId}${rewriteMessage}` };

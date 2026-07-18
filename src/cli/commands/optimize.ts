@@ -286,6 +286,39 @@ export function registerOptimizeCommand(program: Command): void {
             const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
             const resultHash = createHash('sha256').update(resultBytes).digest('hex');
 
+            // Time-machine: snapshot the pre-write bytes so the one-click
+            // apply is undoable, mirroring the non-preview flow.
+            const historyConfig = resolveHistoryConfig(config.history);
+            const snapshotStore = openSnapshotStore(db, getConfigDir());
+            const historySession = historyConfig.enabled
+              ? openHistorySession(snapshotStore, site.name, 'optimize', {
+                  preview: true,
+                  keepOriginal: options.keepOriginal ?? false,
+                })
+              : null;
+
+            if (historySession) {
+              captureSnapshot(snapshotStore, {
+                siteName: site.name,
+                sessionId: historySession.id,
+                attachmentId: id,
+                operation: 'optimize',
+                sourceBytes,
+                beforeHash: sourceHash,
+                beforeMeta: {
+                  filename: item.filename,
+                  mimeType: item.mimeType,
+                  altText: item.altText,
+                  title: item.title,
+                  caption: item.caption,
+                  description: item.description,
+                  width: item.width,
+                  height: item.height,
+                  sizeBytes: sourceBytes.length,
+                },
+              });
+            }
+
             // Determine if the format changed.
             const formatChanged = resultMimeType && resultMimeType !== item.mimeType;
             const newExtension = formatChanged ? mimeToExtension(resultMimeType) : undefined;
@@ -337,6 +370,13 @@ export function registerOptimizeCommand(program: Command): void {
               bytesAfter: resultBytes.length,
               resultWpId: resultWpId !== item.id ? resultWpId : null,
             });
+
+            if (historySession) {
+              closeHistorySession(snapshotStore, historySession, {
+                maxSizeBytes: historyConfig.maxSizeBytes,
+              });
+            }
+
             db.close();
 
             // Re-fetch the item from WordPress to get fresh metadata for the UI.
