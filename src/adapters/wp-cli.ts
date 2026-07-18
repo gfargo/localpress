@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SiteConfig, SshConfig } from '../types.ts';
-import { scpUpload, shellQuote, sshExec } from './ssh.ts';
+import { scpUpload, shellQuote, slugifyPathComponent, sshExec } from './ssh.ts';
 import type {
   Capability,
   FormatChangeRewrite,
@@ -212,10 +212,11 @@ export class WpCliAdapter implements WpBackend {
   async upload(file: Buffer, metadata: UploadMetadata): Promise<MediaItem> {
     // Write the file to a local temp path, then SCP to remote.
     const uploadId = `${Date.now()}-${randomUUID()}`;
-    const localTmp = join(tmpdir(), `localpress-upload-${uploadId}-${metadata.filename}`);
+    const safeFilename = slugifyPathComponent(metadata.filename);
+    const localTmp = join(tmpdir(), `localpress-upload-${uploadId}-${safeFilename}`);
     await Bun.write(localTmp, file);
 
-    const remoteTmp = `/tmp/localpress-upload-${uploadId}-${metadata.filename}`;
+    const remoteTmp = `/tmp/localpress-upload-${uploadId}-${safeFilename}`;
     const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
     if (scpResult.exitCode !== 0) {
       throw new Error(
