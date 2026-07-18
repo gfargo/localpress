@@ -763,6 +763,12 @@ export function matchesBlockId(content: string, attachmentId: number): boolean {
  *   - `\`  → `\\`  (must be first to avoid double-escaping)
  *   - `%`  → `\%`  (LIKE wildcard)
  *   - `_`  → `\_`  (LIKE single-char wildcard)
+ *   - `'`  → `''`  (SQL string-literal delimiter — SQL standard double-quote idiom)
+ *
+ * Both LIKE-metacharacter and SQL-string-literal escaping are folded into this
+ * one function so callers cannot forget to apply one layer.  The escaping order
+ * is: backslash first (to avoid double-escaping), then LIKE wildcards, then the
+ * single-quote SQL literal delimiter.
  *
  * The caller is responsible for enclosing the result in SQL string delimiters
  * (`'…'`) within the query.  shellQuote() on the full SQL statement then
@@ -777,7 +783,8 @@ export function escapeSqlLike(value: string): string {
   return value
     .replace(/\\/g, '\\\\') // \ → \\ (first, to avoid double-escaping)
     .replace(/%/g, '\\%') // % → \%
-    .replace(/_/g, '\\_'); // _ → \_
+    .replace(/_/g, '\\_') // _ → \_
+    .replace(/'/g, "''"); // ' → '' (SQL string literal — must not break the enclosing '…')
 }
 
 /**

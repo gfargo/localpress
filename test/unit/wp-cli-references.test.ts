@@ -86,6 +86,19 @@ describe('escapeSqlLike', () => {
     expect(escapeSqlLike('a\\_b%c')).toBe('a\\\\\\_b\\%c');
   });
 
+  test("escapes single quote to prevent SQL string-literal breakout", () => {
+    expect(escapeSqlLike("it's.jpg")).toBe("it''s.jpg");
+  });
+
+  test("escapes combined: single quote, percent, underscore, and backslash", () => {
+    // Simulate a malicious guid: x' OR '1'='1 / 100%_data\file.jpg
+    const guid = "x' OR '1'='1";
+    const escaped = escapeSqlLike(guid);
+    // No bare single quotes (every ' is doubled)
+    expect(escaped).not.toMatch(/(?<!')'(?!')/);
+    expect(escaped).toBe("x'' OR ''1''=''1");
+  });
+
   test('escapes SQL metacharacters in an attacker-controlled filename', () => {
     // guid containing LIKE wildcards — must not over-match
     const guid = 'uploads/2024/photo_100%.jpg';
@@ -180,5 +193,17 @@ describe('shell-safety of SQL strings built from escapeSqlLike + shellQuote', ()
     expect(likePattern).toContain('\\_');
     // Backtick must still be present in the escaped pattern (not stripped)
     expect(likePattern).toContain('`');
+  });
+
+  test("single-quote in guid does not break SQL string literal after escapeSqlLike + shellQuote", () => {
+    const maliciousGuid = "example.com/uploads/it's-a-photo.jpg";
+    const strippedUrl = maliciousGuid.replace(/https?:\/\//, '');
+    const likePattern = escapeSqlLike(strippedUrl);
+    // ' must be doubled in the LIKE pattern so the SQL string literal stays intact
+    expect(likePattern).not.toMatch(/(?<!')'(?!')/);
+    const sql = `SELECT ID FROM wp_posts WHERE post_content LIKE '%${likePattern}%'`;
+    const quoted = shellQuote(sql);
+    // Shell round-trip must be identity
+    expect(parseSingleQuotedWord(quoted)).toBe(sql);
   });
 });
