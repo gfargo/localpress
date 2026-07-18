@@ -37,6 +37,55 @@ interface VerifyResult {
   filename: string;
   status: 'ok' | 'drift' | 'missing-local' | 'missing-remote';
   findings: VerifyFinding[];
+  hashVerified?: boolean;
+}
+
+export interface HashCheckResult {
+  /** Whether the hash comparison was actually performed (fetch succeeded and returned bytes). */
+  verified: boolean;
+  /** Only meaningful when `verified` is true. */
+  mismatch: boolean;
+  remoteHash?: string;
+  /** Human-readable reason the check could not be performed, when `verified` is false. */
+  reason?: string;
+}
+
+/**
+ * Downloads `url` with the given auth header and compares its SHA-256 against
+ * `localHash`. Pure/testable — never throws; failures are reported via `reason`
+ * so callers can distinguish "couldn't check" from "checked, and it matches".
+ */
+export async function verifyRemoteHash(options: {
+  url: string;
+  authHeader: string;
+  localHash: string;
+  fetchImpl?: typeof fetch;
+}): Promise<HashCheckResult> {
+  const fetchFn = options.fetchImpl ?? fetch;
+
+  let response: Response;
+  try {
+    response = await fetchFn(options.url, { headers: { Authorization: options.authHeader } });
+  } catch (err) {
+    return {
+      verified: false,
+      mismatch: false,
+      reason: `download failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  if (!response.ok) {
+    return {
+      verified: false,
+      mismatch: false,
+      reason: `could not download remote file for hash check (HTTP ${response.status})`,
+    };
+  }
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const remoteHash = createHash('sha256').update(bytes).digest('hex');
+
+  return { verified: true, mismatch: remoteHash !== options.localHash, remoteHash };
 }
 
 export function registerVerifyCommand(program: Command): void {
@@ -51,6 +100,10 @@ export function registerVerifyCommand(program: Command): void {
       const site = resolveActiveSite(config, parentOpts.site);
       const resolver = new AdapterResolver(site);
       const adapter = resolver.resolve('get');
+
+      // Same Basic-auth credential the REST adapter uses, so the file fetch
+      // below works on Application-Password/basic-auth-gated sites too.
+      const authHeader = `Basic ${btoa(`${site.username}:${site.appPassword}`)}`;
 
       const db = SiteDb.init(getSiteDbPath(site.name));
 
@@ -83,6 +136,7 @@ export function registerVerifyCommand(program: Command): void {
       let okCount = 0;
       let driftCount = 0;
       let missingCount = 0;
+      let unverifiedCount = 0;
 
       for (const id of targetIds) {
         const localRecord = db.getAttachment(site.name, id);
@@ -204,32 +258,52 @@ export function registerVerifyCommand(program: Command): void {
         }
 
         // Optional hash verification — download the file and compare SHA-256.
-        if (options.hash && localRecord.sourceHash) {
-          try {
-            const response = await fetch(remote.url);
-            if (response.ok) {
-              const bytes = Buffer.from(await response.arrayBuffer());
-              const remoteHash = createHash('sha256').update(bytes).digest('hex');
-              if (remoteHash !== localRecord.sourceHash) {
+        // `hashVerified` distinguishes "checked, and it matches/doesn't" from
+        // "couldn't actually check" — the latter must never report as ok.
+        let hashVerified: boolean | undefined;
+
+        if (options.hash) {
+          if (!localRecord.sourceHash) {
+            hashVerified = false;
+            warn(`  #${id}: no local source hash recorded — cannot verify`);
+          } else {
+            const hashResult = await verifyRemoteHash({
+              url: remote.url,
+              authHeader,
+              localHash: localRecord.sourceHash,
+            });
+            hashVerified = hashResult.verified;
+
+            if (hashResult.verified) {
+              if (hashResult.mismatch) {
                 findings.push({
                   field: 'sha256',
                   local: `${localRecord.sourceHash.slice(0, 12)}…`,
-                  remote: `${remoteHash.slice(0, 12)}…`,
+                  remote: `${(hashResult.remoteHash ?? '').slice(0, 12)}…`,
                   severity: 'drift',
                 });
               }
+            } else {
+              warn(`  #${id}: ${hashResult.reason}`);
             }
-          } catch {
-            // Download failed — skip hash check.
           }
         }
 
+        const hashUnverified = options.hash === true && hashVerified === false;
         const status = findings.length === 0 ? 'ok' : 'drift';
-        results.push({ id, filename: remote.filename, status, findings });
+        results.push({
+          id,
+          filename: remote.filename,
+          status,
+          findings,
+          ...(options.hash ? { hashVerified } : {}),
+        });
 
-        if (status === 'ok') {
+        if (status === 'ok' && !hashUnverified) {
           info(`  ✓ #${id} (${remote.filename}) — in sync`);
           okCount++;
+        } else if (status === 'ok' && hashUnverified) {
+          warn(`  ⚠ #${id} (${remote.filename}) — in sync except hash could not be verified`);
         } else {
           warn(`  ⚠ #${id} (${remote.filename}) — ${findings.length} difference(s):`);
           for (const f of findings) {
@@ -237,12 +311,18 @@ export function registerVerifyCommand(program: Command): void {
           }
           driftCount++;
         }
+
+        if (hashUnverified) {
+          unverifiedCount++;
+        }
       }
 
       db.close();
 
       // Summary.
-      info(`\n  Summary: ${okCount} ok, ${driftCount} drifted, ${missingCount} missing`);
+      info(
+        `\n  Summary: ${okCount} ok, ${driftCount} drifted, ${missingCount} missing, ${unverifiedCount} unverified`,
+      );
 
       if (parentOpts.json) {
         printJson({
@@ -251,11 +331,12 @@ export function registerVerifyCommand(program: Command): void {
           ok: okCount,
           drift: driftCount,
           missing: missingCount,
+          unverified: unverifiedCount,
           results,
         });
       }
 
-      if (driftCount > 0 || missingCount > 0) {
+      if (driftCount > 0 || missingCount > 0 || unverifiedCount > 0) {
         process.exit(1);
       }
     });
