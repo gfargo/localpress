@@ -274,7 +274,10 @@ subjects.
 4. **That triggers the build** (`release-please.yml` calls the reusable
    `release-build.yml`): typecheck + unit tests → 5-platform binaries/tarballs →
    `checksums.txt` → uploads them to the Release → bumps `Formula/localpress.rb`
-   and pushes it to both `main` and the `gfargo/homebrew-tap`.
+   and pushes it to both `main` and the `gfargo/homebrew-tap` → triggers a
+   rebuild of the marketing site (`gfargo/localpress-www`) via its Vercel
+   Deploy Hook, same mechanism `rebuild-on-wiki.yml` already uses for wiki
+   changes.
 
 That's it — merging one PR is the whole release.
 
@@ -322,6 +325,11 @@ the allowed `types` in `pr-title-lint.yml`).
 - **`HOMEBREW_TAP_TOKEN`** (repo secret, PAT with `repo` scope on
   `gfargo/homebrew-tap`) must be present or the tap-push step no-ops (the Release
   itself still succeeds).
+- **`VERCEL_DEPLOY_HOOK`** (repo secret, same Vercel Deploy Hook URL
+  `rebuild-on-wiki.yml` uses) triggers a `localpress-www` rebuild at the end of
+  every release build. Missing it just skips the trigger — doesn't fail the
+  release. Create it in Vercel → Project → Settings → Git → Deploy Hooks if it
+  isn't already set from the wiki-rebuild setup.
 - The formula commit back to `main` carries `[skip ci]` so it doesn't spin up
   another release-please run.
 - `release-build.yml` creates the Release only if one doesn't already exist, so

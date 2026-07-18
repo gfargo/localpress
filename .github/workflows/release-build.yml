@@ -6,7 +6,9 @@ name: Release Build
 #   3. ensures a GitHub Release exists for the tag and uploads the archives
 #      + a checksums.txt (so `localpress update` can verify downloads),
 #   4. updates Formula/localpress.rb with the fresh SHA256s and pushes it to
-#      both this repo's main branch and the shared gfargo/homebrew-tap.
+#      both this repo's main branch and the shared gfargo/homebrew-tap,
+#   5. triggers a rebuild of the marketing site (gfargo/localpress-www) so
+#      version-dependent copy there stays current with each release.
 #
 # Two entry points call this:
 #   - release-please.yml  → automated, after a Release PR is merged
@@ -15,6 +17,9 @@ name: Release Build
 # Prerequisites:
 #   - HOMEBREW_TAP_TOKEN secret: a GitHub PAT with `repo` scope on
 #     the shared gfargo Homebrew tap (gfargo/homebrew-tap).
+#   - VERCEL_DEPLOY_HOOK secret: same Vercel Deploy Hook URL used by
+#     rebuild-on-wiki.yml. Missing it skips the rebuild trigger rather than
+#     failing the release.
 
 on:
   workflow_call:
@@ -173,3 +178,13 @@ jobs:
           git add Formula/localpress.rb
           git diff --staged --quiet || git commit -m "chore: update formula to v${VERSION}"
           git push origin main
+
+      - name: Trigger marketing site rebuild
+        env:
+          VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$VERCEL_DEPLOY_HOOK" ]; then
+            echo "VERCEL_DEPLOY_HOOK not set — skipping marketing site rebuild trigger."
+            exit 0
+          fi
+          curl -sf -X POST "$VERCEL_DEPLOY_HOOK"
