@@ -86,11 +86,11 @@ describe('escapeSqlLike', () => {
     expect(escapeSqlLike('a\\_b%c')).toBe('a\\\\\\_b\\%c');
   });
 
-  test("escapes single quote to prevent SQL string-literal breakout", () => {
+  test('escapes single quote to prevent SQL string-literal breakout', () => {
     expect(escapeSqlLike("it's.jpg")).toBe("it''s.jpg");
   });
 
-  test("escapes combined: single quote, percent, underscore, and backslash", () => {
+  test('escapes combined: single quote, percent, underscore, and backslash', () => {
     // Simulate a malicious guid: x' OR '1'='1 / 100%_data\file.jpg
     const guid = "x' OR '1'='1";
     const escaped = escapeSqlLike(guid);
@@ -195,7 +195,7 @@ describe('shell-safety of SQL strings built from escapeSqlLike + shellQuote', ()
     expect(likePattern).toContain('`');
   });
 
-  test("single-quote in guid does not break SQL string literal after escapeSqlLike + shellQuote", () => {
+  test('single-quote in guid does not break SQL string literal after escapeSqlLike + shellQuote', () => {
     const maliciousGuid = "example.com/uploads/it's-a-photo.jpg";
     const strippedUrl = maliciousGuid.replace(/https?:\/\//, '');
     const likePattern = escapeSqlLike(strippedUrl);
