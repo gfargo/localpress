@@ -135,7 +135,7 @@ export async function generateCaption(
       signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
+    if (err instanceof DOMException && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
       throw new Error(
         `Ollama did not respond within ${GENERATE_TIMEOUT_MS / 1000}s (model may be wedged or too slow for this hardware).`,
       );
@@ -204,7 +204,7 @@ export async function generateText(
       signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
+    if (err instanceof DOMException && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
       throw new Error(
         `Ollama did not respond within ${GENERATE_TIMEOUT_MS / 1000}s (model may be wedged or too slow for this hardware).`,
       );
