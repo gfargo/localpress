@@ -332,11 +332,21 @@ export function registerOptimizeCommand(program: Command): void {
               resultWpId = uploaded.id;
             }
 
-            recordSuccess(db, site.name, item, sourceHash, resultHash, {}, 0, {
-              bytesBefore: sourceBytes.length,
-              bytesAfter: resultBytes.length,
-              resultWpId: resultWpId !== item.id ? resultWpId : null,
-            });
+            recordSuccess(
+              db,
+              site.name,
+              item,
+              sourceHash,
+              resultHash,
+              resultMimeType ?? item.mimeType,
+              {},
+              0,
+              {
+                bytesBefore: sourceBytes.length,
+                bytesAfter: resultBytes.length,
+                resultWpId: resultWpId !== item.id ? resultWpId : null,
+              },
+            );
             db.close();
 
             // Re-fetch the item from WordPress to get fresh metadata for the UI.
@@ -571,6 +581,7 @@ export function registerOptimizeCommand(program: Command): void {
               item,
               sourceHash,
               sourceHash,
+              item.mimeType,
               perItemOpts,
               durationMs,
               {
@@ -609,6 +620,7 @@ export function registerOptimizeCommand(program: Command): void {
           // 3. Upload the result.
           let resultWpId: number | null = null;
           let rewrittenUrls: number | undefined;
+          const outputMime = formatToMime(result.after.format);
 
           if (!options.keepOriginal && options.replaceInPlace !== false) {
             // Try replace-in-place.
@@ -616,7 +628,6 @@ export function registerOptimizeCommand(program: Command): void {
             if (replaceAdapter) {
               info('    ↳ Replacing in-place...');
               // Detect format change for metadata update.
-              const outputMime = formatToMime(result.after.format);
               const formatChanged = outputMime !== item.mimeType;
               const newExt = formatChanged ? mimeToExtension(outputMime) : undefined;
 
@@ -693,11 +704,21 @@ export function registerOptimizeCommand(program: Command): void {
           }
 
           // 4. Record in SQLite.
-          recordSuccess(db, site.name, item, sourceHash, resultHash, perItemOpts, durationMs, {
-            bytesBefore: sourceBytes.length,
-            bytesAfter: result.bytes.length,
-            resultWpId: resultWpId !== item.id ? resultWpId : null,
-          });
+          recordSuccess(
+            db,
+            site.name,
+            item,
+            sourceHash,
+            resultHash,
+            outputMime,
+            perItemOpts,
+            durationMs,
+            {
+              bytesBefore: sourceBytes.length,
+              bytesAfter: result.bytes.length,
+              resultWpId: resultWpId !== item.id ? resultWpId : null,
+            },
+          );
 
           // 5. Mirror to WP post meta (best-effort).
           try {
@@ -860,20 +881,27 @@ function recordSuccess(
   item: MediaItem,
   sourceHash: string,
   resultHash: string,
+  resultMimeType: string,
   opts: OptimizeOptions,
   durationMs: number,
   sizes: { bytesBefore: number; bytesAfter: number; resultWpId: number | null },
   status: 'success' | 'skipped' = 'success',
 ): void {
+  // `resultWpId === null` means the original attachment was replaced in
+  // place, so the live file now IS the processed result — the attachments
+  // table (which `verify` compares against) must reflect that, not the
+  // pre-processing bytes. When a new attachment was uploaded instead, the
+  // original item.id was never touched, so its record stays as-is.
+  const wasReplacedInPlace = sizes.resultWpId === null;
   db.upsertAttachment({
     siteName,
     wpId: item.id,
     sourceUrl: item.url,
-    sourceHash,
-    sizeBytes: sizes.bytesBefore,
+    sourceHash: wasReplacedInPlace ? resultHash : sourceHash,
+    sizeBytes: wasReplacedInPlace ? sizes.bytesAfter : sizes.bytesBefore,
     width: item.width ?? null,
     height: item.height ?? null,
-    mimeType: item.mimeType,
+    mimeType: wasReplacedInPlace ? resultMimeType : item.mimeType,
     lastSeenAt: Date.now(),
   });
   db.recordProcessing({
