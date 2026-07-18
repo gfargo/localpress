@@ -27,6 +27,49 @@ export function shellQuote(value: string): string {
 }
 
 /**
+ * Sanitize a value for safe use as a path *component* (e.g. a filename)
+ * embedded in an scp remote destination string.
+ *
+ * `scp` remote paths are NOT argv-quoted by this module — under the legacy
+ * scp protocol the remote path is interpreted by the remote shell, and no
+ * single quoting scheme is correct under both the legacy and SFTP-based scp
+ * protocols (see `scpUpload`/`scpDownload`). Callers that build a remote path
+ * from user- or filesystem-provided input (e.g. an uploaded filename) MUST
+ * pass that component through this function first, so the resulting path
+ * contains no whitespace or shell metacharacters and can never be
+ * interpreted by a remote shell regardless of protocol.
+ *
+ * Replaces every character outside `[A-Za-z0-9._-]` with `-`, collapses
+ * repeats, trims leading/trailing `-`/`.`, and falls back to `file` if
+ * nothing safe remains. The final extension (if any) is preserved.
+ */
+export function slugifyPathComponent(value: string): string {
+  const slugged = value
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '');
+
+  return slugged || 'file';
+}
+
+/**
+ * Guard against remote paths that could be misinterpreted by a remote shell
+ * under the legacy scp protocol. Every current caller builds `remotePath`
+ * from a sanitized component (see `slugifyPathComponent`); this only exists
+ * to catch a future caller re-introducing an unsafe path, since the
+ * destination is interpolated into `user@host:<remotePath>` unquoted (see
+ * the module doc on `slugifyPathComponent` for why it can't simply be
+ * shell-quoted instead).
+ */
+function assertSafeRemotePath(remotePath: string): void {
+  if (/\s|[$`;&|<>(){}!*?[\]\\'"~]/.test(remotePath)) {
+    throw new Error(
+      `Unsafe scp remote path (contains whitespace or shell metacharacters): ${remotePath}`,
+    );
+  }
+}
+
+/**
  * Execute a command on a remote host via SSH.
  */
 export async function sshExec(ssh: SshConfig, command: string): Promise<SshExecResult> {
@@ -44,6 +87,8 @@ export async function scpUpload(
   localPath: string,
   remotePath: string,
 ): Promise<SshExecResult> {
+  assertSafeRemotePath(remotePath);
+
   const args: string[] = [];
 
   if (ssh.port && ssh.port !== 22) {
@@ -72,6 +117,8 @@ export async function scpDownload(
   remotePath: string,
   localPath: string,
 ): Promise<SshExecResult> {
+  assertSafeRemotePath(remotePath);
+
   const args: string[] = [];
 
   if (ssh.port && ssh.port !== 22) {

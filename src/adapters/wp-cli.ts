@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SiteConfig, SshConfig } from '../types.ts';
-import { scpUpload, shellQuote, sshExec } from './ssh.ts';
+import { scpUpload, shellQuote, slugifyPathComponent, sshExec } from './ssh.ts';
 import type {
   Capability,
   FormatChangeRewrite,
@@ -76,6 +76,17 @@ export class WpCliAdapter implements WpBackend {
   }
 
   /**
+   * Execute a raw SQL string against the WordPress database via `wp db query`.
+   * The SQL argument is shell-quoted with shellQuote() so the remote shell
+   * cannot interpret embedded `"`, backticks, `$`, or `;` from attacker-
+   * controlled data.  SQL string/LIKE metacharacters must be handled by the
+   * caller using escapeSqlLike() / sqlStringLiteral() before building the SQL.
+   */
+  private async dbQuery(sql: string, extraFlags = '--skip-column-names'): Promise<string> {
+    return this.wp(`db query ${shellQuote(sql)} ${extraFlags}`);
+  }
+
+  /**
    * Fetch all values stored under a post meta key, distinguishing "key
    * absent" (empty array, exit 0) from a real WP-CLI failure (which `wp()`
    * already throws on). Avoids the `|| echo` shell fallback that masked
@@ -127,7 +138,13 @@ export class WpCliAdapter implements WpBackend {
 
   // Discovery -----------------------------------------------------------------
 
-  async listMedia(filters: ListFilters): Promise<MediaItem[]> {
+  /**
+   * Shared filter args for `post list`, used by both `listMedia` (fetches a
+   * page of items) and the count query in `listMediaPage` (fetches the total
+   * across the filtered set). Deliberately excludes pagination args
+   * (`--posts_per_page`/`--paged`) — callers append those themselves.
+   */
+  private buildListArgs(filters: ListFilters): string[] {
     const args = ['post list', '--post_type=attachment', '--post_status=inherit'];
 
     if (filters.type) {
@@ -141,6 +158,13 @@ export class WpCliAdapter implements WpBackend {
       // post_content. Shell-escape since this goes through an SSH command.
       args.push(`--s=${shellQuote(filters.search)}`);
     }
+
+    return args;
+  }
+
+  async listMedia(filters: ListFilters): Promise<MediaItem[]> {
+    const args = this.buildListArgs(filters);
+
     if (filters.perPage) {
       args.push(`--posts_per_page=${filters.perPage}`);
     }
@@ -175,8 +199,18 @@ export class WpCliAdapter implements WpBackend {
   }
 
   async listMediaPage(filters: ListFilters): Promise<import('./types.ts').PagedResult<MediaItem>> {
-    const items = await this.listMedia(filters);
-    return { items, total: items.length, totalPages: 1 };
+    const [items, total] = await Promise.all([this.listMedia(filters), this.countMedia(filters)]);
+    const totalPages = filters.perPage && total > 0 ? Math.ceil(total / filters.perPage) : 1;
+    return { items, total, totalPages };
+  }
+
+  /** Count of media matching `filters`, ignoring pagination — used for `listMediaPage`'s totals. */
+  private async countMedia(filters: ListFilters): Promise<number> {
+    const args = this.buildListArgs(filters);
+    args.push('--format=count');
+    const output = await this.wp(args.join(' '));
+    const total = Number.parseInt(output.trim(), 10);
+    return Number.isNaN(total) ? 0 : total;
   }
 
   async getMedia(id: number): Promise<MediaItem> {
@@ -212,10 +246,11 @@ export class WpCliAdapter implements WpBackend {
   async upload(file: Buffer, metadata: UploadMetadata): Promise<MediaItem> {
     // Write the file to a local temp path, then SCP to remote.
     const uploadId = `${Date.now()}-${randomUUID()}`;
-    const localTmp = join(tmpdir(), `localpress-upload-${uploadId}-${metadata.filename}`);
+    const safeFilename = slugifyPathComponent(metadata.filename);
+    const localTmp = join(tmpdir(), `localpress-upload-${uploadId}-${safeFilename}`);
     await Bun.write(localTmp, file);
 
-    const remoteTmp = `/tmp/localpress-upload-${uploadId}-${metadata.filename}`;
+    const remoteTmp = `/tmp/localpress-upload-${uploadId}-${safeFilename}`;
     const scpResult = await scpUpload(this.ssh, localTmp, remoteTmp);
     if (scpResult.exitCode !== 0) {
       throw new Error(
@@ -520,13 +555,21 @@ export class WpCliAdapter implements WpBackend {
     for (const row of sizesOutput.split('\n').filter(Boolean)) {
       try {
         const meta = JSON.parse(row) as WpCliAttachmentMeta;
+        const dir = meta.file ? meta.file.replace(/[^/]+$/, '') : '';
         if (meta.sizes) {
-          const dir = meta.file ? meta.file.replace(/[^/]+$/, '') : '';
           for (const size of Object.values(meta.sizes)) {
             if (size.file) {
               registeredFiles.add(`${uploadsDir.trim()}/${dir}${size.file}`);
             }
           }
+        }
+        // When WordPress scales a large upload down via its big-image threshold,
+        // `_wp_attached_file` points at `photo-scaled.jpg` while the untouched
+        // original is recorded only under `original_image` (e.g. `photo.jpg`)
+        // in the same directory.  Register it so the original is never mistaken
+        // for an orphan.
+        if (meta.original_image) {
+          registeredFiles.add(`${uploadsDir.trim()}/${dir}${meta.original_image}`);
         }
       } catch {
         // Skip unparseable metadata.
@@ -609,8 +652,8 @@ export class WpCliAdapter implements WpBackend {
     const references: Reference[] = [];
 
     // Featured images — same as REST fast scan but via WP-CLI.
-    const featuredOutput = await this.wp(
-      `db query "SELECT post_id FROM wp_postmeta WHERE meta_key='_thumbnail_id' AND meta_value='${id}'" --skip-column-names`,
+    const featuredOutput = await this.dbQuery(
+      `SELECT post_id FROM wp_postmeta WHERE meta_key='_thumbnail_id' AND meta_value='${id}'`,
     );
     for (const postIdStr of featuredOutput.split('\n').filter(Boolean)) {
       const postId = Number.parseInt(postIdStr.trim(), 10);
@@ -641,8 +684,8 @@ export class WpCliAdapter implements WpBackend {
     // anchored regex applied to post_content below, same as REST's
     // countBlockReferences() in rest.ts.
     const blockPattern = `"id":${id}`;
-    const blockOutput = await this.wp(
-      `db query "SELECT ID, post_title, post_type, post_content FROM wp_posts WHERE post_status='publish' AND post_content LIKE '%${blockPattern}%'" --skip-column-names`,
+    const blockOutput = await this.dbQuery(
+      `SELECT ID, post_title, post_type, post_content FROM wp_posts WHERE post_status='publish' AND post_content LIKE '%${blockPattern}%'`,
     );
     for (const line of blockOutput.split('\n').filter(Boolean)) {
       const parts = line.split('\t');
@@ -650,8 +693,10 @@ export class WpCliAdapter implements WpBackend {
         const postId = Number.parseInt(parts[0], 10);
         const content = parts.slice(3).join('\t');
         if (!matchesBlockId(content, id)) continue;
-        // Avoid duplicating featured-image refs.
-        if (!references.some((r) => r.postId === postId && r.type === 'featured-image')) {
+        // Avoid duplicating this same gutenberg-block reference (a post can
+        // match the LIKE pre-filter more than once); a featured-image ref for
+        // the same post is a distinct reference type and should not suppress this.
+        if (!references.some((r) => r.postId === postId && r.type === 'gutenberg-block')) {
           references.push({
             type: 'gutenberg-block',
             postId,
@@ -670,9 +715,13 @@ export class WpCliAdapter implements WpBackend {
 
       if (url) {
         // Search post content for the URL.
-        const urlPattern = url.replace(/https?:\/\//, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const contentOutput = await this.wp(
-          `db query "SELECT ID, post_title, post_type FROM wp_posts WHERE post_status='publish' AND post_content LIKE '%${urlPattern}%'" --skip-column-names`,
+        // Strip scheme (http(s)://) so the LIKE matches regardless of scheme,
+        // then apply SQL string + LIKE metacharacter escaping so attacker-
+        // controlled filename characters cannot break the SQL or the shell.
+        const strippedUrl = url.replace(/https?:\/\//, '');
+        const likePattern = escapeSqlLike(strippedUrl);
+        const contentOutput = await this.dbQuery(
+          `SELECT ID, post_title, post_type FROM wp_posts WHERE post_status='publish' AND post_content LIKE '%${likePattern}%'`,
         );
         for (const line of contentOutput.split('\n').filter(Boolean)) {
           const parts = line.split('\t');
@@ -691,8 +740,8 @@ export class WpCliAdapter implements WpBackend {
       }
 
       // Search post meta for the attachment ID.
-      const metaOutput = await this.wp(
-        `db query "SELECT post_id, meta_key FROM wp_postmeta WHERE meta_value='${id}' AND meta_key NOT LIKE '\\_%'" --skip-column-names`,
+      const metaOutput = await this.dbQuery(
+        `SELECT post_id, meta_key FROM wp_postmeta WHERE meta_value='${id}' AND meta_key NOT LIKE '\\_%'`,
       );
       for (const line of metaOutput.split('\n').filter(Boolean)) {
         const parts = line.split('\t');
@@ -741,6 +790,55 @@ export function matchesBlockId(content: string, attachmentId: number): boolean {
   return pattern.test(content);
 }
 
+/**
+ * Escape a string value for safe use inside a MySQL LIKE clause.
+ *
+ * MySQL's default escape character for LIKE is `\`.  This function escapes:
+ *   - `\`  → `\\`  (must be first to avoid double-escaping)
+ *   - `%`  → `\%`  (LIKE wildcard)
+ *   - `_`  → `\_`  (LIKE single-char wildcard)
+ *   - `'`  → `''`  (SQL string-literal delimiter — SQL standard double-quote idiom)
+ *
+ * Both LIKE-metacharacter and SQL-string-literal escaping are folded into this
+ * one function so callers cannot forget to apply one layer.  The escaping order
+ * is: backslash first (to avoid double-escaping), then LIKE wildcards, then the
+ * single-quote SQL literal delimiter.
+ *
+ * The caller is responsible for enclosing the result in SQL string delimiters
+ * (`'…'`) within the query.  shellQuote() on the full SQL statement then
+ * ensures the backslashes reach MySQL unchanged.
+ *
+ * NOTE: This relies on MySQL's default LIKE escape character (`\`).  Sites
+ * running with `NO_BACKSLASH_ESCAPES` set would need an explicit
+ * `ESCAPE '\\'` clause, but localpress already assumes default behaviour
+ * elsewhere (e.g. the existing `'\_%'` expression).
+ */
+export function escapeSqlLike(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\') // \ → \\ (first, to avoid double-escaping)
+    .replace(/%/g, '\\%') // % → \%
+    .replace(/_/g, '\\_') // _ → \_
+    .replace(/'/g, "''"); // ' → '' (SQL string literal — must not break the enclosing '…')
+}
+
+/**
+ * Escape a string value for safe embedding inside a MySQL single-quoted
+ * string literal (i.e. between `'` and `'`).
+ *
+ * Escapes:
+ *   - `\`  → `\\`  (must be first)
+ *   - `'`  → `''`  (SQL standard double-quote idiom)
+ *
+ * Example: `"it's alive"` → `"it''s alive"`, suitable for `'it''s alive'`.
+ *
+ * Does NOT escape LIKE metacharacters — use escapeSqlLike() for LIKE clauses.
+ */
+export function sqlStringLiteral(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\') // \ → \\ (first)
+    .replace(/'/g, "''"); // ' → ''
+}
+
 // -- WP-CLI response types ----------------------------------------------------
 
 interface WpCliPost {
@@ -766,6 +864,14 @@ interface WpCliAttachmentMeta {
   file?: string;
   filesize?: number;
   sizes?: Record<string, { file: string; width: number; height: number }>;
+  /**
+   * Present when WordPress's big-image threshold scaled the upload down.
+   * `_wp_attached_file` points at `photo-scaled.jpg`; this field holds the
+   * basename of the untouched original (e.g. `photo.jpg`) stored in the same
+   * directory.  We must register it so the original is never counted as an
+   * orphan.
+   */
+  original_image?: string;
 }
 
 // Helper for callers that want to check availability.

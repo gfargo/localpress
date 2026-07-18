@@ -44,7 +44,7 @@ afterEach(() => {
 describe('looksLikeGarbage', () => {
   test('returns true for very short text', () => {
     expect(looksLikeGarbage('A.')).toBe(true);
-    expect(looksLikeGarbage('Watch.')).toBe(true);
+    expect(looksLikeGarbage('ok')).toBe(true);
     expect(looksLikeGarbage('')).toBe(true);
   });
 

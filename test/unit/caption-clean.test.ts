@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { cleanCaption, cleanClassify } from '../../src/engine/caption/ollama.ts';
+import { cleanCaption, cleanClassify, looksLikeGarbage } from '../../src/engine/caption/ollama.ts';
 
 describe('cleanCaption', () => {
   test('passes through already-clean alt text unchanged', () => {
@@ -109,5 +109,67 @@ describe('cleanClassify', () => {
 
   test('falls back to the first word when no label matches', () => {
     expect(cleanClassify('unrecognized output here')).toBe('unrecognized');
+  });
+});
+
+describe('looksLikeGarbage', () => {
+  // Default kind: alt
+  test('flags truly empty/trivial output as garbage (alt)', () => {
+    expect(looksLikeGarbage('A.', 'alt')).toBe(true);
+    expect(looksLikeGarbage('ok', 'alt')).toBe(true);
+    expect(looksLikeGarbage('   ', 'alt')).toBe(true);
+  });
+
+  test('does NOT flag valid short alt text as garbage', () => {
+    expect(looksLikeGarbage('Blue sky.', 'alt')).toBe(false); // 9 chars
+    expect(looksLikeGarbage('A red car', 'alt')).toBe(false); // 9 chars
+    expect(looksLikeGarbage('Logo.', 'alt')).toBe(false); // 5 chars, at floor
+  });
+
+  test('flags coordinate arrays as garbage regardless of kind', () => {
+    expect(looksLikeGarbage('[0.3, 0.13, 0.64, 0.26]', 'alt')).toBe(true);
+    expect(looksLikeGarbage('ids: [0.3, 0.13]', 'alt')).toBe(true);
+    expect(looksLikeGarbage('[0.3, 0.13, 0.64, 0.26]', 'classify')).toBe(true);
+  });
+
+  test('flags mostly-numeric output as garbage', () => {
+    expect(looksLikeGarbage('1234567890', 'alt')).toBe(true);
+    expect(looksLikeGarbage('0.95, 0.12, 0.34', 'alt')).toBe(true);
+  });
+
+  // classify kind — single words are valid
+  test('does NOT flag single-word classify results as garbage', () => {
+    expect(looksLikeGarbage('photo', 'classify')).toBe(false); // 5 chars
+    expect(looksLikeGarbage('screenshot', 'classify')).toBe(false); // 10 chars
+    expect(looksLikeGarbage('diagram', 'classify')).toBe(false);
+    expect(looksLikeGarbage('illustration', 'classify')).toBe(false);
+  });
+
+  // title kind — short noun phrases are valid
+  test('does NOT flag short title output as garbage', () => {
+    expect(looksLikeGarbage('Sunset', 'title')).toBe(false); // 6 chars
+    expect(looksLikeGarbage('Red barn', 'title')).toBe(false);
+  });
+
+  // tags kind — short comma-separated tags are valid
+  test('does NOT flag short tag lists as garbage', () => {
+    expect(looksLikeGarbage('cat, dog', 'tags')).toBe(false);
+    expect(looksLikeGarbage('sky', 'tags')).toBe(false); // 3 chars, at floor
+  });
+
+  // description kind — full sentences expected, 10-char floor
+  test('flags very short description as garbage', () => {
+    expect(looksLikeGarbage('Ok.', 'description')).toBe(true); // 3 chars
+    expect(looksLikeGarbage('Blue sky.', 'description')).toBe(true); // 9 chars, below description floor
+  });
+
+  test('does NOT flag valid description as garbage', () => {
+    expect(looksLikeGarbage('A sunset over the mountains.', 'description')).toBe(false);
+  });
+
+  // No kind supplied defaults to alt behaviour
+  test('defaults to alt thresholds when kind is omitted', () => {
+    expect(looksLikeGarbage('ok')).toBe(true); // 2 chars, below alt floor of 5
+    expect(looksLikeGarbage('Blue sky.')).toBe(false); // 9 chars, valid alt
   });
 });

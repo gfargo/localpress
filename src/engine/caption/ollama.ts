@@ -135,7 +135,7 @@ export async function generateCaption(
       signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
+    if (err instanceof DOMException && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
       throw new Error(
         `Ollama did not respond within ${GENERATE_TIMEOUT_MS / 1000}s (model may be wedged or too slow for this hardware).`,
       );
@@ -204,7 +204,7 @@ export async function generateText(
       signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
+    if (err instanceof DOMException && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
       throw new Error(
         `Ollama did not respond within ${GENERATE_TIMEOUT_MS / 1000}s (model may be wedged or too slow for this hardware).`,
       );
@@ -242,13 +242,32 @@ const CLASSIFY_LABEL_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
 const VALID_CLASSIFY_LABELS = new Set(CLASSIFY_LABEL_PATTERNS.map(([label]) => label));
 
 /**
+ * Minimum meaningful character count per kind.
+ *
+ * Some kinds intentionally produce short output:
+ *   classify → single word like "photo" or "diagram" (≥3 chars)
+ *   title    → short noun phrase like "Sunset" (≥3 chars)
+ *   tags     → comma list; each tag may be one short word (≥3 chars)
+ *   alt      → "Blue sky." or "A red car" are valid at 9 chars (≥5 chars)
+ *   description → at least a full short sentence (≥10 chars)
+ */
+const MIN_LENGTH_BY_KIND: Record<VisionKind, number> = {
+  classify: 3,
+  title: 3,
+  tags: 3,
+  alt: 5,
+  description: 10,
+};
+
+/**
  * Heuristic: does this caption look like garbage from a confused model?
  *
  * `text` is the already-cleaned result (post `cleanResponse`), so the check
  * must match what that kind's cleaner actually produces:
  * - alt/title/description: prose. Common failure modes from small vision
- *   models are very short text ("Watch.", "Image.", "A."), coordinate
- *   arrays ("ids: [0.3, 0.13, 0.64, 0.26]"), or mostly numbers/brackets.
+ *   models are very short text (below a kind-appropriate length floor),
+ *   coordinate arrays ("ids: [0.3, 0.13, 0.64, 0.26]"), or mostly
+ *   numbers/brackets.
  * - classify: `cleanClassify` always collapses to a single short label
  *   ("photo", "diagram", ...) — short is expected, not a garbage signal.
  *   Garbage here means the model's answer didn't map to any of the known
@@ -266,7 +285,8 @@ export function looksLikeGarbage(text: string, kind: VisionKind = 'alt'): boolea
     return trimmed.length === 0;
   }
 
-  if (trimmed.length < 10) return true;
+  const minLength = MIN_LENGTH_BY_KIND[kind] ?? MIN_LENGTH_BY_KIND.alt;
+  if (trimmed.length < minLength) return true;
   // Coordinate/float arrays: "ids: [0.3, ...]" or "[0.25, 0.39, ...]"
   if (/^(?:ids:\s*)?\[[\d.,\s]+\]$/.test(trimmed)) return true;
   // Mostly numbers, dots, brackets — not a real description
@@ -287,8 +307,8 @@ export async function generateCaptionWithFallback(
   imageBuffer: Buffer,
   options: CaptionOptions = {},
 ): Promise<CaptionResult> {
-  const result = await generateCaption(imageBuffer, options);
   const kind: VisionKind = options.kind ?? 'alt';
+  const result = await generateCaption(imageBuffer, options);
 
   // If no fallback configured, or the result looks fine, return as-is.
   if (!options.fallbackModel || !looksLikeGarbage(result.caption, kind)) {

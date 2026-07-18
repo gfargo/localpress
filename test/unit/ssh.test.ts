@@ -11,7 +11,12 @@
 import { describe, expect, test } from 'bun:test';
 
 import { AdapterResolver } from '../../src/adapters/resolver.ts';
-import { buildSshArgs, shellQuote, sshDestination } from '../../src/adapters/ssh.ts';
+import {
+  buildSshArgs,
+  shellQuote,
+  slugifyPathComponent,
+  sshDestination,
+} from '../../src/adapters/ssh.ts';
 import { isWpCliAvailableForSite } from '../../src/adapters/wp-cli.ts';
 import type { SiteConfig, SshConfig } from '../../src/types.ts';
 
@@ -69,6 +74,35 @@ describe('shellQuote', () => {
     const json = JSON.stringify(meta);
     const quoted = shellQuote(json);
     expect(JSON.parse(parseSingleQuotedWord(quoted))).toEqual(meta);
+  });
+});
+
+// -- slugifyPathComponent ------------------------------------------------------
+
+describe('slugifyPathComponent', () => {
+  test('replaces spaces with a hyphen', () => {
+    expect(slugifyPathComponent('my photo.png')).toBe('my-photo.png');
+  });
+
+  test('strips shell metacharacters and collapses runs', () => {
+    for (const value of ['$(rm -rf /).png', '`whoami`.png', "O'Brien's.png", '; rm -rf ~ .png']) {
+      const slug = slugifyPathComponent(value);
+      expect(slug).toMatch(/^[A-Za-z0-9._-]+$/);
+    }
+  });
+
+  test('preserves the file extension', () => {
+    expect(slugifyPathComponent('my photo.png')).toEndWith('.png');
+    expect(slugifyPathComponent('$(id).png')).toEndWith('.png');
+  });
+
+  test('falls back to a non-empty name when nothing safe remains', () => {
+    expect(slugifyPathComponent('$()`;|')).toBe('file');
+    expect(slugifyPathComponent('')).toBe('file');
+  });
+
+  test('trims leading/trailing hyphens and dots', () => {
+    expect(slugifyPathComponent('---weird--.name--.png---')).toBe('weird-.name-.png');
   });
 });
 
