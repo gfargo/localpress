@@ -64,6 +64,28 @@ describe('looksLikeGarbage', () => {
   test('returns false for a short-but-valid title (>= 10 chars)', () => {
     expect(looksLikeGarbage('Red mug on')).toBe(false);
   });
+
+  test('classify: valid labels are not garbage even though they are short', () => {
+    expect(looksLikeGarbage('photo', 'classify')).toBe(false);
+    expect(looksLikeGarbage('diagram', 'classify')).toBe(false);
+    expect(looksLikeGarbage('screenshot', 'classify')).toBe(false);
+    expect(looksLikeGarbage('illustration', 'classify')).toBe(false);
+  });
+
+  test('classify: anything outside the closed label set is garbage', () => {
+    expect(looksLikeGarbage('unknown', 'classify')).toBe(true);
+    expect(looksLikeGarbage('abstract art', 'classify')).toBe(true);
+    expect(looksLikeGarbage('', 'classify')).toBe(true);
+  });
+
+  test('tags: a non-empty cleaned tag list is never garbage regardless of length', () => {
+    expect(looksLikeGarbage('cat', 'tags')).toBe(false);
+    expect(looksLikeGarbage('cat, outdoor, grass', 'tags')).toBe(false);
+  });
+
+  test('tags: an empty cleaned tag list (nothing survived filtering) is garbage', () => {
+    expect(looksLikeGarbage('', 'tags')).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -186,6 +208,49 @@ describe('generateCaptionWithFallback — fallback error path', () => {
 
     expect(result.caption).toBe('A red ceramic mug on a wooden desk.');
     // Only one generate call — fallback was never needed.
+    expect(callCount).toBe(1);
+  });
+
+  test('classify: does not spuriously trigger fallback for a valid short label', async () => {
+    // Regression test: "photo" and "diagram" are valid classify outputs but
+    // are under 10 chars, so the generic prose heuristic would have wrongly
+    // flagged them as garbage and discarded the correct classification in
+    // favor of whatever the fallback model returned.
+    let callCount = 0;
+    globalThis.fetch = (async (input: string | URL, _init?: RequestInit): Promise<Response> => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.endsWith('/api/tags')) {
+        return new Response(
+          JSON.stringify({
+            models: [
+              { name: 'primary', size: 1 },
+              { name: 'fallback', size: 1 },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+
+      if (url.endsWith('/api/generate')) {
+        callCount++;
+        // Primary correctly classifies as a photo.
+        return ollamaResponse('photo');
+      }
+
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const buf = tinyPngBuffer();
+    const result = await generateCaptionWithFallback(buf, {
+      kind: 'classify',
+      model: 'primary',
+      fallbackModel: 'fallback',
+      ollamaUrl: 'http://localhost:11434',
+    });
+
+    expect(result.caption).toBe('photo');
+    // Only one generate call — the valid classification was never treated as garbage.
     expect(callCount).toBe(1);
   });
 

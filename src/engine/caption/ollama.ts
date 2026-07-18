@@ -230,17 +230,42 @@ export async function generateText(
   };
 }
 
+/** Word-boundary patterns per label, including common word forms (plurals, "photograph"). */
+const CLASSIFY_LABEL_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
+  ['screenshot', /\bscreenshots?\b/i],
+  ['photo', /\bphotos?\b|\bphotographs?\b/i],
+  ['illustration', /\billustrations?\b/i],
+  ['diagram', /\bdiagrams?\b/i],
+];
+
+/** The closed label set `cleanClassify` returns for a genuinely-classified image. */
+const VALID_CLASSIFY_LABELS = new Set(CLASSIFY_LABEL_PATTERNS.map(([label]) => label));
+
 /**
  * Heuristic: does this caption look like garbage from a confused model?
  *
- * Common failure modes from small vision models:
- * - Very short (< 10 chars): "Watch.", "Image.", "A."
- * - Coordinate arrays: "ids: [0.3, 0.13, 0.64, 0.26]"
- * - Mostly numbers/brackets (confidence scores leaked)
- * - Single word that's clearly not a description
+ * `text` is the already-cleaned result (post `cleanResponse`), so the check
+ * must match what that kind's cleaner actually produces:
+ * - alt/title/description: prose. Common failure modes from small vision
+ *   models are very short text ("Watch.", "Image.", "A."), coordinate
+ *   arrays ("ids: [0.3, 0.13, 0.64, 0.26]"), or mostly numbers/brackets.
+ * - classify: `cleanClassify` always collapses to a single short label
+ *   ("photo", "diagram", ...) — short is expected, not a garbage signal.
+ *   Garbage here means the model's answer didn't map to any of the known
+ *   labels (`cleanClassify`'s "unknown" fallback).
+ * - tags: `cleanTagsArray` already filters unparseable tokens — garbage
+ *   here means nothing survived the filter (empty result).
  */
-export function looksLikeGarbage(text: string): boolean {
+export function looksLikeGarbage(text: string, kind: VisionKind = 'alt'): boolean {
   const trimmed = text.trim();
+
+  if (kind === 'classify') {
+    return !VALID_CLASSIFY_LABELS.has(trimmed);
+  }
+  if (kind === 'tags') {
+    return trimmed.length === 0;
+  }
+
   if (trimmed.length < 10) return true;
   // Coordinate/float arrays: "ids: [0.3, ...]" or "[0.25, 0.39, ...]"
   if (/^(?:ids:\s*)?\[[\d.,\s]+\]$/.test(trimmed)) return true;
@@ -263,9 +288,10 @@ export async function generateCaptionWithFallback(
   options: CaptionOptions = {},
 ): Promise<CaptionResult> {
   const result = await generateCaption(imageBuffer, options);
+  const kind: VisionKind = options.kind ?? 'alt';
 
   // If no fallback configured, or the result looks fine, return as-is.
-  if (!options.fallbackModel || !looksLikeGarbage(result.caption)) {
+  if (!options.fallbackModel || !looksLikeGarbage(result.caption, kind)) {
     return result;
   }
 
@@ -288,7 +314,7 @@ export async function generateCaptionWithFallback(
 
   // If the fallback also produces garbage, return whichever is longer
   // (marginally better than nothing).
-  if (looksLikeGarbage(fallbackResult.caption)) {
+  if (looksLikeGarbage(fallbackResult.caption, kind)) {
     return result.caption.length >= fallbackResult.caption.length ? result : fallbackResult;
   }
 
@@ -334,14 +360,6 @@ export function cleanTitle(raw: string): string {
   }
   return s.trim();
 }
-
-/** Word-boundary patterns per label, including common word forms (plurals, "photograph"). */
-const CLASSIFY_LABEL_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
-  ['screenshot', /\bscreenshots?\b/i],
-  ['photo', /\bphotos?\b|\bphotographs?\b/i],
-  ['illustration', /\billustrations?\b/i],
-  ['diagram', /\bdiagrams?\b/i],
-];
 
 /** Finds whichever label pattern matches earliest in `text`, or undefined if none match. */
 function earliestClassifyLabel(text: string): string | undefined {
