@@ -818,9 +818,15 @@ export function registerOptimizeCommand(program: Command): void {
  *     Without this branch every re-run re-optimized and uploaded yet another
  *     duplicate attachment. Skip when the source bytes are unchanged.
  *
- * After `undo` restores the original bytes, an in-place file's hash reverts to
- * the old sourceHash (≠ resultHash), so the replace-in-place branch naturally
- * returns false and re-optimization proceeds.
+ * Any row with `revertedAt` set (i.e. an `undo` has been applied) is treated as
+ * non-skippable, regardless of write path. This is the entire point of the
+ * `reverted_at` column (db.ts:173-174): the row stays in history for auditing but
+ * must not block the attachment from being re-optimized. Without this guard, the
+ * upload-as-new path would skip forever after undo because the source bytes are
+ * never touched and its hash still matches the recorded `sourceHash`. The
+ * replace-in-place path happened to escape by accident (hash reverts after undo),
+ * but making the check explicit here ensures correct behaviour for both paths.
+ * See OSS-919 / localpress#199.
  */
 export function shouldSkipOptimize(
   lastProcessing: ProcessingHistoryRecord | null,
@@ -830,6 +836,11 @@ export function shouldSkipOptimize(
 ): boolean {
   if (force) return false;
   if (!lastProcessing || lastProcessing.status === 'failure') return false;
+  // An undone (reverted) run must become eligible again — that is the whole
+  // point of the reverted_at column (db.ts). Without this, a REST-only
+  // upload-as-new run whose source was never touched would keep matching
+  // sourceHash and skip forever after undo. See OSS-919 / localpress#199.
+  if (lastProcessing.revertedAt !== null) return false;
   if (lastProcessing.paramsJson !== JSON.stringify(perItemOpts)) return false;
 
   if (lastProcessing.resultWpId === null) {
