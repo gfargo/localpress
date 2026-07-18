@@ -22,6 +22,11 @@ let sshCalls: string[] = [];
 let scpCalls: Array<{ localPath: string; remotePath: string }> = [];
 let failOn: ((command: string) => boolean) | null = null;
 let attachmentMetadataOverride: string | null = null;
+// Override for the bulk db query used by pruneOrphans to fetch all
+// _wp_attachment_metadata rows.
+let pruneMetadataRowsOverride: string | null = null;
+// Override for the find command used by pruneOrphans to list files on disk.
+let findFilesOverride: string | null = null;
 
 function ok(stdout: string): FakeExecResult {
   return { stdout, stderr: '', exitCode: 0 };
@@ -37,6 +42,18 @@ function respond(command: string): FakeExecResult {
   }
   if (command.includes(`eval 'echo wp_upload_dir()`)) {
     return ok('/var/www/html/wp-content/uploads');
+  }
+  // pruneOrphans: find all files on disk (sshExec path).
+  if (command.startsWith('find ') && findFilesOverride !== null) {
+    return ok(findFilesOverride);
+  }
+  // pruneOrphans: bulk fetch of all _wp_attachment_metadata rows via db query.
+  if (
+    command.includes('db query') &&
+    command.includes("meta_key='_wp_attachment_metadata'") &&
+    pruneMetadataRowsOverride !== null
+  ) {
+    return ok(pruneMetadataRowsOverride);
   }
   if (
     command.includes('post meta get') &&
@@ -137,6 +154,8 @@ beforeEach(() => {
   scpCalls = [];
   failOn = null;
   attachmentMetadataOverride = null;
+  pruneMetadataRowsOverride = null;
+  findFilesOverride = null;
 });
 
 afterEach(async () => {
@@ -346,5 +365,47 @@ describe('WpCliAdapter#pruneOrphans', () => {
     );
     expect(findCall).toMatch(/-type f \\\( -name '\*\.jpg' -o -name/);
     expect(findCall).toContain('\\)');
+  });
+
+  test('does not report the original_image as an orphan when WP scaled the upload', async () => {
+    // WordPress big-image threshold scenario:
+    //   _wp_attached_file  → "2024/06/photo-scaled.jpg"  (the scaled-down version)
+    //   _wp_attachment_metadata.original_image → "photo.jpg"  (the untouched original,
+    //     stored in the same 2024/06/ directory and referenced nowhere else in the DB)
+    //
+    // Both files exist on disk.  Before the fix, photo.jpg was NOT in registeredFiles
+    // and therefore surfaced as an orphan — acting on the report deletes the original.
+    const uploadsBase = '/var/www/html/wp-content/uploads';
+    const scaledFile = '2024/06/photo-scaled.jpg';
+    const originalFile = 'photo.jpg'; // original_image basename (same dir)
+    const originalFullPath = `${uploadsBase}/2024/06/${originalFile}`;
+    const scaledFullPath = `${uploadsBase}/${scaledFile}`;
+
+    // Simulate the two files that exist on disk.
+    findFilesOverride = [scaledFullPath, originalFullPath].join('\n');
+
+    // Simulate the _wp_attached_file DB row pointing at the scaled version.
+    // (The respond() mock's db query for _wp_attached_file returns '' by default;
+    // we inject it via the bulk metadata approach instead — the attached-file query
+    // returns empty, but the attachment-metadata query gives us everything we need
+    // to register both paths.)
+    //
+    // Simulate the _wp_attachment_metadata DB row that carries original_image.
+    pruneMetadataRowsOverride = JSON.stringify({
+      file: scaledFile,
+      sizes: {},
+      original_image: originalFile,
+    });
+
+    const adapter = new WpCliAdapter(site);
+    const result = await adapter.pruneOrphans();
+
+    // The original full-resolution file must NOT be in the orphan list.
+    expect(result.orphanFiles).not.toContain(originalFullPath);
+    // The scaled file is registered via _wp_attached_file (empty in this mock,
+    // but it still appears in registeredFiles via metadata.file), so it should
+    // not be an orphan either if it came through.
+    // The critical assertion: no orphan reported for the original.
+    expect(result.orphanFiles.every((f) => f !== originalFullPath)).toBe(true);
   });
 });

@@ -532,13 +532,21 @@ export class WpCliAdapter implements WpBackend {
     for (const row of sizesOutput.split('\n').filter(Boolean)) {
       try {
         const meta = JSON.parse(row) as WpCliAttachmentMeta;
+        const dir = meta.file ? meta.file.replace(/[^/]+$/, '') : '';
         if (meta.sizes) {
-          const dir = meta.file ? meta.file.replace(/[^/]+$/, '') : '';
           for (const size of Object.values(meta.sizes)) {
             if (size.file) {
               registeredFiles.add(`${uploadsDir.trim()}/${dir}${size.file}`);
             }
           }
+        }
+        // When WordPress scales a large upload down via its big-image threshold,
+        // `_wp_attached_file` points at `photo-scaled.jpg` while the untouched
+        // original is recorded only under `original_image` (e.g. `photo.jpg`)
+        // in the same directory.  Register it so the original is never mistaken
+        // for an orphan.
+        if (meta.original_image) {
+          registeredFiles.add(`${uploadsDir.trim()}/${dir}${meta.original_image}`);
         }
       } catch {
         // Skip unparseable metadata.
@@ -831,6 +839,14 @@ interface WpCliAttachmentMeta {
   file?: string;
   filesize?: number;
   sizes?: Record<string, { file: string; width: number; height: number }>;
+  /**
+   * Present when WordPress's big-image threshold scaled the upload down.
+   * `_wp_attached_file` points at `photo-scaled.jpg`; this field holds the
+   * basename of the untouched original (e.g. `photo.jpg`) stored in the same
+   * directory.  We must register it so the original is never counted as an
+   * orphan.
+   */
+  original_image?: string;
 }
 
 // Helper for callers that want to check availability.
