@@ -25,7 +25,11 @@ export interface OpenResult {
  * Returns immediately after launching — does not wait for the editor to close.
  * The caller should use a file watcher to detect when the user saves.
  */
-export function openInEditor(filePath: string, editorApp?: string): OpenResult {
+export function openInEditor(
+  filePath: string,
+  editorApp?: string,
+  onError?: (err: Error) => void,
+): OpenResult {
   const platform = process.platform;
 
   let command: string;
@@ -60,6 +64,13 @@ export function openInEditor(filePath: string, editorApp?: string): OpenResult {
   const child = spawn(command, args, {
     detached: true,
     stdio: 'ignore',
+  });
+
+  // Without this, a missing editor binary (e.g. `--with gimp` when gimp
+  // isn't on PATH, or no xdg-open on a headless box) surfaces as an
+  // unhandled 'error' event and crashes the process mid-round-trip.
+  child.on('error', (err) => {
+    onError?.(err);
   });
 
   // Unref so our process can exit if needed (though we'll be watching).

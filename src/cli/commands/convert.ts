@@ -210,16 +210,21 @@ export function registerConvertCommand(program: Command): void {
               `${formatBytes(sourceBytes.length)} → ${formatBytes(result.bytes.length)} (${durationMs}ms)`,
           );
 
-          // Record in SQLite.
+          // Record in SQLite. `resultWpId === item.id` means the original
+          // attachment was replaced in place — the live file now IS the
+          // converted result, so the attachments table (which `verify`
+          // compares against) must reflect the post-conversion state, not
+          // the pre-conversion bytes/mime.
+          const wasReplacedInPlace = resultWpId === item.id;
           db.upsertAttachment({
             siteName: site.name,
             wpId: item.id,
             sourceUrl: item.url,
-            sourceHash,
-            sizeBytes: sourceBytes.length,
+            sourceHash: wasReplacedInPlace ? resultHash : sourceHash,
+            sizeBytes: wasReplacedInPlace ? result.bytes.length : sourceBytes.length,
             width: item.width ?? null,
             height: item.height ?? null,
-            mimeType: item.mimeType,
+            mimeType: wasReplacedInPlace ? targetMime : item.mimeType,
             lastSeenAt: Date.now(),
           });
           db.recordProcessing({

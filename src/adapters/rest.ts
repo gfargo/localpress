@@ -354,16 +354,36 @@ export class RestAdapter implements WpBackend {
 
     // 2. Gutenberg block references: search content for wp:image {"id":N}.
     //    The `wp:image` block marker lives in the RAW block comment, which is
-    //    stripped from rendered HTML — so we must request context=edit to get
-    //    content.raw. Without it, embedded images are never found.
+    //    stripped from rendered HTML — so we prefer context=edit to get
+    //    content.raw. Accounts without edit capability (e.g. Author/Contributor
+    //    Application Passwords) get `rest_forbidden_context` for that request;
+    //    since the featured-image scan above already succeeded with default
+    //    (view) context, a 401/403 here means missing edit rights rather than
+    //    bad credentials, so we retry without `context` and let
+    //    countPostImageReferences fall back to matching wp-image-<id> classes
+    //    in the rendered HTML.
     for (const postType of ['posts', 'pages'] as const) {
-      const posts = await this.paginateAll<WpPostResponse>(
-        this.apiUrl(`/${postType}`, {
-          per_page: 100,
-          context: 'edit',
-          _fields: 'id,title,type,content',
-        }),
-      );
+      let posts: WpPostResponse[];
+      try {
+        posts = await this.paginateAll<WpPostResponse>(
+          this.apiUrl(`/${postType}`, {
+            per_page: 100,
+            context: 'edit',
+            _fields: 'id,title,type,content',
+          }),
+        );
+      } catch (err) {
+        if (err instanceof WpApiError && (err.status === 401 || err.status === 403)) {
+          posts = await this.paginateAll<WpPostResponse>(
+            this.apiUrl(`/${postType}`, {
+              per_page: 100,
+              _fields: 'id,title,type,content',
+            }),
+          );
+        } else {
+          throw err;
+        }
+      }
 
       for (const post of posts) {
         const occurrences = countPostImageReferences(post, id);

@@ -1,10 +1,15 @@
 /**
- * Regression tests for gfargo/localpress#101: the REST adapter must request
- * `context=edit` so raw block markup and raw HTML fields are available.
+ * Regression tests for gfargo/localpress#101 and #204: the REST adapter must
+ * request `context=edit` so raw block markup and raw HTML fields are
+ * available, but must degrade gracefully when the auth account can't use it.
  *
  *   1. The fast reference scan must find Gutenberg block embeds via
- *      `content.raw` (and fall back to the `wp-image-<id>` rendered class
- *      when raw content isn't returned, e.g. limited-permission auth).
+ *      `content.raw`. When `context=edit` is forbidden (401/403 — e.g. an
+ *      Author/Contributor Application Password), it must retry without the
+ *      `context` param and fall back to matching the `wp-image-<id>` class in
+ *      rendered HTML, rather than throwing. A 401/403 on the earlier
+ *      featured-image scan (which never requests `context=edit`) is a real
+ *      auth failure and must still surface as an error.
  *   2. `getMedia` must prefer `caption.raw` over the stripped `caption.rendered`
  *      fallback, so read-modify-write flows like `tag`/`vision` don't
  *      permanently flatten formatted captions on write-back.
@@ -99,17 +104,26 @@ describe('RestAdapter.findReferences (fast scan)', () => {
     expect(blockRef?.postId).toBe(7);
   });
 
-  test('falls back to rendered wp-image-<id> class when content.raw is unavailable', async () => {
+  test('retries without context and falls back to rendered wp-image-<id> class when context=edit is forbidden', async () => {
     const adapter = new RestAdapter(fakeSite);
+    const requestedUrls: URL[] = [];
 
     installFetchMock((url) => {
+      requestedUrls.push(url);
+
       if (url.pathname.endsWith('/wp-json/wp/v2/pages')) {
         return jsonResponse([], { headers: EMPTY_HEADERS });
       }
       if (url.pathname.endsWith('/wp-json/wp/v2/posts')) {
         if (url.searchParams.get('context') === 'edit') {
-          // Simulate a limited-permission auth: context=edit was requested but
-          // WordPress only returns rendered content (no `.raw` field).
+          // Author/Contributor Application Password: context=edit is forbidden.
+          return jsonResponse(
+            { code: 'rest_forbidden_context', message: 'Sorry, you are not allowed to edit.' },
+            { status: 403 },
+          );
+        }
+        if (url.searchParams.get('_fields') === 'id,title,type,content') {
+          // Retry without context — only rendered HTML is available.
           return jsonResponse(
             [
               {
@@ -122,6 +136,7 @@ describe('RestAdapter.findReferences (fast scan)', () => {
             { headers: PAGE_HEADERS },
           );
         }
+        // Featured-image scan (no context param) — no featured image match here.
         return jsonResponse(
           [
             {
@@ -142,6 +157,39 @@ describe('RestAdapter.findReferences (fast scan)', () => {
     expect(blockRef).toBeDefined();
     expect(blockRef?.occurrences).toBeGreaterThanOrEqual(1);
     expect(blockRef?.postId).toBe(9);
+
+    // The retry must have actually happened: one forbidden context=edit
+    // request, then a follow-up with no context param (defaults to view).
+    const postsRequests = requestedUrls.filter((u) => u.pathname.endsWith('/wp-json/wp/v2/posts'));
+    expect(postsRequests.some((u) => u.searchParams.get('context') === 'edit')).toBe(true);
+    expect(
+      postsRequests.some(
+        (u) =>
+          u.searchParams.get('context') === null &&
+          u.searchParams.get('_fields') === 'id,title,type,content',
+      ),
+    ).toBe(true);
+  });
+
+  test('does not mask a real auth failure as a missing-reference result', async () => {
+    const adapter = new RestAdapter(fakeSite);
+
+    installFetchMock((url) => {
+      if (url.pathname.endsWith('/wp-json/wp/v2/pages')) {
+        return jsonResponse([], { headers: EMPTY_HEADERS });
+      }
+      if (url.pathname.endsWith('/wp-json/wp/v2/posts')) {
+        // Bad credentials: even the featured-image scan (default context,
+        // runs first) is rejected.
+        return jsonResponse(
+          { code: 'rest_forbidden', message: 'Invalid Application Password.' },
+          { status: 401 },
+        );
+      }
+      throw new Error(`unexpected URL in test: ${url.toString()}`);
+    });
+
+    await expect(adapter.findReferences(42, 'fast')).rejects.toThrow();
   });
 });
 

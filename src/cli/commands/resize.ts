@@ -16,6 +16,7 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
+import { formatToMime } from '../../engine/image/mime.ts';
 import {
   AnimatedImageError,
   UnsupportedFormatError,
@@ -201,16 +202,21 @@ export function registerResizeCommand(program: Command): void {
             `    ✓ ${dims} → ${newDims}  ${formatBytes(sourceBytes.length)} → ${formatBytes(result.bytes.length)} (${durationMs}ms)`,
           );
 
-          // Record in SQLite.
+          // Record in SQLite. `resultWpId === item.id` means the original
+          // attachment was replaced in place — the live file now IS the
+          // resized result, so the attachments table (which `verify`
+          // compares against) must reflect the post-resize dimensions/size,
+          // not the pre-resize state.
+          const wasReplacedInPlace = resultWpId === item.id;
           db.upsertAttachment({
             siteName: site.name,
             wpId: item.id,
             sourceUrl: item.url,
-            sourceHash,
-            sizeBytes: sourceBytes.length,
-            width: item.width ?? null,
-            height: item.height ?? null,
-            mimeType: item.mimeType,
+            sourceHash: wasReplacedInPlace ? resultHash : sourceHash,
+            sizeBytes: wasReplacedInPlace ? result.bytes.length : sourceBytes.length,
+            width: wasReplacedInPlace ? result.after.width : (item.width ?? null),
+            height: wasReplacedInPlace ? result.after.height : (item.height ?? null),
+            mimeType: wasReplacedInPlace ? formatToMime(result.after.format) : item.mimeType,
             lastSeenAt: Date.now(),
           });
           db.recordProcessing({

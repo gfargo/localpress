@@ -22,7 +22,7 @@ import type { Command } from 'commander';
 import type { AdapterResolver } from '../../adapters/resolver.ts';
 import { AdapterResolver as AdapterResolverImpl } from '../../adapters/resolver.ts';
 import type { ReplaceOptions, WpBackend } from '../../adapters/types.ts';
-import { CapabilityUnavailableError } from '../../adapters/types.ts';
+import { CapabilityUnavailableError, WpApiError } from '../../adapters/types.ts';
 import { openSnapshotStore } from '../../engine/history/index.ts';
 import type { SnapshotRecord, SnapshotStore } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
@@ -325,6 +325,11 @@ export async function restoreSnapshot(
     } catch (err) {
       if (err instanceof CapabilityUnavailableError && !strict) {
         // Fall through to upload-new fallback.
+      } else if (err instanceof WpApiError && err.status === 404) {
+        // The attachment no longer exists (e.g. it was deleted). Replace-in-place
+        // is impossible on any backend once the original is gone, so re-upload
+        // it as a new attachment — matches the REST-only path regardless of
+        // --strict, since this isn't an avoidable capability gap.
       } else {
         throw err;
       }
