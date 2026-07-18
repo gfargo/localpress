@@ -127,7 +127,13 @@ export class WpCliAdapter implements WpBackend {
 
   // Discovery -----------------------------------------------------------------
 
-  async listMedia(filters: ListFilters): Promise<MediaItem[]> {
+  /**
+   * Shared filter args for `post list`, used by both `listMedia` (fetches a
+   * page of items) and the count query in `listMediaPage` (fetches the total
+   * across the filtered set). Deliberately excludes pagination args
+   * (`--posts_per_page`/`--paged`) — callers append those themselves.
+   */
+  private buildListArgs(filters: ListFilters): string[] {
     const args = ['post list', '--post_type=attachment', '--post_status=inherit'];
 
     if (filters.type) {
@@ -141,6 +147,13 @@ export class WpCliAdapter implements WpBackend {
       // post_content. Shell-escape since this goes through an SSH command.
       args.push(`--s=${shellQuote(filters.search)}`);
     }
+
+    return args;
+  }
+
+  async listMedia(filters: ListFilters): Promise<MediaItem[]> {
+    const args = this.buildListArgs(filters);
+
     if (filters.perPage) {
       args.push(`--posts_per_page=${filters.perPage}`);
     }
@@ -175,8 +188,18 @@ export class WpCliAdapter implements WpBackend {
   }
 
   async listMediaPage(filters: ListFilters): Promise<import('./types.ts').PagedResult<MediaItem>> {
-    const items = await this.listMedia(filters);
-    return { items, total: items.length, totalPages: 1 };
+    const [items, total] = await Promise.all([this.listMedia(filters), this.countMedia(filters)]);
+    const totalPages = filters.perPage && total > 0 ? Math.ceil(total / filters.perPage) : 1;
+    return { items, total, totalPages };
+  }
+
+  /** Count of media matching `filters`, ignoring pagination — used for `listMediaPage`'s totals. */
+  private async countMedia(filters: ListFilters): Promise<number> {
+    const args = this.buildListArgs(filters);
+    args.push('--format=count');
+    const output = await this.wp(args.join(' '));
+    const total = Number.parseInt(output.trim(), 10);
+    return Number.isNaN(total) ? 0 : total;
   }
 
   async getMedia(id: number): Promise<MediaItem> {
@@ -650,8 +673,10 @@ export class WpCliAdapter implements WpBackend {
         const postId = Number.parseInt(parts[0], 10);
         const content = parts.slice(3).join('\t');
         if (!matchesBlockId(content, id)) continue;
-        // Avoid duplicating featured-image refs.
-        if (!references.some((r) => r.postId === postId && r.type === 'featured-image')) {
+        // Avoid duplicating this same gutenberg-block reference (a post can
+        // match the LIKE pre-filter more than once); a featured-image ref for
+        // the same post is a distinct reference type and should not suppress this.
+        if (!references.some((r) => r.postId === postId && r.type === 'gutenberg-block')) {
           references.push({
             type: 'gutenberg-block',
             postId,
