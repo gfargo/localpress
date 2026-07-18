@@ -8,8 +8,8 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { escapeSqlLike, matchesBlockId, sqlStringLiteral } from '../../src/adapters/wp-cli.ts';
 import { shellQuote } from '../../src/adapters/ssh.ts';
+import { escapeSqlLike, matchesBlockId, sqlStringLiteral } from '../../src/adapters/wp-cli.ts';
 
 describe('matchesBlockId', () => {
   test('matches an exact block id reference', () => {
@@ -88,7 +88,7 @@ describe('escapeSqlLike', () => {
 
   test('escapes SQL metacharacters in an attacker-controlled filename', () => {
     // guid containing LIKE wildcards — must not over-match
-    const guid = "uploads/2024/photo_100%.jpg";
+    const guid = 'uploads/2024/photo_100%.jpg';
     const escaped = escapeSqlLike(guid);
     expect(escaped).toBe('uploads/2024/photo\\_100\\%.jpg');
     // Confirm no bare % or _ remain (they are all prefixed with \)
@@ -168,7 +168,7 @@ describe('shell-safety of SQL strings built from escapeSqlLike + shellQuote', ()
   });
 
   test('combined backtick + single-quote + percent in guid round-trips correctly', () => {
-    const maliciousGuid = "example.com/uploads/`id`_100%evil.jpg";
+    const maliciousGuid = 'example.com/uploads/`id`_100%evil.jpg';
     const strippedUrl = maliciousGuid.replace(/https?:\/\//, '');
     const likePattern = escapeSqlLike(strippedUrl);
     const sql = `SELECT ID FROM wp_posts WHERE post_content LIKE '%${likePattern}%'`;
