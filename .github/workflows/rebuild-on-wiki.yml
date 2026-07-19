@@ -1,7 +1,15 @@
-name: Rebuild website on wiki change
+name: Rebuild website
+
+# localpress.griffen.codes is a static export -- its docs pages pull wiki
+# content, and its hero displays the latest release version, both fetched
+# only at build time. Neither shows up live until something actually
+# triggers a rebuild. This workflow does that whenever either source
+# changes: a wiki page edit, or a new GitHub release being published.
 
 on:
   gollum: # fires on any wiki page create/edit
+  release:
+    types: [published]
 
 jobs:
   trigger-vercel-rebuild:
