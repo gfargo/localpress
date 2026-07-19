@@ -288,9 +288,7 @@ export class RestAdapter implements WpBackend {
       // Stock WordPress can't trash attachments unless MEDIA_TRASH is defined,
       // so a non-force delete returns 501 rest_trash_not_supported. Translate
       // that into actionable guidance instead of an opaque REST error.
-      const isTrashUnsupported =
-        err instanceof WpApiError &&
-        (err.status === 501 || /rest_trash_not_supported/.test(err.message));
+      const isTrashUnsupported = err instanceof WpApiError && err.status === 501;
       if (!options?.force && isTrashUnsupported) {
         throw new Error(
           `Attachment ${id} cannot be moved to trash: this WordPress site does not have MEDIA_TRASH enabled. Re-run with --force to delete it permanently (localpress captures an undo snapshot first).`,
