@@ -21,6 +21,11 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import {
+  MIN_SESSION_PREFIX_LEN,
+  formatAmbiguousCandidates,
+  matchSessionByPrefix,
+} from '../utils/session-match.ts';
 
 export function registerHistoryCommand(program: Command): void {
   const history = program
@@ -192,12 +197,36 @@ export function registerHistoryCommand(program: Command): void {
 
       // Session prefix match.
       const sessions = store.listSessions(site.name, { limit: 1000 });
-      const session = sessions.find((s) => s.id.startsWith(id));
-      if (!session) {
+      const result = matchSessionByPrefix(sessions, id);
+      if (result.kind === 'too-short') {
+        error(
+          `Session prefix '${id}' is too short (minimum ${MIN_SESSION_PREFIX_LEN} characters).`,
+        );
+        db.close();
+        process.exit(1);
+      }
+      if (result.kind === 'none') {
         error(`No session matching '${id}'.`);
         db.close();
         process.exit(1);
       }
+      if (result.kind === 'ambiguous') {
+        error(`Ambiguous session prefix '${id}' matches ${result.candidates.length} sessions:`);
+        const candidates = formatAmbiguousCandidates(result.candidates);
+        if (parentOpts.json) {
+          printJson({ error: 'ambiguous_session_prefix', prefix: id, candidates });
+        } else {
+          for (const c of candidates) {
+            info(
+              `    ${c.shortId}  ${c.command.padEnd(10)} ${new Date(c.startedAt).toLocaleString()}`,
+            );
+          }
+          info('  Use a longer prefix to disambiguate.');
+        }
+        db.close();
+        process.exit(1);
+      }
+      const session = result.session;
       const snapshots = store.listSnapshots(site.name, { sessionId: session.id });
 
       if (parentOpts.json) {
