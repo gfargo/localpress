@@ -5,6 +5,25 @@ All notable changes to localpress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.2](https://github.com/gfargo/localpress/compare/v2.4.1...v2.4.2) (2026-07-19)
+
+
+### Bug Fixes
+
+* **adapters:** register original_image in pruneOrphans to prevent false orphan reports ([#235](https://github.com/gfargo/localpress/issues/235)) ([3f6f5fc](https://github.com/gfargo/localpress/commit/3f6f5fcaa9fef997e913908ea738d18f48124b75))
+* **caption:** fully wire fallback-model feature ([#227](https://github.com/gfargo/localpress/issues/227)) ([3e366d1](https://github.com/gfargo/localpress/commit/3e366d181f0589e8997f0792b807e4d8d3390484))
+* **caption:** handle TimeoutError from AbortSignal.timeout() in Ollama fetch ([#232](https://github.com/gfargo/localpress/issues/232)) ([1a11b59](https://github.com/gfargo/localpress/commit/1a11b596b536d78fde5b6e33e667455a72a60da7))
+* **caption:** make looksLikeGarbage kind-aware with lower length floors ([#238](https://github.com/gfargo/localpress/issues/238)) ([6df6056](https://github.com/gfargo/localpress/commit/6df605656017734dc2fa3f7ce39b5c49a48ff75c))
+* **edit:** handle missing editor binary in openInEditor ([#239](https://github.com/gfargo/localpress/issues/239)) ([31730e3](https://github.com/gfargo/localpress/commit/31730e32e7f533f80c8f1ae3a324031fb7a07487))
+* **preview:** capture undo snapshot before one-click apply ([#224](https://github.com/gfargo/localpress/issues/224)) ([be44202](https://github.com/gfargo/localpress/commit/be44202cad00f31d4695a44b5a73d8424c632583))
+* **rest-adapter:** fix trash-detection false match, invalid media_type, unclamped per_page ([#243](https://github.com/gfargo/localpress/issues/243)) ([f5ef97a](https://github.com/gfargo/localpress/commit/f5ef97abec6c50e775833948bf31fb1061f6d131))
+* **state:** make schema migrations idempotent and transactional ([#229](https://github.com/gfargo/localpress/issues/229)) ([7fe9062](https://github.com/gfargo/localpress/commit/7fe9062c61561c793c653b6cdbb60e32a77a9486))
+* **state:** record post-op state so verify stops false-flagging drift ([#226](https://github.com/gfargo/localpress/issues/226)) ([a085f1e](https://github.com/gfargo/localpress/commit/a085f1ee947ce142f055841e20b21d272f484463))
+* **verify:** authenticate --hash file fetch and never report unverified hashes as ok ([#228](https://github.com/gfargo/localpress/issues/228)) ([77415a1](https://github.com/gfargo/localpress/commit/77415a12a4e7504af305b14d8f0dac64f2cfe231))
+* **wp-cli:** fix pagination and reference dedupe parity bugs in WpCliAdapter ([#240](https://github.com/gfargo/localpress/issues/240)) ([fbba199](https://github.com/gfargo/localpress/commit/fbba199f0cbb8888965fe26dfe7004a029971d4c))
+* **wp-cli:** resolve table prefix at runtime instead of hardcoding wp_ ([#244](https://github.com/gfargo/localpress/issues/244)) ([9009f04](https://github.com/gfargo/localpress/commit/9009f04b97142e7d7a50a67b377a8dc8d931d64a))
+* **wp-cli:** shell/SQL injection in findReferences full scan ([#236](https://github.com/gfargo/localpress/issues/236)) ([944101d](https://github.com/gfargo/localpress/commit/944101dbd0e3e573bb64f283f20c3f68c0e0cf8b))
+
 ## [2.4.1](https://github.com/gfargo/localpress/compare/v2.4.0...v2.4.1) (2026-07-18)
 
 
