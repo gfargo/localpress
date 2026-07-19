@@ -136,6 +136,23 @@ export class WpCliAdapter implements WpBackend {
     return { basedir, baseurl };
   }
 
+  /**
+   * Resolve the site's real table prefix ($wpdb->prefix), cached after first
+   * retrieval. Saves an SSH round-trip on subsequent raw-SQL queries.
+   */
+  private cachedTablePrefix: string | null = null;
+
+  private async getTablePrefix(): Promise<string> {
+    if (this.cachedTablePrefix !== null) {
+      return this.cachedTablePrefix;
+    }
+
+    const output = await this.wp('db prefix');
+    const prefix = output.trim() || 'wp_';
+    this.cachedTablePrefix = prefix;
+    return prefix;
+  }
+
   // Discovery -----------------------------------------------------------------
 
   /**
@@ -525,6 +542,8 @@ export class WpCliAdapter implements WpBackend {
   }
 
   async pruneOrphans(): Promise<PruneResult> {
+    const prefix = await this.getTablePrefix();
+
     // Get the uploads directory.
     const uploadsDir = await this.wp(`eval 'echo wp_upload_dir()["basedir"];'`);
 
@@ -537,7 +556,7 @@ export class WpCliAdapter implements WpBackend {
 
     // List all registered attachment files.
     const attachedOutput = await this.wp(
-      `db query "SELECT meta_value FROM wp_postmeta WHERE meta_key='_wp_attached_file'" --skip-column-names`,
+      `db query "SELECT meta_value FROM ${prefix}postmeta WHERE meta_key='_wp_attached_file'" --skip-column-names`,
     );
     const attachedFiles = new Set(
       attachedOutput
@@ -548,7 +567,7 @@ export class WpCliAdapter implements WpBackend {
 
     // Also include generated sizes (thumbnails, medium, large).
     const sizesOutput = await this.wp(
-      `db query "SELECT meta_value FROM wp_postmeta WHERE meta_key='_wp_attachment_metadata'" --skip-column-names`,
+      `db query "SELECT meta_value FROM ${prefix}postmeta WHERE meta_key='_wp_attachment_metadata'" --skip-column-names`,
     );
 
     const registeredFiles = new Set(attachedFiles);
@@ -618,9 +637,11 @@ export class WpCliAdapter implements WpBackend {
   }
 
   async findUnattached(): Promise<number[]> {
+    const prefix = await this.getTablePrefix();
+
     // Candidates: attachments with no parent post at all.
     const candidateOutput = await this.wp(
-      `db query "SELECT ID FROM wp_posts WHERE post_type='attachment' AND post_parent=0" --skip-column-names`,
+      `db query "SELECT ID FROM ${prefix}posts WHERE post_type='attachment' AND post_parent=0" --skip-column-names`,
     );
     const candidateIds = candidateOutput
       .split('\n')
@@ -649,11 +670,12 @@ export class WpCliAdapter implements WpBackend {
   // arbitrary restriction. Widen it only if unpublished references need to be
   // surfaced too — that's a user-visible behavior change, not a bug fix.
   async findReferences(id: number, scope: ReferenceScope): Promise<Reference[]> {
+    const prefix = await this.getTablePrefix();
     const references: Reference[] = [];
 
     // Featured images — same as REST fast scan but via WP-CLI.
     const featuredOutput = await this.dbQuery(
-      `SELECT post_id FROM wp_postmeta WHERE meta_key='_thumbnail_id' AND meta_value='${id}'`,
+      `SELECT post_id FROM ${prefix}postmeta WHERE meta_key='_thumbnail_id' AND meta_value='${id}'`,
     );
     for (const postIdStr of featuredOutput.split('\n').filter(Boolean)) {
       const postId = Number.parseInt(postIdStr.trim(), 10);
@@ -685,7 +707,7 @@ export class WpCliAdapter implements WpBackend {
     // countBlockReferences() in rest.ts.
     const blockPattern = `"id":${id}`;
     const blockOutput = await this.dbQuery(
-      `SELECT ID, post_title, post_type, post_content FROM wp_posts WHERE post_status='publish' AND post_content LIKE '%${blockPattern}%'`,
+      `SELECT ID, post_title, post_type, post_content FROM ${prefix}posts WHERE post_status='publish' AND post_content LIKE '%${blockPattern}%'`,
     );
     for (const line of blockOutput.split('\n').filter(Boolean)) {
       const parts = line.split('\t');
@@ -721,7 +743,7 @@ export class WpCliAdapter implements WpBackend {
         const strippedUrl = url.replace(/https?:\/\//, '');
         const likePattern = escapeSqlLike(strippedUrl);
         const contentOutput = await this.dbQuery(
-          `SELECT ID, post_title, post_type FROM wp_posts WHERE post_status='publish' AND post_content LIKE '%${likePattern}%'`,
+          `SELECT ID, post_title, post_type FROM ${prefix}posts WHERE post_status='publish' AND post_content LIKE '%${likePattern}%'`,
         );
         for (const line of contentOutput.split('\n').filter(Boolean)) {
           const parts = line.split('\t');
@@ -741,7 +763,7 @@ export class WpCliAdapter implements WpBackend {
 
       // Search post meta for the attachment ID.
       const metaOutput = await this.dbQuery(
-        `SELECT post_id, meta_key FROM wp_postmeta WHERE meta_value='${id}' AND meta_key NOT LIKE '\\_%'`,
+        `SELECT post_id, meta_key FROM ${prefix}postmeta WHERE meta_value='${id}' AND meta_key NOT LIKE '\\_%'`,
       );
       for (const line of metaOutput.split('\n').filter(Boolean)) {
         const parts = line.split('\t');

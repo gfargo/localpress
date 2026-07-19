@@ -61,6 +61,9 @@ describe('WpCliAdapter.findReferences() dedupe scoping', () => {
     const blockContent = `<!-- wp:image {"id":${attachmentId}} --><p></p>`;
 
     sshExecMock.mockImplementation(async (_ssh: unknown, command: string) => {
+      if (command.includes('db prefix')) {
+        return result('wp_');
+      }
       if (command.includes('_thumbnail_id')) {
         return result(`${postId}`);
       }
@@ -97,6 +100,9 @@ describe('WpCliAdapter.findReferences() dedupe scoping', () => {
     const blockContent = `<!-- wp:image {"id":${attachmentId}} --><p></p>`;
 
     sshExecMock.mockImplementation(async (_ssh: unknown, command: string) => {
+      if (command.includes('db prefix')) {
+        return result('wp_');
+      }
       if (command.includes('_thumbnail_id')) {
         return result('');
       }
@@ -117,6 +123,78 @@ describe('WpCliAdapter.findReferences() dedupe scoping', () => {
 
     const blockRefs = references.filter((r) => r.type === 'gutenberg-block');
     expect(blockRefs).toHaveLength(1);
+  });
+});
+
+describe('WpCliAdapter table-prefix resolution (OSS-916)', () => {
+  beforeEach(() => {
+    sshExecMock.mockReset();
+  });
+
+  test('threads a custom table prefix into findUnattached and findReferences SQL', async () => {
+    const attachmentId = 42;
+    const capturedCommands: string[] = [];
+
+    sshExecMock.mockImplementation(async (_ssh: unknown, command: string) => {
+      capturedCommands.push(command);
+      if (command.includes('db prefix')) {
+        return result('custom_');
+      }
+      if (command.includes('SELECT ID FROM') && command.includes("post_type='attachment'")) {
+        return result(`${attachmentId}`);
+      }
+      // Everything else (post get, remaining dbQuery calls made while resolving
+      // references for the candidate) is irrelevant to this test — just avoid
+      // throwing so the SQL-construction assertions below aren't obscured.
+      return result('');
+    });
+
+    const adapter = new WpCliAdapter(site);
+    await adapter.findUnattached();
+
+    expect(capturedCommands.some((c) => c.includes('custom_posts'))).toBe(true);
+    expect(capturedCommands.some((c) => c.includes('custom_postmeta'))).toBe(true);
+    expect(capturedCommands.some((c) => c.includes('wp_posts') || c.includes('wp_postmeta'))).toBe(
+      false,
+    );
+  });
+
+  test('caches the resolved prefix across multiple calls (one db prefix round-trip)', async () => {
+    const attachmentId = 42;
+    let dbPrefixCalls = 0;
+
+    sshExecMock.mockImplementation(async (_ssh: unknown, command: string) => {
+      if (command.includes('db prefix')) {
+        dbPrefixCalls += 1;
+        return result('custom_');
+      }
+      return result('');
+    });
+
+    const adapter = new WpCliAdapter(site);
+    await adapter.findReferences(attachmentId, 'fast');
+    await adapter.findReferences(attachmentId, 'fast');
+
+    expect(dbPrefixCalls).toBe(1);
+  });
+
+  test('falls back to wp_ when db prefix returns empty output', async () => {
+    const attachmentId = 42;
+    const capturedCommands: string[] = [];
+
+    sshExecMock.mockImplementation(async (_ssh: unknown, command: string) => {
+      capturedCommands.push(command);
+      if (command.includes('db prefix')) {
+        return result('');
+      }
+      return result('');
+    });
+
+    const adapter = new WpCliAdapter(site);
+    await adapter.findReferences(attachmentId, 'fast');
+
+    expect(capturedCommands.some((c) => c.includes('wp_postmeta'))).toBe(true);
+    expect(capturedCommands.some((c) => c.includes('wp_posts'))).toBe(true);
   });
 });
 
