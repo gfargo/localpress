@@ -33,3 +33,26 @@ export function matchSessionByPrefix(
   if (matches.length > 1) return { kind: 'ambiguous', candidates: matches };
   return { kind: 'match', session: matches[0] };
 }
+
+export interface AmbiguousSessionCandidate {
+  id: string;
+  shortId: string;
+  command: string;
+  startedAt: number;
+}
+
+/**
+ * Structured form of an ambiguous match's candidate list, shared by the
+ * human-readable and `--json` renderers in `undo` and `history show` so
+ * neither output mode drops the disambiguation info the other shows.
+ */
+export function formatAmbiguousCandidates(
+  candidates: SessionRecord[],
+): AmbiguousSessionCandidate[] {
+  return candidates.map((c) => ({
+    id: c.id,
+    shortId: c.id.slice(0, 8),
+    command: c.command,
+    startedAt: c.startedAt,
+  }));
+}

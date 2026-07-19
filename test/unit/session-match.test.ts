@@ -6,7 +6,11 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { MIN_SESSION_PREFIX_LEN, matchSessionByPrefix } from '../../src/cli/utils/session-match.ts';
+import {
+  MIN_SESSION_PREFIX_LEN,
+  formatAmbiguousCandidates,
+  matchSessionByPrefix,
+} from '../../src/cli/utils/session-match.ts';
 import type { SessionRecord } from '../../src/engine/history/types.ts';
 
 function makeSession(id: string, overrides: Partial<SessionRecord> = {}): SessionRecord {
@@ -70,5 +74,27 @@ describe('matchSessionByPrefix', () => {
     const sessions = [makeSession('aaaa1111-0000-0000-0000-000000000000')];
     const result = matchSessionByPrefix(sessions, 'aaaa');
     expect(result.kind).toBe('match');
+  });
+});
+
+describe('formatAmbiguousCandidates', () => {
+  test('produces a JSON-friendly summary of each candidate', () => {
+    const sessions = [
+      makeSession('aaaa1111-0000-0000-0000-000000000000', { command: 'optimize' }),
+      makeSession('aaaa2222-0000-0000-0000-000000000000', { command: 'caption' }),
+    ];
+    const result = matchSessionByPrefix(sessions, 'aaaa');
+    expect(result.kind).toBe('ambiguous');
+    if (result.kind !== 'ambiguous') return;
+
+    const formatted = formatAmbiguousCandidates(result.candidates);
+    expect(formatted.map((c) => c.id).sort()).toEqual(
+      ['aaaa1111-0000-0000-0000-000000000000', 'aaaa2222-0000-0000-0000-000000000000'].sort(),
+    );
+    for (const c of formatted) {
+      expect(c.shortId).toBe(c.id.slice(0, 8));
+      expect(typeof c.command).toBe('string');
+      expect(typeof c.startedAt).toBe('number');
+    }
   });
 });

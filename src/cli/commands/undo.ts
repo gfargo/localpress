@@ -30,7 +30,11 @@ import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { resolveDryRun } from '../utils/run-mode.ts';
-import { MIN_SESSION_PREFIX_LEN, matchSessionByPrefix } from '../utils/session-match.ts';
+import {
+  MIN_SESSION_PREFIX_LEN,
+  formatAmbiguousCandidates,
+  matchSessionByPrefix,
+} from '../utils/session-match.ts';
 
 /**
  * Structural subset of AdapterResolver's public surface. AdapterResolver has a
@@ -129,12 +133,17 @@ export function registerUndoCommand(program: Command): void {
             error(
               `Ambiguous session prefix '${sessionIdArg}' matches ${result.candidates.length} sessions:`,
             );
-            for (const c of result.candidates) {
-              info(
-                `    ${c.id.slice(0, 8)}  ${c.command.padEnd(10)} ${new Date(c.startedAt).toLocaleString()}`,
-              );
+            const candidates = formatAmbiguousCandidates(result.candidates);
+            if (parentOpts.json) {
+              printJson({ error: 'ambiguous_session_prefix', prefix: sessionIdArg, candidates });
+            } else {
+              for (const c of candidates) {
+                info(
+                  `    ${c.shortId}  ${c.command.padEnd(10)} ${new Date(c.startedAt).toLocaleString()}`,
+                );
+              }
+              info('  Use a longer prefix to disambiguate.');
             }
-            info('  Use a longer prefix to disambiguate.');
             db.close();
             process.exit(1);
           }
