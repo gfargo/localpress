@@ -23,7 +23,7 @@ import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_OLLAMA_URL,
   cleanTagsArray,
-  generateCaption,
+  generateCaptionWithFallback,
 } from '../../engine/caption/ollama.ts';
 import { preflightOllama } from '../../engine/caption/run-bulk.ts';
 import {
@@ -71,6 +71,10 @@ export function registerTagCommand(program: Command): void {
       '--overwrite',
       'replace existing [tags: …] block; default appends if absent, keeps otherwise',
     )
+    .option(
+      '--fallback-model <name>',
+      'retry with this model if the primary model returns garbage output',
+    )
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
 
@@ -84,7 +88,14 @@ export function registerTagCommand(program: Command): void {
       const effectiveModel: string =
         options.model ?? config.defaults?.captionModel ?? DEFAULT_OLLAMA_MODEL;
 
-      const preflightError = await preflightOllama(effectiveModel, options.ollamaUrl);
+      const effectiveFallbackModel: string | undefined =
+        options.fallbackModel ?? config.defaults?.captionFallbackModel;
+
+      const preflightError = await preflightOllama(
+        effectiveModel,
+        options.ollamaUrl,
+        effectiveFallbackModel,
+      );
       if (preflightError) {
         error(preflightError);
         process.exit(2);
@@ -181,9 +192,10 @@ export function registerTagCommand(program: Command): void {
           if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
           const buf = Buffer.from(await response.arrayBuffer());
 
-          const result = await generateCaption(buf, {
+          const result = await generateCaptionWithFallback(buf, {
             kind: 'tags',
             model: effectiveModel,
+            fallbackModel: effectiveFallbackModel,
             ollamaUrl: options.ollamaUrl,
           });
 

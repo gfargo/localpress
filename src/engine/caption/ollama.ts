@@ -230,6 +230,17 @@ export async function generateText(
   };
 }
 
+/** Word-boundary patterns per label, including common word forms (plurals, "photograph"). */
+const CLASSIFY_LABEL_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
+  ['screenshot', /\bscreenshots?\b/i],
+  ['photo', /\bphotos?\b|\bphotographs?\b/i],
+  ['illustration', /\billustrations?\b/i],
+  ['diagram', /\bdiagrams?\b/i],
+];
+
+/** The closed label set `cleanClassify` returns for a genuinely-classified image. */
+const VALID_CLASSIFY_LABELS = new Set(CLASSIFY_LABEL_PATTERNS.map(([label]) => label));
+
 /**
  * Minimum meaningful character count per kind.
  *
@@ -251,16 +262,29 @@ const MIN_LENGTH_BY_KIND: Record<VisionKind, number> = {
 /**
  * Heuristic: does this caption look like garbage from a confused model?
  *
- * Common failure modes from small vision models:
- * - Extremely short (below kind-appropriate floor): "A.", "ok"
- * - Coordinate arrays: "ids: [0.3, 0.13, 0.64, 0.26]"
- * - Mostly numbers/brackets (confidence scores leaked)
- *
- * The length floor is kind-aware: classify/title/tags expect short output
- * ("photo", "Sunset") and must not be penalised for it.
+ * `text` is the already-cleaned result (post `cleanResponse`), so the check
+ * must match what that kind's cleaner actually produces:
+ * - alt/title/description: prose. Common failure modes from small vision
+ *   models are very short text (below a kind-appropriate length floor),
+ *   coordinate arrays ("ids: [0.3, 0.13, 0.64, 0.26]"), or mostly
+ *   numbers/brackets.
+ * - classify: `cleanClassify` always collapses to a single short label
+ *   ("photo", "diagram", ...) — short is expected, not a garbage signal.
+ *   Garbage here means the model's answer didn't map to any of the known
+ *   labels (`cleanClassify`'s "unknown" fallback).
+ * - tags: `cleanTagsArray` already filters unparseable tokens — garbage
+ *   here means nothing survived the filter (empty result).
  */
 export function looksLikeGarbage(text: string, kind: VisionKind = 'alt'): boolean {
   const trimmed = text.trim();
+
+  if (kind === 'classify') {
+    return !VALID_CLASSIFY_LABELS.has(trimmed);
+  }
+  if (kind === 'tags') {
+    return trimmed.length === 0;
+  }
+
   const minLength = MIN_LENGTH_BY_KIND[kind] ?? MIN_LENGTH_BY_KIND.alt;
   if (trimmed.length < minLength) return true;
   // Coordinate/float arrays: "ids: [0.3, ...]" or "[0.25, 0.39, ...]"
@@ -283,7 +307,7 @@ export async function generateCaptionWithFallback(
   imageBuffer: Buffer,
   options: CaptionOptions = {},
 ): Promise<CaptionResult> {
-  const kind = options.kind ?? 'alt';
+  const kind: VisionKind = options.kind ?? 'alt';
   const result = await generateCaption(imageBuffer, options);
 
   // If no fallback configured, or the result looks fine, return as-is.
@@ -292,10 +316,21 @@ export async function generateCaptionWithFallback(
   }
 
   // Retry with the fallback model.
-  const fallbackResult = await generateCaption(imageBuffer, {
-    ...options,
-    model: options.fallbackModel,
-  });
+  const fallbackResult = await (async () => {
+    try {
+      return await generateCaption(imageBuffer, {
+        ...options,
+        model: options.fallbackModel,
+      });
+    } catch {
+      // Fallback call itself failed — return the valid primary result.
+      return null;
+    }
+  })();
+
+  if (fallbackResult === null) {
+    return result;
+  }
 
   // If the fallback also produces garbage, return whichever is longer
   // (marginally better than nothing).
@@ -345,14 +380,6 @@ export function cleanTitle(raw: string): string {
   }
   return s.trim();
 }
-
-/** Word-boundary patterns per label, including common word forms (plurals, "photograph"). */
-const CLASSIFY_LABEL_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
-  ['screenshot', /\bscreenshots?\b/i],
-  ['photo', /\bphotos?\b|\bphotographs?\b/i],
-  ['illustration', /\billustrations?\b/i],
-  ['diagram', /\bdiagrams?\b/i],
-];
 
 /** Finds whichever label pattern matches earliest in `text`, or undefined if none match. */
 function earliestClassifyLabel(text: string): string | undefined {

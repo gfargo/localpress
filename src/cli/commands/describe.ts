@@ -37,6 +37,10 @@ export function registerDescribeCommand(program: Command): void {
     .option('--missing-description', 'only items currently lacking a description')
     .option('--language <lang>', 'generate in this language (e.g. "Spanish")')
     .option('--overwrite', 'replace existing descriptions')
+    .option(
+      '--fallback-model <name>',
+      'retry with this model if the primary model returns garbage output',
+    )
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
 
@@ -50,7 +54,14 @@ export function registerDescribeCommand(program: Command): void {
       const effectiveModel: string =
         options.model ?? config.defaults?.captionModel ?? DEFAULT_OLLAMA_MODEL;
 
-      const preflightError = await preflightOllama(effectiveModel, options.ollamaUrl);
+      const effectiveFallbackModel: string | undefined =
+        options.fallbackModel ?? config.defaults?.captionFallbackModel;
+
+      const preflightError = await preflightOllama(
+        effectiveModel,
+        options.ollamaUrl,
+        effectiveFallbackModel,
+      );
       if (preflightError) {
         error(preflightError);
         process.exit(2);
@@ -98,6 +109,7 @@ export function registerDescribeCommand(program: Command): void {
         ids,
         isDryRun,
         effectiveModel,
+        fallbackModel: effectiveFallbackModel,
         ollamaUrl: options.ollamaUrl,
         language: options.language,
         getAdapter,

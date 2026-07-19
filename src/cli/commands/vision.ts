@@ -23,7 +23,7 @@ import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_OLLAMA_URL,
   cleanTagsArray,
-  generateCaption,
+  generateCaptionWithFallback,
 } from '../../engine/caption/ollama.ts';
 import { preflightOllama } from '../../engine/caption/run-bulk.ts';
 import type { VisionKind } from '../../engine/caption/types.ts';
@@ -76,6 +76,10 @@ export function registerVisionCommand(program: Command): void {
     )
     .option('--language <lang>', 'generate text in this language')
     .option('--overwrite', 'replace existing field values (default: keep)')
+    .option(
+      '--fallback-model <name>',
+      'retry with this model if the primary model returns garbage output',
+    )
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
 
@@ -111,7 +115,14 @@ export function registerVisionCommand(program: Command): void {
       const effectiveModel: string =
         options.model ?? config.defaults?.captionModel ?? DEFAULT_OLLAMA_MODEL;
 
-      const preflightError = await preflightOllama(effectiveModel, options.ollamaUrl);
+      const effectiveFallbackModel: string | undefined =
+        options.fallbackModel ?? config.defaults?.captionFallbackModel;
+
+      const preflightError = await preflightOllama(
+        effectiveModel,
+        options.ollamaUrl,
+        effectiveFallbackModel,
+      );
       if (preflightError) {
         error(preflightError);
         process.exit(2);
@@ -179,9 +190,10 @@ export function registerVisionCommand(program: Command): void {
           // Run each requested kind in sequence (could be parallel later).
           for (const f of fields) {
             const kind: VisionKind = f === 'classify' ? 'classify' : (f as VisionKind);
-            const r = await generateCaption(buf, {
+            const r = await generateCaptionWithFallback(buf, {
               kind,
               model: effectiveModel,
+              fallbackModel: effectiveFallbackModel,
               ollamaUrl: options.ollamaUrl,
               language: options.language,
             });
