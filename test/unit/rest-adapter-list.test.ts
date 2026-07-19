@@ -272,4 +272,34 @@ describe('RestAdapter — exact MIME type filtering', () => {
       expect(item.mimeType).toBe('image/jpeg');
     }
   });
+
+  test('`type: video/mp4` sends media_type=video, not video/mp4', async () => {
+    const { url, lastQuery } = startFakeWpServer(mixedMimeFixtures());
+    const adapter = new RestAdapter(makeSite(url));
+
+    const result = await adapter.listMediaPage({ type: 'video/mp4' });
+
+    expect(result.items.length).toBeGreaterThan(0);
+    for (const item of result.items) {
+      expect(item.mimeType).toBe('video/mp4');
+    }
+    expect(lastQuery().get('media_type')).toBe('video');
+    expect(lastQuery().get('mime_type')).toBe('video/mp4');
+  });
+});
+
+describe('RestAdapter — listMedia clamps per_page', () => {
+  test('`listMedia({ perPage: 500 })` clamps to 100', async () => {
+    const items: FixtureItem[] = Array.from({ length: 5 }, (_, i) => ({
+      id: i + 1,
+      sizeBytes: 100,
+      mimeType: 'image/jpeg',
+    }));
+    const { url, lastQuery } = startFakeWpServer(items);
+    const adapter = new RestAdapter(makeSite(url));
+
+    await adapter.listMedia({ perPage: 500 });
+
+    expect(lastQuery().get('per_page')).toBe('100');
+  });
 });

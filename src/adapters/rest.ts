@@ -136,7 +136,7 @@ export class RestAdapter implements WpBackend {
     }
 
     const params: Record<string, string | number> = {
-      per_page: filters.perPage ?? 20,
+      per_page: Math.min(filters.perPage ?? 20, 100),
       page: filters.page ?? 1,
       ...restSortParams(filters),
     };
@@ -288,8 +288,10 @@ export class RestAdapter implements WpBackend {
       // Stock WordPress can't trash attachments unless MEDIA_TRASH is defined,
       // so a non-force delete returns 501 rest_trash_not_supported. Translate
       // that into actionable guidance instead of an opaque REST error.
-      const message = err instanceof Error ? err.message : String(err);
-      if (!options?.force && /rest_trash_not_supported|\b501\b/.test(message)) {
+      const isTrashUnsupported =
+        err instanceof WpApiError &&
+        (err.status === 501 || /rest_trash_not_supported/.test(err.message));
+      if (!options?.force && isTrashUnsupported) {
         throw new Error(
           `Attachment ${id} cannot be moved to trash: this WordPress site does not have MEDIA_TRASH enabled. Re-run with --force to delete it permanently (localpress captures an undo snapshot first).`,
         );
@@ -497,9 +499,10 @@ function restSortParams(filters: ListFilters): Record<string, string> {
 
 function applyCommonFilters(params: Record<string, string | number>, filters: ListFilters): void {
   if (filters.type) {
-    params.media_type = filters.type.startsWith('image') ? 'image' : filters.type;
+    // media_type only recognizes broad categories (image/video/text/...), so
+    // an exact MIME like video/mp4 must be reduced to its top-level category.
+    params.media_type = filters.type.split('/')[0];
     if (filters.type.includes('/')) {
-      // media_type only recognizes broad categories (image/video/text/...);
       // mime_type does an exact post_mime_type match against WP_Query.
       params.mime_type = filters.type;
     }

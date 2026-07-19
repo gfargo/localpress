@@ -241,6 +241,36 @@ describe('RestAdapter.getMedia caption handling', () => {
   });
 });
 
+describe('RestAdapter.delete trash-not-supported detection', () => {
+  test('a non-501 error deleting attachment ID 501 is not misreported as MEDIA_TRASH', async () => {
+    const adapter = new RestAdapter(fakeSite);
+
+    installFetchMock((url) => {
+      expect(url.pathname).toBe('/wp-json/wp/v2/media/501');
+      return jsonResponse(
+        { code: 'rest_cannot_delete', message: 'Sorry, you are not allowed to delete this.' },
+        { status: 403 },
+      );
+    });
+
+    await expect(adapter.delete(501, {})).rejects.toThrow(/not allowed to delete/);
+    await expect(adapter.delete(501, {})).rejects.not.toThrow(/MEDIA_TRASH/);
+  });
+
+  test('a genuine 501 rest_trash_not_supported still produces the actionable message', async () => {
+    const adapter = new RestAdapter(fakeSite);
+
+    installFetchMock(() =>
+      jsonResponse(
+        { code: 'rest_trash_not_supported', message: 'Trashing is not supported.' },
+        { status: 501 },
+      ),
+    );
+
+    await expect(adapter.delete(9, {})).rejects.toThrow(/MEDIA_TRASH/);
+  });
+});
+
 describe('tag/vision regression: caption HTML survives read-modify-write', () => {
   // Mirrors the `[tags: …]` block composition in `localpress tag`
   // (src/cli/commands/tag.ts): append without disturbing existing caption text.
