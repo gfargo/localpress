@@ -30,6 +30,7 @@ import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { resolveDryRun } from '../utils/run-mode.ts';
+import { MIN_SESSION_PREFIX_LEN, matchSessionByPrefix } from '../utils/session-match.ts';
 
 /**
  * Structural subset of AdapterResolver's public surface. AdapterResolver has a
@@ -111,14 +112,34 @@ export function registerUndoCommand(program: Command): void {
         let sessionId: string | null = null;
         if (sessionIdArg) {
           const all = store.listSessions(site.name, { limit: 1000 });
-          const match = all.find((s) => s.id.startsWith(sessionIdArg));
-          if (!match) {
+          const result = matchSessionByPrefix(all, sessionIdArg);
+          if (result.kind === 'too-short') {
+            error(
+              `Session prefix '${sessionIdArg}' is too short (minimum ${MIN_SESSION_PREFIX_LEN} characters).`,
+            );
+            db.close();
+            process.exit(1);
+          }
+          if (result.kind === 'none') {
             error(`No session matching '${sessionIdArg}'.`);
             db.close();
             process.exit(1);
           }
-          sessionId = match.id;
-          sessionLabel = `${match.command} (${new Date(match.startedAt).toLocaleString()})`;
+          if (result.kind === 'ambiguous') {
+            error(
+              `Ambiguous session prefix '${sessionIdArg}' matches ${result.candidates.length} sessions:`,
+            );
+            for (const c of result.candidates) {
+              info(
+                `    ${c.id.slice(0, 8)}  ${c.command.padEnd(10)} ${new Date(c.startedAt).toLocaleString()}`,
+              );
+            }
+            info('  Use a longer prefix to disambiguate.');
+            db.close();
+            process.exit(1);
+          }
+          sessionId = result.session.id;
+          sessionLabel = `${result.session.command} (${new Date(result.session.startedAt).toLocaleString()})`;
         } else {
           const last = store.getLastSession(site.name);
           if (!last) {
