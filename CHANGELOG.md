@@ -5,6 +5,15 @@ All notable changes to localpress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.3](https://github.com/gfargo/localpress/compare/v2.4.2...v2.4.3) (2026-07-19)
+
+
+### Bug Fixes
+
+* **ci:** rebuild website on new releases, not just wiki edits ([#246](https://github.com/gfargo/localpress/issues/246)) ([78eb5eb](https://github.com/gfargo/localpress/commit/78eb5ebab0d30dd9086f0c6f7a258d5911564b26))
+* **rest-adapter:** drop redundant message-regex fallback in trash detection ([#247](https://github.com/gfargo/localpress/issues/247)) ([3be230e](https://github.com/gfargo/localpress/commit/3be230e5ffb1f0387d8751bbded254bc264a5f3f))
+* **undo:** error on ambiguous session prefix instead of silently picking one ([#245](https://github.com/gfargo/localpress/issues/245)) ([3d41fbe](https://github.com/gfargo/localpress/commit/3d41fbe690d2069567b8bc7911ae0b853603eca9))
+
 ## [2.4.2](https://github.com/gfargo/localpress/compare/v2.4.1...v2.4.2) (2026-07-19)
 
 
