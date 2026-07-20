@@ -49,3 +49,19 @@ jobs:
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
     secrets: inherit
+
+  rebuild-website:
+    name: Rebuild website
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    # The Release this job responds to was just created by release-please
+    # using GITHUB_TOKEN — same as the tag above, GitHub's design means that
+    # does NOT fire an `on: release:` trigger in any other workflow (built to
+    # stop infinite workflow chains). rebuild-on-wiki.yml's `release:`
+    # trigger looks like it should catch this and never will, so this job
+    # exists to actually chain off this run instead of waiting on an event
+    # that's never sent.
+    steps:
+      - name: Trigger Vercel deploy hook
+        run: curl -s -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}"
