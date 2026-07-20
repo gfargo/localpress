@@ -326,4 +326,25 @@ describe('getRecentOperations', () => {
     const totalItems = recent.reduce((sum, r) => sum + r.itemCount, 0);
     expect(totalItems).toBe(1);
   });
+
+  test('excludes reverted operations', () => {
+    seedAttachments([
+      { wpId: 1, mimeType: 'image/jpeg', sizeBytes: 100_000 },
+      { wpId: 2, mimeType: 'image/jpeg', sizeBytes: 100_000 },
+    ]);
+
+    seedProcessing([
+      { wpId: 1, operation: 'optimize', bytesBefore: 100_000, bytesAfter: 50_000 },
+      { wpId: 2, operation: 'optimize', bytesBefore: 100_000, bytesAfter: 40_000 },
+    ]);
+
+    db.markProcessingReverted(SITE_NAME, 2, 'optimize');
+
+    const recent = db.getRecentOperations(SITE_NAME);
+    const totalItems = recent.reduce((sum, r) => sum + r.itemCount, 0);
+    expect(totalItems).toBe(1);
+
+    const optimizeOp = recent.find((r) => r.operation === 'optimize');
+    expect(optimizeOp?.bytesSaved).toBe(50_000);
+  });
 });
