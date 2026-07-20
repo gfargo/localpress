@@ -194,7 +194,7 @@ export async function startPreviewServer(
         }
         return new Response(state.lastResultBytes, {
           headers: {
-            'Content-Type': 'image/png',
+            'Content-Type': state.lastResultMimeType ?? 'image/png',
             'Content-Length': String(state.lastResultBytes.length),
           },
         });
