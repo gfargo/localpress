@@ -174,6 +174,13 @@ export async function runBulkVision(args: {
       const skipReason = args.options.preflightSkip?.(item);
       if (skipReason) {
         args.onItemSkip(item, skipReason);
+        results.push({
+          id,
+          filename: item.filename,
+          generated: '',
+          skipped: true,
+          durationMs: 0,
+        });
         continue;
       }
 
