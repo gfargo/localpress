@@ -5,6 +5,13 @@ All notable changes to localpress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.4](https://github.com/gfargo/localpress/compare/v2.4.3...v2.4.4) (2026-07-20)
+
+
+### Bug Fixes
+
+* **ci:** chain website rebuild off release-please, not on:release: ([#249](https://github.com/gfargo/localpress/issues/249)) ([7db8e56](https://github.com/gfargo/localpress/commit/7db8e56c5e12329612454dff54eb192ac4027b69))
+
 ## [2.4.3](https://github.com/gfargo/localpress/compare/v2.4.2...v2.4.3) (2026-07-19)
 
 
