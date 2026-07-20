@@ -17,6 +17,7 @@
 
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
+import type { MediaItem } from '../../adapters/types.ts';
 import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_OLLAMA_URL,
@@ -142,7 +143,7 @@ export function registerRenameCommand(program: Command): void {
           }
 
           // Idempotent: skip if the slug already matches (e.g. user re-runs).
-          const previousSlug = extractSlug(item.url, item.filename);
+          const previousSlug = resolvePreviousSlug(item);
           if (previousSlug === newSlug) {
             info(`    — already named '${newSlug}' — skipping`);
             results.push({
@@ -184,7 +185,7 @@ export function registerRenameCommand(program: Command): void {
                   title: item.title,
                   caption: item.caption,
                   description: item.description,
-                  slug: item.slug ?? previousSlug,
+                  slug: previousSlug,
                 },
               });
             }
@@ -256,4 +257,14 @@ export function slugify(input: string): string {
 function extractSlug(_url: string, filename: string): string {
   const base = filename.replace(/\.[^./\\]+$/, '');
   return slugify(base);
+}
+
+/**
+ * Resolve the attachment's current slug for idempotency comparisons.
+ * Prefers the real WordPress slug; falls back to a filename-derived slug
+ * only when the backend didn't report one.
+ */
+export function resolvePreviousSlug(item: Pick<MediaItem, 'slug' | 'url' | 'filename'>): string {
+  const real = item.slug?.trim();
+  return real ? slugify(real) : extractSlug(item.url, item.filename);
 }
