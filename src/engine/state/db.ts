@@ -376,7 +376,7 @@ export class SiteDb {
                 COUNT(*)                          AS item_count,
                 SUM(CASE WHEN bytes_before > bytes_after THEN bytes_before - bytes_after ELSE 0 END) AS bytes_saved
          FROM processing_history
-         WHERE site_name = ? AND status = 'success'
+         WHERE site_name = ? AND status = 'success' AND reverted_at IS NULL
          GROUP BY date, operation
          ORDER BY date DESC, item_count DESC
          LIMIT ?`,
