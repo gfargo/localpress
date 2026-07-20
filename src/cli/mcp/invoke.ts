@@ -35,7 +35,7 @@ export interface InvokeOptions {
   args: string[];
   /** Working directory for the child process. */
   cwd?: string;
-  /** Timeout in ms; child is killed if exceeded. Default: 5 minutes. */
+  /** Timeout in ms; child is killed if exceeded. Default: 10 minutes. */
   timeoutMs?: number;
   /**
    * Additional top-level (pre-subcommand) flags to forward verbatim, e.g.

@@ -2,13 +2,14 @@
  * MCP resources for localpress.
  *
  * Resources surface read-only context an agent might want to load proactively,
- * without having to call a tool. Three resources today:
+ * without having to call a tool. Four resources today:
  *
  *   localpress://sites         — configured sites + active site marker
  *   localpress://stats         — cumulative processing stats for the active site
  *   localpress://capabilities  — backend capability matrix for the active site
+ *   localpress://history       — recent sessions/snapshots for the active site (undo surface)
  *
- * All three dispatch through the CLI's --json contract via invokeCli().
+ * All four dispatch through the CLI's --json contract via invokeCli().
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
