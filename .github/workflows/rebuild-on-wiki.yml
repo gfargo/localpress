@@ -1,15 +1,19 @@
-name: Rebuild website
+name: Rebuild website on wiki change
 
 # localpress.griffen.codes is a static export -- its docs pages pull wiki
-# content, and its hero displays the latest release version, both fetched
-# only at build time. Neither shows up live until something actually
-# triggers a rebuild. This workflow does that whenever either source
-# changes: a wiki page edit, or a new GitHub release being published.
+# content at build time, so edits don't show up live until something
+# triggers a rebuild. This handles that for wiki edits specifically.
+#
+# Releases need the same rebuild (the hero displays the latest version,
+# also fetched only at build time), but NOT via an `on: release:` trigger
+# here -- release-please creates every Release using GITHUB_TOKEN, and
+# GITHUB_TOKEN-authored events don't fire other workflows' event triggers
+# (this repo already documents the identical restriction for tag-push in
+# release-please.yml). That path is handled by the `rebuild-website` job
+# chained directly off release-please.yml's own run instead.
 
 on:
   gollum: # fires on any wiki page create/edit
-  release:
-    types: [published]
 
 jobs:
   trigger-vercel-rebuild:
