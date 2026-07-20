@@ -5,6 +5,21 @@ All notable changes to localpress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.5](https://github.com/gfargo/localpress/compare/v2.4.4...v2.4.5) (2026-07-20)
+
+
+### Bug Fixes
+
+* **caption:** count preflight-skipped items in bulk vision results ([#253](https://github.com/gfargo/localpress/issues/253)) ([5c9ebb9](https://github.com/gfargo/localpress/commit/5c9ebb9e365fd96e743a3ae167dd0c4a3eb2997e))
+* **preview:** use actual result mime type in /api/result response ([#251](https://github.com/gfargo/localpress/issues/251)) ([088d025](https://github.com/gfargo/localpress/commit/088d0257ac8446c96a1267d0cb5d081ce103eb37))
+* **rename:** compare against the real WP slug for idempotency ([#255](https://github.com/gfargo/localpress/issues/255)) ([ff7792f](https://github.com/gfargo/localpress/commit/ff7792fda95ad95e404e5aa433ce4535b761d6d5))
+* **stats:** exclude reverted operations from recent-activity list ([#252](https://github.com/gfargo/localpress/issues/252)) ([75aa925](https://github.com/gfargo/localpress/commit/75aa925dce2967cc4c1e551b6ac012e747ae91c8))
+
+
+### Documentation
+
+* fix stale version and MCP comment drift ([#254](https://github.com/gfargo/localpress/issues/254)) ([39aeb2c](https://github.com/gfargo/localpress/commit/39aeb2c2cb5d9e4ed2f31d642a26a3951859b3f5))
+
 ## [2.4.4](https://github.com/gfargo/localpress/compare/v2.4.3...v2.4.4) (2026-07-20)
 
 
