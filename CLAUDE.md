@@ -1,6 +1,6 @@
 # CLAUDE.md — handoff for the next agent
 
-You're picking up `localpress` at **v2.1.0**. All 39 CLI commands are implemented and working, including a first-party MCP server. The project compiles, tests pass, and the CLI boots cleanly.
+You're picking up `localpress` at **v2.4.4**. All 39 CLI commands are implemented and working, including a first-party MCP server. The project compiles, tests pass, and the CLI boots cleanly.
 
 **Read in this order before writing any code:**
 
