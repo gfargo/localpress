@@ -13,7 +13,7 @@ You're picking up `localpress` at **v2.1.0**. All 39 CLI commands are implemente
 
 ## Current status
 
-**Version:** 2.1.0
+**Version:** 2.4.4
 **Status:** All planned v1.0 features plus the full v2.0 content/AI/MCP expansion have shipped. `CHANGELOG.md` is the authoritative release history — this file gives a summary, not a substitute.
 
 ### What's implemented
