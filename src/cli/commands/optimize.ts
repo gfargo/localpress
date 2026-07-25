@@ -86,7 +86,7 @@ export function registerOptimizeCommand(program: Command): void {
     )
     .option(
       '--to <format>',
-      'convert during optimization: webp, avif, or jpeg (defaults to source format)',
+      'convert during optimization: webp, avif, jpeg, or png (defaults to source format)',
     )
     .option(
       '--mode <mode>',
