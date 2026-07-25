@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import * as childProcess from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,7 +18,7 @@ const CLI_ENTRY = join(process.cwd(), 'src', 'cli', 'index.ts');
 function run(args: string[]): { stdout: string; stderr: string; exitCode: number } {
   const configDir = mkdtempSync(join(tmpdir(), 'localpress-cli-error-test-'));
   try {
-    const result = spawnSync('bun', ['run', CLI_ENTRY, ...args], {
+    const result = childProcess.spawnSync('bun', ['run', CLI_ENTRY, ...args], {
       encoding: 'utf-8',
       env: { ...process.env, XDG_CONFIG_HOME: configDir },
       timeout: 30_000,

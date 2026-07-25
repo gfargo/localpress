@@ -16,7 +16,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import * as childProcess from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -111,7 +111,7 @@ function getHelpText(prefix: string[]): string {
   if (cached !== undefined) return cached;
 
   const cliEntry = join(import.meta.dir, '..', '..', 'src', 'cli', 'index.ts');
-  const result = spawnSync(process.execPath, ['run', cliEntry, ...prefix, '--help'], {
+  const result = childProcess.spawnSync(process.execPath, ['run', cliEntry, ...prefix, '--help'], {
     encoding: 'utf8',
   });
   const text = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
