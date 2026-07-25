@@ -10,7 +10,7 @@
 
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
-import type { SiteConfig } from '../../types.ts';
+import { ExitCode, type SiteConfig } from '../../types.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -99,8 +99,10 @@ export function registerDoctorCommand(program: Command): void {
 
       if (siteNames.length === 0) {
         error('No sites configured. Run `localpress init` to add one.');
-        process.exit(3);
+        process.exit(ExitCode.ConfigError);
       }
+
+      let worstExit: number = ExitCode.Success;
 
       for (const name of siteNames) {
         const site = config.sites[name];
@@ -272,6 +274,21 @@ export function registerDoctorCommand(program: Command): void {
           }
         }
 
+        // -- Exit code accumulation --------------------------------------------
+        // Map this site's error-severity issues to an exit code and track the
+        // worst code seen across all sites (for --all-sites).
+        const siteExitCode = issueListToExitCode(issues, connectionOk);
+        if (siteExitCode !== ExitCode.Success) {
+          // Explicit precedence: Auth(5) > Network(4) > Generic(1)
+          if (
+            worstExit === ExitCode.Success ||
+            siteExitCode === ExitCode.AuthError ||
+            (siteExitCode === ExitCode.NetworkError && worstExit === ExitCode.GenericError)
+          ) {
+            worstExit = siteExitCode;
+          }
+        }
+
         // -- Output ------------------------------------------------------------
         if (parentOpts.json) {
           printJson({
@@ -332,7 +349,49 @@ export function registerDoctorCommand(program: Command): void {
           }
         }
       }
+
+      // Set process.exitCode after the loop so --all-sites finishes all sites.
+      if (worstExit !== ExitCode.Success) {
+        process.exitCode = worstExit;
+      }
     });
+}
+
+// -- Exit code helpers --------------------------------------------------------
+
+/**
+ * Map a site's issue list to the appropriate ExitCode.
+ * Priority: Auth(5) > Network(4) > Generic(1) > Success(0).
+ * Also treats connectionOk===false without a matching issue as NetworkError.
+ */
+function issueListToExitCode(issues: DoctorIssue[], connectionOk: boolean): number {
+  const errorIssues = issues.filter((i) => i.severity === 'error');
+
+  if (errorIssues.length === 0) {
+    // Safety net: if connection is down but nothing was pushed to issues, still
+    // treat it as a network error (e.g. adapter returned falsy).
+    if (!connectionOk) {
+      return ExitCode.NetworkError;
+    }
+    return ExitCode.Success;
+  }
+
+  // Check for auth error first (highest priority).
+  if (errorIssues.some((i) => i.message.includes('Authentication'))) {
+    return ExitCode.AuthError;
+  }
+
+  // Check for network/connection errors.
+  if (
+    errorIssues.some(
+      (i) => i.message.includes('Cannot reach') || i.message.includes('REST API error'),
+    )
+  ) {
+    return ExitCode.NetworkError;
+  }
+
+  // Any other error (e.g. sharp missing).
+  return ExitCode.GenericError;
 }
 
 // -- Plugin detection ---------------------------------------------------------
