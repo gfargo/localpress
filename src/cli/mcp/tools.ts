@@ -548,8 +548,15 @@ export function registerTools(server: McpServer): void {
   server.registerTool(
     'references',
     {
-      title: 'Find references to an attachment',
-      description: 'Find every post, page, or custom-post where a given attachment is referenced.',
+      title: 'Find references to an attachment (read) / rewrite all references (destructive write)',
+      description:
+        'Without `updateTo`: read-only scan — returns every post, page, or custom-post where attachment <id> appears (featured image, inline URL, Gutenberg block ID).\n\n' +
+        'With `updateTo`: **DESTRUCTIVE site-wide rewrite**. Executes immediately unless `dryRun: true` is passed. Rewrites:\n' +
+        '  1. `_thumbnail_id` postmeta rows (raw SQL UPDATE — not transactional)\n' +
+        '  2. All URLs across every database table (`wp search-replace --precise`)\n' +
+        '  3. Gutenberg block IDs in `post_content` (regex search-replace)\n\n' +
+        'This rewrite is **NOT transactional** — a mid-run failure leaves a partial rewrite. ' +
+        'It requires WP-CLI over SSH. Always pass `dryRun: true` first to preview the scope.',
       inputSchema: {
         ...commonSiteArg,
         id: z.number().int().positive(),
@@ -562,7 +569,18 @@ export function registerTools(server: McpServer): void {
           .int()
           .positive()
           .optional()
-          .describe('Rewrite references to point to a different attachment ID'),
+          .describe(
+            'DESTRUCTIVE: rewrite every reference (featured images, inline URLs across ALL tables, and Gutenberg block IDs in post_content) to point at this attachment ID. ' +
+              'Runs immediately and is NOT transactional — a mid-run failure leaves a partial rewrite. ' +
+              'Requires WP-CLI over SSH. Use dryRun: true first to preview.',
+          ),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe(
+            'Preview the reference rewrite without executing it (maps to --dry-run). ' +
+              'Strongly recommended before any updateTo call.',
+          ),
       },
     },
     async (args) => {
@@ -570,6 +588,7 @@ export function registerTools(server: McpServer): void {
       const argv = ['references', String(a.id)];
       opt(argv, '--scope', a.scope);
       opt(argv, '--update-to', a.updateTo);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined);
     },
   );
