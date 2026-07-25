@@ -327,6 +327,45 @@ describe('SnapshotStore', () => {
     expect(store.getLastSession('testsite')).toBeNull();
   });
 
+  test('getLastSession and listSessions are deterministic when two sessions share started_at', () => {
+    // Open the "older" session first (lower rowid) and give it a snapshot.
+    const older = store.openSession('testsite', 'optimize');
+    store.capture({
+      siteName: 'testsite',
+      sessionId: older.id,
+      attachmentId: 10,
+      operation: 'optimize',
+      sourceBytes: Buffer.from('older'),
+      beforeMeta: { filename: '10.jpg', mimeType: 'image/jpeg' },
+    });
+
+    // Open the "newer" session second (higher rowid) and give it a snapshot.
+    const newer = store.openSession('testsite', 'remove-bg');
+    store.capture({
+      siteName: 'testsite',
+      sessionId: newer.id,
+      attachmentId: 11,
+      operation: 'remove-bg',
+      sourceBytes: Buffer.from('newer'),
+      beforeMeta: { filename: '11.jpg', mimeType: 'image/jpeg' },
+    });
+
+    // Force both sessions to the exact same started_at so the tie-breaker matters.
+    const sharedTimestamp = 1700000000000;
+    const rawDb = db.raw();
+    rawDb.run('UPDATE sessions SET started_at = ? WHERE id = ?', [sharedTimestamp, older.id]);
+    rawDb.run('UPDATE sessions SET started_at = ? WHERE id = ?', [sharedTimestamp, newer.id]);
+
+    // getLastSession must return the newer (higher-rowid) session.
+    const last = store.getLastSession('testsite');
+    expect(last?.id).toBe(newer.id);
+
+    // listSessions must return newest-first: newer before older.
+    const list = store.listSessions('testsite');
+    expect(list[0].id).toBe(newer.id);
+    expect(list[1].id).toBe(older.id);
+  });
+
   test('readBlob returns the captured bytes', () => {
     const session = store.openSession('testsite', 'optimize');
     const id = store.capture({
