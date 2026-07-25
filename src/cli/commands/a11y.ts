@@ -114,12 +114,15 @@ export async function runA11yScan(scanOptions: A11yScanOptions): Promise<A11ySca
     }
 
     // Paginate through posts.
+    // Keep per_page fixed so the server-side offset (page-1)*per_page stays
+    // stable across every iteration. A shrinking per_page would move the window
+    // backwards into already-scanned records on the final page.
+    const PER_PAGE = 20;
     let page = 1;
     let limitReached = false;
     while (postsChecked < limit) {
-      const perPage = Math.min(20, limit - postsChecked);
       const params = new URLSearchParams({
-        per_page: String(perPage),
+        per_page: String(PER_PAGE),
         page: String(page),
         status,
         _fields: 'id,title,content',
@@ -141,6 +144,7 @@ export async function runA11yScan(scanOptions: A11yScanOptions): Promise<A11ySca
         if (posts.length === 0) break;
 
         for (const post of posts) {
+          if (postsChecked >= limit) break; // cap analysis to the remaining budget
           postsChecked++;
           const title = post.title.rendered.replace(/<[^>]*>/g, '');
           analyzePost(post.id, title, post.content.rendered, findings);

@@ -194,4 +194,112 @@ describe('runA11yScan', () => {
     expect(result.errors[0].postType).toBe('posts');
     expect(result.complete).toBe(false);
   });
+
+  test('non-multiple-of-20 limit: every post analyzed exactly once, none duplicated or skipped', async () => {
+    // Regression for OSS-1357: per_page was shrinking on the final page, which moved the
+    // server-side offset backwards. Posts 21-30 were checked twice; posts 41-50 never checked.
+    const TOTAL_POSTS = 100;
+    const analyzedIds: number[] = [];
+
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const u = new URL(url.toString());
+      if (!u.pathname.includes('/posts')) throw new Error(`unexpected url: ${u}`);
+
+      const page = Number.parseInt(u.searchParams.get('page') ?? '1', 10);
+      const perPage = Number.parseInt(u.searchParams.get('per_page') ?? '20', 10);
+
+      const start = (page - 1) * perPage; // 0-based
+      const slice = Array.from({ length: perPage }, (_, i) => start + i + 1) // 1-based IDs
+        .filter((id) => id <= TOTAL_POSTS)
+        .map((id) => ({
+          id,
+          title: { rendered: `Post ${id}` },
+          // Embed id in content so analyzePost records something we can collect.
+          content: { rendered: `<p>content-${id}</p>` },
+        }));
+
+      const totalPages = Math.ceil(TOTAL_POSTS / perPage);
+      return jsonResponse(slice, { headers: { 'X-WP-TotalPages': String(totalPages) } });
+    }) as typeof fetch;
+
+    // Wrap analyzePost indirectly: collect IDs via findings by injecting an img without alt.
+    // Instead, track via postsChecked and verify with a dedicated counter inside the mock.
+    // Simpler: just track which IDs appeared in findings by inspecting postsChecked & findings
+    // after the run. For a cleaner assertion we'll override fetch to track ids ourselves.
+    const trackedIds = new Set<number>();
+    const rawFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const res = await (rawFetch as typeof fetch)(url);
+      // Parse response to record which IDs would be analyzed (we need the body).
+      const clone = res.clone();
+      const body = (await clone.json()) as Array<{ id: number }>;
+      for (const p of body) trackedIds.add(p.id);
+      return res;
+    }) as typeof fetch;
+
+    const result = await runA11yScan({
+      baseUrl: BASE_URL,
+      auth: AUTH,
+      types: ['posts'],
+      status: 'publish',
+      limit: 50,
+    });
+
+    expect(result.postsChecked).toBe(50);
+    expect(result.errors).toEqual([]);
+
+    // The fetched IDs cover pages 1-3 (60 total fetched), but analysis must stop at 50.
+    // trackedIds holds what the mock *returned*, which may be more than 50 on the last page.
+    // The real assertion: postsChecked is exactly 50, confirming the budget cap.
+    // Additionally verify no double-counting: findings are keyed on postId; if any postId
+    // appeared twice, postsChecked would still be 50 but findings might have duplicates.
+    // Since our mock content has no a11y issues, findings should be empty.
+    expect(result.findings).toEqual([]);
+
+    // Verify analyzed IDs are ids 1-50 (the fetch mock returns sequential IDs per page).
+    // We can reconstruct this: page 1 → ids 1-20, page 2 → ids 21-40, page 3 → ids 41-60
+    // but analysis stops at 50, so ids 51-60 from page 3 must NOT be analyzed.
+    // Since analyzePost is internal we verify via a second run with detectable findings.
+    analyzedIds.length = 0;
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const u = new URL(url.toString());
+      const page2 = Number.parseInt(u.searchParams.get('page') ?? '1', 10);
+      const perPage2 = Number.parseInt(u.searchParams.get('per_page') ?? '20', 10);
+      const start = (page2 - 1) * perPage2;
+      const slice = Array.from({ length: perPage2 }, (_, i) => start + i + 1)
+        .filter((id) => id <= TOTAL_POSTS)
+        .map((id) => ({
+          id,
+          title: { rendered: `Post ${id}` },
+          // Every post has a missing-alt image — finding.postId tells us which was analyzed.
+          content: { rendered: `<img src="x.jpg"><p>content-${id}</p>` },
+        }));
+      const totalPages = Math.ceil(TOTAL_POSTS / perPage2);
+      return jsonResponse(slice, { headers: { 'X-WP-TotalPages': String(totalPages) } });
+    }) as typeof fetch;
+
+    const result2 = await runA11yScan({
+      baseUrl: BASE_URL,
+      auth: AUTH,
+      types: ['posts'],
+      status: 'publish',
+      limit: 50,
+    });
+
+    expect(result2.postsChecked).toBe(50);
+
+    const ids = result2.findings.map((f) => f.postId);
+    const uniqueIds = new Set(ids);
+
+    // Exactly 50 unique IDs analyzed (no duplicates).
+    expect(uniqueIds.size).toBe(50);
+
+    // IDs are exactly 1–50 (no gaps, none skipped, none from 51+).
+    for (let i = 1; i <= 50; i++) {
+      expect(uniqueIds.has(i)).toBe(true);
+    }
+    for (let i = 51; i <= 100; i++) {
+      expect(uniqueIds.has(i)).toBe(false);
+    }
+  });
 });
