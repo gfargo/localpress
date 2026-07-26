@@ -111,9 +111,50 @@ localpress posts update 456 --status publish
 
 # Accessibility audit
 localpress a11y
+
+# CI budget gate: fail if unoptimized media exceeds 50 MB
+localpress audit --json --max-unoptimized-bytes 50000000
 ```
 
 ---
+
+## CI budget gate
+
+Use `--max-unoptimized-bytes <bytes>` to gate a CI job on media quality.
+The command exits **0** when total unoptimized bytes are within budget and exits **7** (`BudgetExceeded`) when over.
+
+```yaml
+# .github/workflows/media-budget.yml
+name: Media budget gate
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # every Monday at 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install localpress
+        run: brew install gfargo/tap/localpress
+
+      - name: Configure site
+        run: |
+          localpress init --name production \
+            --url "${{ secrets.WP_URL }}" \
+            --username "${{ secrets.WP_USERNAME }}" \
+            --app-password "${{ secrets.WP_APP_PASSWORD }}"
+
+      # Fails the step (exit 7) when unoptimized media exceeds 50 MB.
+      # Remove --json to get a human-readable report instead.
+      - name: Media budget gate (50 MB)
+        run: localpress audit --json --max-unoptimized-bytes 50000000
+```
+
+Exit code **7** causes the step (and therefore the job) to fail, surfacing the
+overage in your PR checks or scheduled run.  Combine with `--all-sites` to gate
+across every configured site at once.
 
 ## 39+ commands
 

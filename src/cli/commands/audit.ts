@@ -44,6 +44,12 @@ export interface AuditFinding {
   attachmentId: number;
   filename: string;
   detail: string;
+  /**
+   * File size in bytes at time of audit.  Populated for `unoptimized` and
+   * `large` findings when the REST API returns a size.  Used by the
+   * `--max-unoptimized-bytes` budget gate.
+   */
+  sizeBytes?: number;
   /** For display-size: the largest registered WP size dimensions. */
   largestSize?: { width: number; height: number; name: string };
   /** For duplicates: the other attachment IDs in the group. */
@@ -127,6 +133,35 @@ const ZERO_SUMMARY: AuditSummary = {
   ocrMatch: 0,
 };
 
+/**
+ * Sum the `sizeBytes` of all `unoptimized` findings.
+ *
+ * Findings without a `sizeBytes` value (REST API didn't return one) contribute
+ * 0 — the total can under-count when the API omits sizes, which is documented
+ * as a known limitation.
+ *
+ * @internal exported for unit testing
+ */
+export function sumUnoptimizedBytes(findings: AuditFinding[]): number {
+  return findings
+    .filter((f) => f.type === 'unoptimized')
+    .reduce((acc, f) => acc + (f.sizeBytes ?? 0), 0);
+}
+
+/**
+ * Return `true` when the given byte total exceeds the budget threshold.
+ *
+ * Returns `false` when `maxBytes` is `undefined` (no budget set), when the
+ * total is exactly equal to the budget (boundary is inclusive), or when the
+ * budget is zero and the total is also zero.
+ *
+ * @internal exported for unit testing
+ */
+export function isOverBudget(bytes: number, maxBytes: number | undefined): boolean {
+  if (maxBytes === undefined) return false;
+  return bytes > maxBytes;
+}
+
 export function registerAuditCommand(program: Command): void {
   program
     .command('audit')
@@ -156,6 +191,11 @@ export function registerAuditCommand(program: Command): void {
       'flag images that visually contain the supplied text (case-insensitive, via Ollama vision; slow)',
     )
     .option('--all-sites', 'run the audit across every configured site and print one rolled-up report')
+    .option(
+      '--max-unoptimized-bytes <bytes>',
+      'CI gate: exit non-zero (code 7) if total unoptimized bytes exceed this budget (e.g. 50000000 for 50 MB)',
+      parseIntOption('--max-unoptimized-bytes'),
+    )
     .action(async (options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -183,9 +223,28 @@ export function registerAuditCommand(program: Command): void {
         const totals = results.reduce((acc, r) => addSummaries(acc, r.summary), { ...ZERO_SUMMARY });
         const sitesWithIssues = results.filter((r) => !r.error && r.findings.length > 0).length;
         const sitesErrored = results.filter((r) => !!r.error).length;
+        const totalUnoptBytes = results.reduce(
+          (n, r) => n + sumUnoptimizedBytes(r.findings),
+          0,
+        );
+        const budgetOverrun =
+          options.maxUnoptimizedBytes !== undefined &&
+          isOverBudget(totalUnoptBytes, options.maxUnoptimizedBytes);
 
         if (parentOpts.json) {
-          printJson({ sites: results, totals, sitesWithIssues, sitesErrored });
+          printJson({
+            sites: results,
+            totals,
+            sitesWithIssues,
+            sitesErrored,
+            budget: options.maxUnoptimizedBytes !== undefined
+              ? {
+                  maxUnoptimizedBytes: options.maxUnoptimizedBytes,
+                  totalUnoptimizedBytes: totalUnoptBytes,
+                  overBudget: budgetOverrun,
+                }
+              : undefined,
+          });
         } else {
           // Print per-site summary
           info('\n── Totals ───────────────────────────────────────');
@@ -217,6 +276,21 @@ export function registerAuditCommand(program: Command): void {
             }
             info(`\n  Total findings across all sites: ${totalFindings}`);
           }
+          if (options.maxUnoptimizedBytes !== undefined) {
+            const status = budgetOverrun ? '❌ OVER BUDGET' : '✅ within budget';
+            info(
+              `\n  Unoptimized bytes: ${formatBytes(totalUnoptBytes)} / ${formatBytes(options.maxUnoptimizedBytes)} — ${status}`,
+            );
+          }
+        }
+
+        // Budget check must run BEFORE the generic-issues exit so the distinct
+        // exit code (7) is not masked by GenericError (1).
+        if (budgetOverrun) {
+          error(
+            `Unoptimized bytes (${formatBytes(totalUnoptBytes)}) exceed budget (${formatBytes(options.maxUnoptimizedBytes!)}).`,
+          );
+          process.exit(ExitCode.BudgetExceeded);
         }
 
         if (sitesErrored > 0 || sitesWithIssues > 0) {
@@ -241,6 +315,10 @@ export function registerAuditCommand(program: Command): void {
       }
 
       const { findings, totalItems, prunedAttachments: prunedCount } = result;
+      const unoptBytes = sumUnoptimizedBytes(findings);
+      const budgetOverrunSingle =
+        options.maxUnoptimizedBytes !== undefined &&
+        isOverBudget(unoptBytes, options.maxUnoptimizedBytes);
 
       if (parentOpts.json) {
         printJson({
@@ -249,6 +327,13 @@ export function registerAuditCommand(program: Command): void {
           prunedAttachments: prunedCount,
           findings,
           summary: result.summary,
+          budget: options.maxUnoptimizedBytes !== undefined
+            ? {
+                maxUnoptimizedBytes: options.maxUnoptimizedBytes,
+                unoptimizedBytes: unoptBytes,
+                overBudget: budgetOverrunSingle,
+              }
+            : undefined,
         });
       } else {
         const threshold = options.threshold ?? DEFAULT_THRESHOLD;
@@ -334,6 +419,19 @@ export function registerAuditCommand(program: Command): void {
             );
           }
         }
+        if (options.maxUnoptimizedBytes !== undefined) {
+          const status = budgetOverrunSingle ? '❌ OVER BUDGET' : '✅ within budget';
+          info(
+            `\n  Unoptimized bytes: ${formatBytes(unoptBytes)} / ${formatBytes(options.maxUnoptimizedBytes)} — ${status}`,
+          );
+        }
+      }
+
+      if (budgetOverrunSingle) {
+        error(
+          `Unoptimized bytes (${formatBytes(unoptBytes)}) exceed budget (${formatBytes(options.maxUnoptimizedBytes!)}).`,
+        );
+        process.exit(ExitCode.BudgetExceeded);
       }
     });
 }
@@ -496,6 +594,7 @@ export async function auditSite(
         attachmentId: item.id,
         filename: item.filename,
         detail: 'Not yet processed by localpress',
+        sizeBytes: item.sizeBytes,
       });
     }
 
