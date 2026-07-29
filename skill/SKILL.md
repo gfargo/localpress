@@ -667,17 +667,19 @@ localpress briefing --model llava-llama3:latest --json
     "unoptimized": { "count": 4, "examples": ["banner.jpg", "hero.png"], "available": true },
     "missingAlt": { "count": 2, "examples": ["gallery-1.jpg"], "available": true },
     "brokenRefs": { "count": 0, "examples": [], "available": true },
-    "orphans": { "count": 0, "examples": [], "available": false, "unavailableReason": "Requires WP-CLI over SSH — configure SSH access for this site to enable." },
+    "orphans": { "count": 0, "examples": [], "available": false, "unavailableKind": "not-configured", "unavailableReason": "Requires WP-CLI over SSH — configure SSH access for this site to enable." },
     "a11y": { "count": 1, "examples": ["\"Summer Sale\": Link text \"click here\" is not descriptive of its destination"], "available": true }
   },
   "totalIssues": 7,
   "clean": false,
+  "complete": true,
+  "degraded": false,
   "narrative": "Your site is in decent shape overall...",
   "narrativeUnavailable": false
 }
 ```
 
-Read-only — never writes to WordPress. `orphans` is marked `available: false` (not an error) when WP-CLI isn't configured for the site. `narrative` is `null` with `narrativeUnavailable: true` when Ollama isn't reachable; the structured summary is unaffected either way. When `totalIssues` is 0, `narrative` is a canned "all clean" message that doesn't require Ollama.
+Read-only — never writes to WordPress. Every category with `available: false` also carries `unavailableKind`: `"not-configured"` means the check was never expected to run here (e.g. `orphans` without WP-CLI/SSH configured) and is **not** treated as a failure; `"error"` means the check should have run but failed (network down, request errors, scan threw). `complete` is `true` only when every category either ran or was `not-configured` — it's `false` whenever any category has `unavailableKind: "error"`. `degraded` is the inverse of `complete`. `clean` requires both `totalIssues === 0` **and** `complete` — a site that couldn't be reached at all is never reported `clean`, even though its counted issues are 0. If every category fails with `unavailableKind: "error"` (e.g. the site is completely unreachable), the CLI exits with code `4` (`NetworkError`); a partial degradation (e.g. only the a11y scan failed) stays exit `0` but is flagged via `degraded: true`. `narrative` is `null` with `narrativeUnavailable: true` when Ollama isn't reachable; the structured summary is unaffected either way. When `totalIssues` is 0 and the run is `complete`, `narrative` is a canned "all clean" message that doesn't require Ollama; when `totalIssues` is 0 but the run is `degraded`, `narrative` is instead a canned "could not complete the briefing" message — it never claims the site is clean. A degraded or incomplete run is not written to the per-site cache, so a transient failure doesn't get memoized as the site's permanent health status.
 
 ### Round-trip editing
 
