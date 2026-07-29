@@ -94,11 +94,13 @@ export function registerBriefingCommand(program: Command): void {
         if (cached) {
           try {
             const parsed = JSON.parse(cached) as BriefingResult;
-            db.close();
-            const cachedResult = { ...parsed, fresh: false };
-            process.exitCode = briefingExitCode(cachedResult);
-            printBriefing(parentOpts.json, cachedResult);
-            return;
+            if (isCacheEntryUsable(parsed)) {
+              db.close();
+              const cachedResult = { ...parsed, fresh: false };
+              process.exitCode = briefingExitCode(cachedResult);
+              printBriefing(parentOpts.json, cachedResult);
+              return;
+            }
           } catch {
             // Corrupt cache entry — fall through to a live run.
           }
@@ -180,6 +182,16 @@ function briefingExitCode(result: BriefingResult): number {
   const totalFailure =
     cats.every((c) => !c.available) && cats.some((c) => c.unavailableKind === 'error');
   return totalFailure ? ExitCode.NetworkError : ExitCode.Success;
+}
+
+/**
+ * A cache entry written before `complete`/`degraded` existed can't be
+ * trusted to reflect completeness correctly (old entries predate the
+ * distinction and would read as either falsely complete or falsely
+ * incomplete). Treat it as a cache miss instead.
+ */
+export function isCacheEntryUsable(parsed: BriefingResult): boolean {
+  return typeof parsed.complete === 'boolean' && typeof parsed.degraded === 'boolean';
 }
 
 // -- Category checks -----------------------------------------------------------

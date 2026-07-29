@@ -16,7 +16,9 @@ import type {
   ReferenceScope,
   WpBackend,
 } from '../../src/adapters/types.ts';
+import type { BriefingResult } from '../../src/cli/commands/briefing.ts';
 import {
+  isCacheEntryUsable,
   runA11yCheck,
   runBriefing,
   runMediaChecks,
@@ -370,5 +372,22 @@ describe('runBriefing', () => {
     // Orphans is unavailable for an unrelated reason (no SSH) — still counts
     // toward "not configured", not toward degradation on its own.
     expect(result.categories.orphans.unavailableKind).toBe('not-configured');
+  });
+});
+
+describe('isCacheEntryUsable', () => {
+  test('rejects a pre-fix cache entry missing complete/degraded', () => {
+    // Simulates a cache entry written by a binary that predates this fix —
+    // it has no `complete`/`degraded` fields at all. Trusting `!complete`
+    // as "incomplete" would spuriously flag an actually-complete old result;
+    // trusting it as complete would hide a genuine total failure. Treat it
+    // as unusable either way and fall through to a live run.
+    const legacy = { site: 'x' } as unknown as BriefingResult;
+    expect(isCacheEntryUsable(legacy)).toBe(false);
+  });
+
+  test('accepts a cache entry with the completeness fields set', () => {
+    const current = { complete: true, degraded: false } as unknown as BriefingResult;
+    expect(isCacheEntryUsable(current)).toBe(true);
   });
 });
