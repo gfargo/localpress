@@ -149,6 +149,47 @@ describe('runMediaChecks', () => {
     expect(result.brokenRefs.count).toBe(0);
   });
 
+  test('does not treat a caption-only history row as "already optimized"', async () => {
+    const items = [makeItem(1), makeItem(2)];
+    const adapter = new FakeMediaAdapter(items);
+    const db = SiteDb.init(':memory:');
+    db.ensureSite('test-briefing-site', 'https://example.test');
+    // Item 1 has only ever had a caption pass — never optimize/convert/resize.
+    db.upsertAttachment({
+      siteName: 'test-briefing-site',
+      wpId: 1,
+      sourceUrl: items[0].url,
+      sourceHash: null,
+      sizeBytes: null,
+      width: null,
+      height: null,
+      mimeType: 'image/jpeg',
+      lastSeenAt: Date.now(),
+    });
+    db.recordProcessing({
+      siteName: 'test-briefing-site',
+      wpId: 1,
+      operation: 'caption',
+      paramsJson: null,
+      sourceHash: null,
+      resultHash: null,
+      bytesBefore: null,
+      bytesAfter: null,
+      resultWpId: null,
+      ranAt: Date.now(),
+      durationMs: 10,
+      status: 'success',
+      errorMessage: null,
+    });
+
+    const result = await runMediaChecks(adapter, db, 'test-briefing-site');
+    db.close();
+
+    // Both items remain unoptimized — a caption-only pass isn't a real compression pass.
+    expect(result.unoptimized.count).toBe(2);
+    expect(result.unoptimized.available).toBe(true);
+  });
+
   test('marks categories unavailable instead of throwing on adapter failure', async () => {
     const failingAdapter: WpBackend = {
       name: 'rest',
