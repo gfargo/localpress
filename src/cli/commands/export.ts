@@ -12,7 +12,7 @@ import { basename, dirname, join } from 'node:path';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { ListFilters, MediaItem } from '../../adapters/types.ts';
-import { SiteDb } from '../../engine/state/db.ts';
+import { OPTIMIZE_OPERATIONS, SiteDb } from '../../engine/state/db.ts';
 import { ExitCode } from '../../types.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
@@ -126,7 +126,7 @@ export function registerExportCommand(program: Command): void {
         if (options.unoptimized) {
           try {
             const db = SiteDb.init(getSiteDbPath(site.name));
-            const processed = db.listProcessedWpIds(site.name);
+            const processed = db.listProcessedWpIds(site.name, OPTIMIZE_OPERATIONS);
             items = items.filter((item) => !processed.has(item.id));
             db.close();
           } catch {

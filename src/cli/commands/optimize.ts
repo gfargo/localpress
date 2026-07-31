@@ -31,7 +31,7 @@ import {
 } from '../../engine/image/optimize.ts';
 import type { ImageFormat, OptimizeOptions } from '../../engine/image/types.ts';
 import type { ProcessingHistoryRecord } from '../../engine/state/db.ts';
-import { SiteDb } from '../../engine/state/db.ts';
+import { OPTIMIZE_OPERATIONS, SiteDb } from '../../engine/state/db.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
@@ -467,7 +467,7 @@ export function registerOptimizeCommand(program: Command): void {
         if (options.unoptimized) {
           try {
             const db = SiteDb.init(getSiteDbPath(site.name));
-            const processed = db.listProcessedWpIds(site.name, ['optimize', 'convert', 'resize']);
+            const processed = db.listProcessedWpIds(site.name, OPTIMIZE_OPERATIONS);
             items = items.filter((item) => !processed.has(item.id));
             db.close();
           } catch {

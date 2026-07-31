@@ -12,7 +12,7 @@
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import { generateText, isOllamaAvailable } from '../../engine/caption/ollama.ts';
-import { SiteDb } from '../../engine/state/db.ts';
+import { OPTIMIZE_OPERATIONS, SiteDb } from '../../engine/state/db.ts';
 import { ExitCode } from '../../types.ts';
 import type { SiteConfig } from '../../types.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
@@ -230,7 +230,7 @@ export async function runMediaChecks(
   // actually depend on it.
   let unoptimized: CategorySummary;
   try {
-    const processedIds = db.listProcessedWpIds(siteName);
+    const processedIds = db.listProcessedWpIds(siteName, OPTIMIZE_OPERATIONS);
     const unoptimizedItems = items.filter((i) => !processedIds.has(i.id));
     unoptimized = {
       count: unoptimizedItems.length,
