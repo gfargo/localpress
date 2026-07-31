@@ -23,6 +23,11 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
+import {
+  resolveEncoderAfterPreflight,
+  selectPreflightFormats,
+} from '../../engine/image/encoder-preflight.ts';
+import { preflightJsquashEncoder } from '../../engine/image/jsquash.ts';
 import { formatToMime, mimeToExtension } from '../../engine/image/mime.ts';
 import {
   AnimatedImageError,
@@ -526,6 +531,33 @@ export function registerOptimizeCommand(program: Command): void {
         encoder: options.encoder === 'jsquash' ? 'jsquash' : (profileEncoder ?? 'sharp'),
         targetSizeBytes: options.targetSize,
       };
+
+      // Encoder pre-flight: confirm the jSquash WASM codec(s) this run would
+      // need actually load and encode, once, before touching the DB or
+      // WordPress. Without this, a codec that fails to load throws per-item,
+      // mid-run (localpress#293).
+      if (optimizeOpts.encoder === 'jsquash') {
+        const preflightFormats = selectPreflightFormats(optimizeOpts);
+        if (preflightFormats.length > 0) {
+          const preflight = await preflightJsquashEncoder(preflightFormats);
+          const decision = resolveEncoderAfterPreflight({
+            preflightOk: preflight.ok,
+            strict: Boolean(parentOpts.strict),
+          });
+          if (decision.action === 'abort') {
+            error(
+              `jSquash encoder pre-flight failed for '${preflight.firstError?.format}': ${preflight.firstError?.error}\n--strict disallows falling back to sharp. Retry with --encoder sharp, or fix the codec install.`,
+            );
+            process.exit(1);
+          }
+          if (decision.action === 'fallback') {
+            warn(
+              `⚠ jSquash encoder unavailable ('${preflight.firstError?.format}': ${preflight.firstError?.error}) — falling back to sharp.`,
+            );
+            optimizeOpts.encoder = 'sharp';
+          }
+        }
+      }
 
       // Open the site DB for recording processing history.
       const db = SiteDb.init(getSiteDbPath(site.name));

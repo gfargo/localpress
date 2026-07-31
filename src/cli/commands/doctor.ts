@@ -195,6 +195,33 @@ export function registerDoctorCommand(program: Command): void {
           }
         }
 
+        // -- jSquash encoder availability --------------------------------------
+        let jsquashAvailable = false;
+        let jsquashFormats: Array<{ format: string; ok: boolean; error?: string }> = [];
+        try {
+          const { preflightJsquashEncoder } = await import('../../engine/image/jsquash.ts');
+          const { ALL_JSQUASH_FORMATS } = await import('../../engine/image/encoder-preflight.ts');
+          const preflight = await preflightJsquashEncoder(ALL_JSQUASH_FORMATS);
+          jsquashAvailable = preflight.ok;
+          jsquashFormats = preflight.formats.map((f) => ({
+            format: f.format,
+            ok: f.ok,
+            error: f.error,
+          }));
+          if (!jsquashAvailable) {
+            issues.push({
+              severity: 'info',
+              message: `jSquash WASM encoder unavailable for: ${preflight.formats
+                .filter((f) => !f.ok)
+                .map((f) => f.format)
+                .join(', ')} — \`optimize --encoder jsquash\` will fall back to sharp`,
+              fix: 'Use `--encoder sharp` (the default) or reinstall dependencies',
+            });
+          }
+        } catch {
+          // Never let a probe failure break doctor itself.
+        }
+
         // -- Plugin detection --------------------------------------------------
         let plugins: PluginStatus[] = [];
         if (options.plugins || options.fix) {
@@ -252,6 +279,9 @@ export function registerDoctorCommand(program: Command): void {
             url: site.url,
             connectionOk,
             sharpAvailable,
+            encoders: {
+              jsquash: { available: jsquashAvailable, formats: jsquashFormats },
+            },
             adapters: availability,
             capabilities: report,
             issues,
@@ -263,6 +293,7 @@ export function registerDoctorCommand(program: Command): void {
           info(`  ${availability.wpCli ? '✓' : '✗'} WP-CLI (SSH)`);
           info(`  ${availability.mcp ? '✓' : '✗'} MCP`);
           info(`  ${sharpAvailable ? '✓' : '✗'} sharp (image processing)`);
+          info(`  ${jsquashAvailable ? '✓' : '✗'} jSquash WASM codecs (--encoder jsquash)`);
           info('');
           info('  Capabilities:');
           for (const cap of report) {
