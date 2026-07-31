@@ -130,6 +130,97 @@ afterEach(() => {
 });
 
 describe('optimize (replace-in-place) then verify', () => {
+  test('records post-processing width/height, not the pre-processing dimensions (OSS-1338 / localpress#283)', async () => {
+    const sharp = (await import('sharp')).default;
+    const sourceBytes = await sharp({
+      create: { width: 200, height: 200, channels: 3, background: { r: 90, g: 140, b: 200 } },
+    })
+      .jpeg({ quality: 95 })
+      .toBuffer();
+
+    // --max-width shrinks 200x200 down to 100x100, so a stale pre-op
+    // width/height write (200x200) would permanently mismatch the live
+    // (100x100) WordPress state.
+    remote = { mimeType: 'image/jpeg', bytes: sourceBytes };
+    let remoteWidth = 200;
+    let remoteHeight = 200;
+
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes(`/wp-json/wp/v2/media/${WP_ID}`)) {
+        return Response.json({
+          id: WP_ID,
+          title: { rendered: 'Photo', raw: 'Photo' },
+          source_url: SOURCE_URL,
+          mime_type: remote.mimeType,
+          media_details: {
+            width: remoteWidth,
+            height: remoteHeight,
+            file: 'photo.jpg',
+            filesize: remote.bytes.length,
+          },
+          alt_text: '',
+          caption: { rendered: '', raw: '' },
+          description: { rendered: '', raw: '' },
+          date: new Date(0).toISOString(),
+          slug: 'photo',
+        });
+      }
+      if (url === SOURCE_URL) {
+        return new Response(remote.bytes, { status: 200 });
+      }
+      throw new Error(`Unexpected fetch to ${url}`);
+    }) as typeof fetch;
+
+    RestAdapter.prototype.replaceInPlace = async (
+      _id: number,
+      file: Buffer,
+      options?: ReplaceOptions,
+    ): Promise<MediaItem> => {
+      remote = { mimeType: options?.newMimeType ?? remote.mimeType, bytes: file };
+      const resized = await sharp(file).metadata();
+      remoteWidth = resized.width ?? remoteWidth;
+      remoteHeight = resized.height ?? remoteHeight;
+      return {
+        id: WP_ID,
+        title: 'Photo',
+        filename: 'photo.jpg',
+        url: SOURCE_URL,
+        mimeType: remote.mimeType,
+        width: remoteWidth,
+        height: remoteHeight,
+        sizeBytes: file.length,
+        uploadedAt: new Date(0).toISOString(),
+      };
+    };
+
+    const exitSpy = spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+    try {
+      const optimizeProgram = buildProgram();
+      registerOptimizeCommand(optimizeProgram);
+      await optimizeProgram.parseAsync(['optimize', String(WP_ID), '--max-width', '100'], {
+        from: 'user',
+      });
+
+      const db = SiteDb.init(getSiteDbPath(SITE_NAME));
+      const record = db.getAttachment(SITE_NAME, WP_ID);
+      db.close();
+      expect(record).not.toBeNull();
+      expect(record?.width).toBe(100);
+      expect(record?.height).toBe(100);
+
+      const verifyProgram = buildProgram();
+      registerVerifyCommand(verifyProgram);
+      await verifyProgram.parseAsync(['verify', String(WP_ID), '--hash'], { from: 'user' });
+
+      // verify.ts exits 1 on drift/mismatch/missing — it must not have.
+      expect(exitSpy).not.toHaveBeenCalledWith(1);
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
   test('verify reports no drift against the post-optimize state', async () => {
     const sharp = (await import('sharp')).default;
     const sourceBytes = await sharp({

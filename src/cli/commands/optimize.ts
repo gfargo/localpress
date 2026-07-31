@@ -365,31 +365,10 @@ export function registerOptimizeCommand(program: Command): void {
               resultWpId = uploaded.id;
             }
 
-            recordSuccess(
-              db,
-              site.name,
-              item,
-              sourceHash,
-              resultHash,
-              resultMimeType ?? item.mimeType,
-              {},
-              0,
-              {
-                bytesBefore: sourceBytes.length,
-                bytesAfter: resultBytes.length,
-                resultWpId: resultWpId !== item.id ? resultWpId : null,
-              },
-            );
-
-            if (historySession) {
-              closeHistorySession(snapshotStore, historySession, {
-                maxSizeBytes: historyConfig.maxSizeBytes,
-              });
-            }
-
-            db.close();
-
-            // Re-fetch the item from WordPress to get fresh metadata for the UI.
+            // Re-fetch the item from WordPress to get fresh metadata — both
+            // for the UI and, when replaced in place, the post-processing
+            // width/height that must be recorded (the live file no longer
+            // matches item.width/height).
             let freshItem: import('../../engine/preview/server.ts').ApplyResult['freshItem'];
             try {
               const refreshed = await getAdapter.getMedia(resultWpId ?? id);
@@ -404,6 +383,32 @@ export function registerOptimizeCommand(program: Command): void {
             } catch {
               // Best effort — UI will show basic success without fresh metadata.
             }
+
+            recordSuccess(
+              db,
+              site.name,
+              item,
+              sourceHash,
+              resultHash,
+              resultMimeType ?? item.mimeType,
+              {},
+              0,
+              {
+                bytesBefore: sourceBytes.length,
+                bytesAfter: resultBytes.length,
+                resultWpId: resultWpId !== item.id ? resultWpId : null,
+                width: freshItem?.width,
+                height: freshItem?.height,
+              },
+            );
+
+            if (historySession) {
+              closeHistorySession(snapshotStore, historySession, {
+                maxSizeBytes: historyConfig.maxSizeBytes,
+              });
+            }
+
+            db.close();
 
             return {
               wpId: resultWpId,
@@ -757,6 +762,8 @@ export function registerOptimizeCommand(program: Command): void {
               bytesBefore: sourceBytes.length,
               bytesAfter: result.bytes.length,
               resultWpId: resultWpId !== item.id ? resultWpId : null,
+              width: result.after.width,
+              height: result.after.height,
             },
           );
 
@@ -924,7 +931,13 @@ function recordSuccess(
   resultMimeType: string,
   opts: OptimizeOptions,
   durationMs: number,
-  sizes: { bytesBefore: number; bytesAfter: number; resultWpId: number | null },
+  sizes: {
+    bytesBefore: number;
+    bytesAfter: number;
+    resultWpId: number | null;
+    width?: number | null;
+    height?: number | null;
+  },
   status: 'success' | 'skipped' = 'success',
 ): void {
   // `resultWpId === null` means the original attachment was replaced in
@@ -939,8 +952,8 @@ function recordSuccess(
     sourceUrl: item.url,
     sourceHash: wasReplacedInPlace ? resultHash : sourceHash,
     sizeBytes: wasReplacedInPlace ? sizes.bytesAfter : sizes.bytesBefore,
-    width: item.width ?? null,
-    height: item.height ?? null,
+    width: wasReplacedInPlace ? (sizes.width ?? item.width ?? null) : (item.width ?? null),
+    height: wasReplacedInPlace ? (sizes.height ?? item.height ?? null) : (item.height ?? null),
     mimeType: wasReplacedInPlace ? resultMimeType : item.mimeType,
     lastSeenAt: Date.now(),
   });
