@@ -13,16 +13,38 @@
  * preview-server.test.ts / editor-detect.test.ts / quick-view-auth.test.ts)
  * without restoring it — depending on file load order that leaves `spawnSync`
  * undefined when this file imports it. Bun.spawnSync isn't affected.
- * Unreachable URLs use 127.0.0.1:1 to force an immediate ECONNREFUSED without
- * touching DNS.
+ *
+ * "Unreachable" is simulated by binding a real TCP server on an OS-assigned
+ * loopback port and closing it before use, rather than a hardcoded low port
+ * (e.g. 127.0.0.1:1) or a `.invalid` hostname. A closed loopback port gets
+ * ECONNREFUSED straight from the kernel — no DNS lookup, no routing beyond
+ * loopback, and no dependency on a fixed port/hostname staying unreachable
+ * on every network the tests happen to run on (some CI network layers proxy
+ * or intercept low ports and reserved-TLD lookups differently than a local
+ * machine).
  */
 
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const CLI_ENTRY = join(process.cwd(), 'src', 'cli', 'index.ts');
+
+/** Bind an ephemeral loopback port, then close it, so it's guaranteed refused. */
+async function unreachableLoopbackUrl(): Promise<string> {
+  const port = await new Promise<number>((resolve, reject) => {
+    const srv = createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const address = srv.address();
+      const boundPort = typeof address === 'object' && address ? address.port : 0;
+      srv.close(() => resolve(boundPort));
+    });
+  });
+  return `http://127.0.0.1:${port}`;
+}
 
 /** Spawn the CLI with an ephemeral config dir.  No site is seeded by default. */
 function runCli(
@@ -104,14 +126,15 @@ describe('doctor exit codes', () => {
   // -------------------------------------------------------------------------
   // Unreachable site — connection refused
   // -------------------------------------------------------------------------
-  test('doctor with unreachable site exits 4 (NetworkError)', () => {
-    // Port 1 on loopback is reliably refused without DNS involvement.
-    const { exitCode } = runCliWithSite(['doctor'], 'http://127.0.0.1:1');
+  test('doctor with unreachable site exits 4 (NetworkError)', async () => {
+    const siteUrl = await unreachableLoopbackUrl();
+    const { exitCode } = runCliWithSite(['doctor'], siteUrl);
     expect(exitCode).toBe(4);
   });
 
-  test('doctor --json with unreachable site exits 4 and emits connectionOk:false', () => {
-    const { stdout, exitCode } = runCliWithSite(['doctor', '--json'], 'http://127.0.0.1:1');
+  test('doctor --json with unreachable site exits 4 and emits connectionOk:false', async () => {
+    const siteUrl = await unreachableLoopbackUrl();
+    const { stdout, exitCode } = runCliWithSite(['doctor', '--json'], siteUrl);
     expect(exitCode).toBe(4);
 
     // stdout should contain a JSON object with connectionOk:false
@@ -127,19 +150,21 @@ describe('doctor exit codes', () => {
     expect(errorIssues.length).toBeGreaterThan(0);
   });
 
-  test('doctor --all-sites with unreachable site exits 4', () => {
-    const { exitCode } = runCliWithSite(['doctor', '--all-sites'], 'http://127.0.0.1:1');
+  test('doctor --all-sites with unreachable site exits 4', async () => {
+    const siteUrl = await unreachableLoopbackUrl();
+    const { exitCode } = runCliWithSite(['doctor', '--all-sites'], siteUrl);
     expect(exitCode).toBe(4);
   });
 
   // -------------------------------------------------------------------------
-  // Bogus hostname — DNS error (ENOTFOUND)
+  // A second, independently-bound unreachable port — exercises the same
+  // network-failure path (the doctor code doesn't distinguish ECONNREFUSED
+  // from ENOTFOUND; both are "fetch never got a response") without relying
+  // on real DNS resolution of a reserved-but-not-universally-honored TLD.
   // -------------------------------------------------------------------------
-  test('doctor with bogus hostname exits 4 (NetworkError)', () => {
-    const { exitCode } = runCliWithSite(
-      ['doctor'],
-      'http://localpress-test-bogus-hostname-that-does-not-exist.invalid',
-    );
+  test('doctor with a second unreachable site exits 4 (NetworkError)', async () => {
+    const siteUrl = await unreachableLoopbackUrl();
+    const { exitCode } = runCliWithSite(['doctor'], siteUrl);
     expect(exitCode).toBe(4);
   });
 });
