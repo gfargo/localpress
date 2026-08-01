@@ -338,6 +338,7 @@ describe('SnapshotStore', () => {
       sourceBytes: Buffer.from('older'),
       beforeMeta: { filename: '10.jpg', mimeType: 'image/jpeg' },
     });
+    store.closeSession(older.id);
 
     // Open the "newer" session second (higher rowid) and give it a snapshot.
     const newer = store.openSession('testsite', 'remove-bg');
@@ -349,6 +350,7 @@ describe('SnapshotStore', () => {
       sourceBytes: Buffer.from('newer'),
       beforeMeta: { filename: '11.jpg', mimeType: 'image/jpeg' },
     });
+    store.closeSession(newer.id);
 
     // Force both sessions to the exact same started_at so the tie-breaker matters.
     const sharedTimestamp = 1700000000000;

@@ -160,7 +160,7 @@ export class SnapshotStore {
              SELECT 1 FROM snapshots
              WHERE session_id = s.id AND restored_at IS NULL
            )
-         ORDER BY started_at DESC, s.rowid DESC LIMIT 1`,
+         ORDER BY started_at DESC, rowid DESC LIMIT 1`,
       )
       .get(siteName) as RawSessionRow | null;
     return row ? mapSessionRow(row) : null;
