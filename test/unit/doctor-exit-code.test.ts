@@ -6,44 +6,41 @@
  *   - unreachable site     → exit 4 (NetworkError), connectionOk:false in --json
  *   - healthy site         → exit 0 (manual / integration tests only — needs live WP)
  *
- * Technique: Bun.spawnSync + isolated XDG_CONFIG_HOME (same pattern as
- * cli-error-handling.test.ts). We use Bun.spawnSync rather than
- * node:child_process's spawnSync because other unit test files replace the
- * whole node:child_process module process-wide via `mock.module()` (see
- * preview-server.test.ts / editor-detect.test.ts / quick-view-auth.test.ts)
- * without restoring it — depending on file load order that leaves `spawnSync`
- * undefined when this file imports it. Bun.spawnSync isn't affected.
+ * Two techniques are used, split by whether the code path under test calls
+ * `process.exit()` directly:
  *
- * "Unreachable" is simulated with a syntactically-invalid site URL rather
- * than an actually-unreachable network address. We tried two real-network
- * approaches first — a hardcoded low port + `.invalid` hostname, then an
- * OS-assigned loopback port bound and closed just before use — and *both*
- * passed reliably locally but produced exit 0 in CI (i.e. the REST call
- * apparently succeeded, or at least didn't throw). That points at CI's
- * network layer not refusing connections/failing DNS the same way a local
- * machine does, for reasons we can't control from here. A malformed URL
- * sidesteps the network stack entirely: `RestAdapter.apiUrl()` calls
- * `new URL(...)` on `${site.url}/wp-json/wp/v2${path}`, which throws
- * synchronously for a string with no valid scheme — no socket is ever
- * opened, so there's nothing for a network layer to intercept. Doctor's
- * catch block treats any non-`WpApiError` thrown from the connectivity
- * check as `code: 'network'` (see src/cli/commands/doctor.ts), so this
- * still exercises the real "connection check failed" → NetworkError path.
+ * - "no sites configured" calls `process.exit(ExitCode.ConfigError)` inline
+ *   (src/cli/commands/doctor.ts), which would kill the whole test runner if
+ *   invoked in-process — so those cases spawn a real CLI subprocess via
+ *   Bun.spawnSync (same pattern as cli-error-handling.test.ts).
+ *
+ * - "unreachable site" only ever sets `process.exitCode` (never calls
+ *   `process.exit()`), so it's safe to invoke doctor's action in-process. We
+ *   tried simulating an unreachable site over real sockets/DNS (a hardcoded
+ *   low port + `.invalid` hostname, then an OS-assigned loopback port bound
+ *   and closed just before use, then a syntactically-invalid URL that never
+ *   opens a socket at all) — all three passed reliably locally but produced
+ *   exit 0 in CI, for reasons that don't point at any single layer we can
+ *   control from a test. Rather than keep guessing at CI's network/DNS
+ *   behavior, we sidestep it entirely: mock `globalThis.fetch` directly
+ *   (the same technique already used by dry-run-honesty-behavior.test.ts and
+ *   models.test.ts in this repo) so the "connection check failed" path is
+ *   exercised deterministically regardless of environment.
  */
 
-import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Command, Option } from 'commander';
+import { registerDoctorCommand } from '../../src/cli/commands/doctor.ts';
+import { saveConfig } from '../../src/cli/utils/config.ts';
+import { setOutputOptions } from '../../src/cli/utils/output.ts';
 
 const CLI_ENTRY = join(process.cwd(), 'src', 'cli', 'index.ts');
+const SITE_NAME = 'testsite';
 
-/** No scheme — `new URL()` throws synchronously, before any socket is opened. */
-const UNREACHABLE_SITE_URL = 'not-a-valid-url-without-a-scheme';
-/** A second, distinct malformed URL for the "independent failure" test below. */
-const UNREACHABLE_SITE_URL_2 = 'ht!tp://also-not-a-valid-url';
-
-/** Spawn the CLI with an ephemeral config dir.  No site is seeded by default. */
+/** Spawn the CLI with an ephemeral config dir. No site is seeded by default. */
 function runCli(
   args: string[],
   extraEnv: Record<string, string> = {},
@@ -64,52 +61,7 @@ function runCli(
   }
 }
 
-/**
- * Spawn the CLI with a pre-seeded config file pointing at a fake site URL.
- * The config is the minimal shape accepted by loadConfig().
- */
-function runCliWithSite(
-  args: string[],
-  siteUrl: string,
-): { stdout: string; stderr: string; exitCode: number } {
-  const configDir = mkdtempSync(join(tmpdir(), 'localpress-doctor-site-test-'));
-  try {
-    // Write a minimal config.json understood by src/cli/utils/config.ts.
-    const localpressDir = join(configDir, 'localpress');
-    mkdirSync(localpressDir, { recursive: true });
-    const config = {
-      version: 1,
-      activeSite: 'test-site',
-      sites: {
-        'test-site': {
-          name: 'test-site',
-          url: siteUrl,
-          username: 'admin',
-          appPassword: 'fake fake fake fake fake fake',
-          createdAt: new Date().toISOString(),
-        },
-      },
-    };
-    writeFileSync(join(localpressDir, 'config.json'), JSON.stringify(config), { mode: 0o600 });
-
-    const result = Bun.spawnSync(['bun', 'run', CLI_ENTRY, ...args], {
-      env: { ...process.env, XDG_CONFIG_HOME: configDir },
-      timeout: 30_000,
-    });
-    return {
-      stdout: result.stdout.toString(),
-      stderr: result.stderr.toString(),
-      exitCode: result.exitCode ?? 1,
-    };
-  } finally {
-    rmSync(configDir, { recursive: true, force: true });
-  }
-}
-
-describe('doctor exit codes', () => {
-  // -------------------------------------------------------------------------
-  // No sites configured
-  // -------------------------------------------------------------------------
+describe('doctor exit codes — no sites configured', () => {
   test('doctor with no sites configured exits 3 (ConfigError)', () => {
     const { exitCode } = runCli(['doctor']);
     expect(exitCode).toBe(3);
@@ -119,44 +71,163 @@ describe('doctor exit codes', () => {
     const { exitCode } = runCli(['doctor', '--all-sites']);
     expect(exitCode).toBe(3);
   });
+});
 
-  // -------------------------------------------------------------------------
-  // Unreachable site — connectivity check throws
-  // -------------------------------------------------------------------------
-  test('doctor with unreachable site exits 4 (NetworkError)', () => {
-    const { exitCode } = runCliWithSite(['doctor'], UNREACHABLE_SITE_URL);
-    expect(exitCode).toBe(4);
+// -----------------------------------------------------------------------------
+// Unreachable site — connectivity check throws. Run in-process with a mocked
+// `fetch` so the failure is deterministic regardless of the environment's
+// network/DNS behavior (see the file-level comment above).
+// -----------------------------------------------------------------------------
+
+function buildProgram(): Command {
+  const program = new Command();
+  program
+    .name('localpress')
+    .exitOverride()
+    .addOption(new Option('--site <name>', 'override the active site for this command'))
+    .addOption(new Option('--all-sites', 'show capabilities for every configured site'))
+    .addOption(new Option('--json', 'machine-readable JSON output').default(false))
+    .addOption(new Option('--quiet', 'errors only; suppress info messages').default(false))
+    .hook('preAction', (thisCommand) => {
+      const opts = thisCommand.opts();
+      setOutputOptions({ json: Boolean(opts.json), quiet: Boolean(opts.quiet) });
+    });
+  return program;
+}
+
+let originalXdgConfigHome: string | undefined;
+let originalFetch: typeof fetch;
+let originalExitCode: number | string | undefined | null;
+let tmpDir: string;
+
+beforeEach(() => {
+  originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  originalFetch = globalThis.fetch;
+  originalExitCode = process.exitCode;
+  process.exitCode = undefined;
+  tmpDir = mkdtempSync(join(tmpdir(), 'localpress-doctor-unreachable-test-'));
+  process.env.XDG_CONFIG_HOME = tmpDir;
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  process.exitCode = originalExitCode === null ? undefined : originalExitCode;
+  setOutputOptions({ json: false, quiet: false });
+  if (originalXdgConfigHome === undefined) {
+    // biome-ignore lint/performance/noDelete: env var must be truly absent, not the string "undefined"
+    delete process.env.XDG_CONFIG_HOME;
+  } else {
+    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  }
+  rmSync(tmpDir, { recursive: true, force: true });
+});
+
+/** A `fetch` that fails the way an unreachable host does: no HTTP response at all. */
+function unreachableFetch(): typeof fetch {
+  return (async () => {
+    throw new TypeError('fetch failed');
+  }) as unknown as typeof fetch;
+}
+
+async function seedSite(url: string): Promise<void> {
+  await saveConfig({
+    version: 1,
+    activeSite: SITE_NAME,
+    sites: {
+      [SITE_NAME]: {
+        name: SITE_NAME,
+        url,
+        username: 'admin',
+        appPassword: 'fake fake fake fake fake fake',
+        createdAt: new Date(0).toISOString(),
+      },
+    },
+  });
+}
+
+describe('doctor exit codes — unreachable site', () => {
+  test('doctor with unreachable site exits 4 (NetworkError)', async () => {
+    await seedSite('https://example.test');
+    globalThis.fetch = unreachableFetch();
+
+    const program = buildProgram();
+    registerDoctorCommand(program);
+    await program.parseAsync(['doctor'], { from: 'user' });
+
+    expect(process.exitCode).toBe(4);
   });
 
-  test('doctor --json with unreachable site exits 4 and emits connectionOk:false', () => {
-    const { stdout, exitCode } = runCliWithSite(['doctor', '--json'], UNREACHABLE_SITE_URL);
-    expect(exitCode).toBe(4);
+  test('doctor --json with unreachable site exits 4 and emits connectionOk:false', async () => {
+    await seedSite('https://example.test');
+    globalThis.fetch = unreachableFetch();
 
-    // stdout should contain a JSON object with connectionOk:false
-    const lines = stdout.trim().split('\n').filter(Boolean);
+    const chunks: string[] = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      chunks.push(chunk.toString());
+      return true;
+    }) as typeof process.stdout.write;
+
+    const program = buildProgram();
+    registerDoctorCommand(program);
+    try {
+      await program.parseAsync(['doctor', '--json'], { from: 'user' });
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    expect(process.exitCode).toBe(4);
+
+    const output = chunks.join('');
+    const lines = output.trim().split('\n').filter(Boolean);
     expect(lines.length).toBeGreaterThan(0);
     const parsed = JSON.parse(lines[0]);
     expect(parsed.connectionOk).toBe(false);
 
-    // There should be at least one error-severity issue.
     const errorIssues = (parsed.issues as Array<{ severity: string }>).filter(
       (i) => i.severity === 'error',
     );
     expect(errorIssues.length).toBeGreaterThan(0);
   });
 
-  test('doctor --all-sites with unreachable site exits 4', () => {
-    const { exitCode } = runCliWithSite(['doctor', '--all-sites'], UNREACHABLE_SITE_URL);
-    expect(exitCode).toBe(4);
+  test('doctor --all-sites with unreachable site exits 4', async () => {
+    await saveConfig({
+      version: 1,
+      activeSite: SITE_NAME,
+      sites: {
+        [SITE_NAME]: {
+          name: SITE_NAME,
+          url: 'https://example.test',
+          username: 'admin',
+          appPassword: 'fake fake fake fake fake fake',
+          createdAt: new Date(0).toISOString(),
+        },
+        'second-site': {
+          name: 'second-site',
+          url: 'https://example2.test',
+          username: 'admin',
+          appPassword: 'fake fake fake fake fake fake',
+          createdAt: new Date(0).toISOString(),
+        },
+      },
+    });
+    globalThis.fetch = unreachableFetch();
+
+    const program = buildProgram();
+    registerDoctorCommand(program);
+    await program.parseAsync(['doctor', '--all-sites'], { from: 'user' });
+
+    expect(process.exitCode).toBe(4);
   });
 
-  // -------------------------------------------------------------------------
-  // A second, distinct malformed URL — exercises the same "any non-WpApiError
-  // thrown from the connectivity check is a NetworkError" path with a
-  // different failure shape (unparseable scheme vs. no scheme at all).
-  // -------------------------------------------------------------------------
-  test('doctor with a second unreachable site exits 4 (NetworkError)', () => {
-    const { exitCode } = runCliWithSite(['doctor'], UNREACHABLE_SITE_URL_2);
-    expect(exitCode).toBe(4);
+  test('doctor with a second, independent unreachable site exits 4 (NetworkError)', async () => {
+    await seedSite('https://another-example.test');
+    globalThis.fetch = unreachableFetch();
+
+    const program = buildProgram();
+    registerDoctorCommand(program);
+    await program.parseAsync(['doctor'], { from: 'user' });
+
+    expect(process.exitCode).toBe(4);
   });
 });
