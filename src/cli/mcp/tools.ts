@@ -548,8 +548,15 @@ export function registerTools(server: McpServer): void {
   server.registerTool(
     'references',
     {
-      title: 'Find references to an attachment',
-      description: 'Find every post, page, or custom-post where a given attachment is referenced.',
+      title: 'Find references to an attachment (read) / rewrite all references (destructive write)',
+      description:
+        'Without `updateTo`: read-only scan — returns every post, page, or custom-post where attachment <id> appears (featured image, inline URL, Gutenberg block ID).\n\n' +
+        'With `updateTo`: **DESTRUCTIVE site-wide rewrite**. Without `confirm: true`, always runs as a dry-run preview — nothing is written. Rewrites, once confirmed:\n' +
+        '  1. `_thumbnail_id` postmeta rows (raw SQL UPDATE — not transactional)\n' +
+        '  2. All URLs across every database table (`wp search-replace --precise`)\n' +
+        '  3. Gutenberg block IDs in `post_content` (regex search-replace)\n\n' +
+        'This rewrite is **NOT transactional** — a mid-run failure leaves a partial rewrite. ' +
+        'It requires WP-CLI over SSH. Run without `confirm` first to preview the scope, then pass `confirm: true` to execute.',
       inputSchema: {
         ...commonSiteArg,
         id: z.number().int().positive(),
@@ -562,14 +569,34 @@ export function registerTools(server: McpServer): void {
           .int()
           .positive()
           .optional()
-          .describe('Rewrite references to point to a different attachment ID'),
+          .describe(
+            'DESTRUCTIVE: rewrite every reference (featured images, inline URLs across ALL tables, and Gutenberg block IDs in post_content) to point at this attachment ID. ' +
+              'NOT transactional — a mid-run failure leaves a partial rewrite. Requires WP-CLI over SSH. ' +
+              'Requires `confirm: true` to actually execute; without it, runs as a dry-run preview.',
+          ),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe(
+            'Required alongside `updateTo` to execute the rewrite. Without it, an `updateTo` call always runs as a dry-run preview, regardless of `dryRun`.',
+          ),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe(
+            'Force a dry-run preview of the `updateTo` rewrite even when `confirm: true` is set. Has no effect without `updateTo`.',
+          ),
       },
     },
     async (args) => {
       const a = args as ArgMap;
       const argv = ['references', String(a.id)];
       opt(argv, '--scope', a.scope);
-      opt(argv, '--update-to', a.updateTo);
+      if (a.updateTo !== undefined) {
+        opt(argv, '--update-to', a.updateTo);
+        const previewOnly = a.confirm !== true || a.dryRun === true;
+        flag(argv, '--dry-run', previewOnly);
+      }
       return runCli(argv, a.site as string | undefined);
     },
   );
