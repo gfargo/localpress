@@ -22,8 +22,11 @@ import {
   fetchAllMedia,
   summarizeFindings,
   auditSite,
+  sumUnoptimizedBytes,
+  isOverBudget,
 } from '../../src/cli/commands/audit.ts';
 import type { AuditFinding, AuditSummary } from '../../src/cli/commands/audit.ts';
+import { ExitCode } from '../../src/types.ts';
 import type { SiteConfig } from '../../src/types.ts';
 
 const fakeRestOnlySite: SiteConfig = {
@@ -305,5 +308,78 @@ describe('auditSite', () => {
     const result = await auditSite(restOnlySite, { unattached: true }, fakeConfig);
     expect(result.error).toMatch(/WP-CLI/);
     expect(result.findings).toEqual([]);
+  });
+});
+
+// -- Budget gate helpers ------------------------------------------------------
+
+describe('sumUnoptimizedBytes', () => {
+  test('returns 0 for empty findings', () => {
+    expect(sumUnoptimizedBytes([])).toBe(0);
+  });
+
+  test('sums only unoptimized findings', () => {
+    const findings: AuditFinding[] = [
+      { type: 'unoptimized', attachmentId: 1, filename: 'a.jpg', detail: '', sizeBytes: 1_000_000 },
+      { type: 'unoptimized', attachmentId: 2, filename: 'b.jpg', detail: '', sizeBytes: 2_000_000 },
+      { type: 'large', attachmentId: 3, filename: 'c.jpg', detail: '', sizeBytes: 5_000_000 },
+      { type: 'missing-alt', attachmentId: 4, filename: 'd.jpg', detail: '' },
+    ];
+    expect(sumUnoptimizedBytes(findings)).toBe(3_000_000);
+  });
+
+  test('treats missing sizeBytes as 0', () => {
+    const findings: AuditFinding[] = [
+      { type: 'unoptimized', attachmentId: 1, filename: 'a.jpg', detail: '', sizeBytes: 500_000 },
+      { type: 'unoptimized', attachmentId: 2, filename: 'b.jpg', detail: '' }, // no sizeBytes
+    ];
+    expect(sumUnoptimizedBytes(findings)).toBe(500_000);
+  });
+
+  test('returns 0 when all findings are non-unoptimized types', () => {
+    const findings: AuditFinding[] = [
+      { type: 'large', attachmentId: 1, filename: 'a.jpg', detail: '', sizeBytes: 9_000_000 },
+      { type: 'missing-alt', attachmentId: 2, filename: 'b.jpg', detail: '' },
+    ];
+    expect(sumUnoptimizedBytes(findings)).toBe(0);
+  });
+});
+
+describe('isOverBudget', () => {
+  test('returns false when maxBytes is undefined (no budget)', () => {
+    expect(isOverBudget(100_000_000, undefined)).toBe(false);
+  });
+
+  test('returns false when bytes equals budget exactly (boundary is inclusive)', () => {
+    expect(isOverBudget(50_000_000, 50_000_000)).toBe(false);
+  });
+
+  test('returns false when bytes are under budget', () => {
+    expect(isOverBudget(10_000_000, 50_000_000)).toBe(false);
+  });
+
+  test('returns true when bytes exceed budget', () => {
+    expect(isOverBudget(51_000_000, 50_000_000)).toBe(true);
+  });
+
+  test('returns true when budget is 0 and bytes are positive', () => {
+    expect(isOverBudget(1, 0)).toBe(true);
+  });
+
+  test('returns false when both budget and bytes are 0', () => {
+    expect(isOverBudget(0, 0)).toBe(false);
+  });
+});
+
+describe('ExitCode.BudgetExceeded', () => {
+  test('has value 7', () => {
+    expect(ExitCode.BudgetExceeded).toBe(7);
+  });
+
+  test('is distinct from every other ExitCode', () => {
+    const others = Object.entries(ExitCode)
+      .filter(([key]) => key !== 'BudgetExceeded')
+      .map(([, v]) => v);
+    expect(others).not.toContain(ExitCode.BudgetExceeded);
   });
 });

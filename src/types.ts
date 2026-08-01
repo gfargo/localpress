@@ -107,6 +107,12 @@ export const ExitCode = {
   NetworkError: 4,
   AuthError: 5,
   CapabilityUnavailable: 6,
+  /**
+   * The audit budget gate failed: total unoptimized bytes exceeded the value
+   * passed to `--max-unoptimized-bytes`.  Part of the public CLI interface —
+   * do not renumber.
+   */
+  BudgetExceeded: 7,
   NotImplemented: 99,
 } as const;
 export type ExitCode = (typeof ExitCode)[keyof typeof ExitCode];
