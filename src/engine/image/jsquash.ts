@@ -82,3 +82,45 @@ export async function jsquashEncode(
 export function isJsquashSupported(format: ImageFormat): boolean {
   return ['jpeg', 'png', 'webp', 'avif'].includes(format);
 }
+
+export interface EncoderPreflightResult {
+  ok: boolean;
+  formats: Array<{ format: ImageFormat; ok: boolean; codec?: string; error?: string }>;
+  firstError?: { format: ImageFormat; error: string };
+}
+
+/** A tiny 2x2 opaque RGBA buffer — just enough to exercise a codec's load/encode path. */
+const PREFLIGHT_PIXELS = new Uint8ClampedArray([
+  255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+]);
+
+/**
+ * Attempt a tiny real encode for each requested format to confirm the jSquash
+ * WASM codec actually loads and produces output. This is a one-time check
+ * meant to run before a bulk `optimize --encoder jsquash` run touches
+ * anything — a codec that fails to load today throws per-item, mid-run.
+ */
+export async function preflightJsquashEncoder(
+  formats: ImageFormat[],
+): Promise<EncoderPreflightResult> {
+  const results: EncoderPreflightResult['formats'] = [];
+  let firstError: EncoderPreflightResult['firstError'];
+
+  for (const format of formats) {
+    if (!isJsquashSupported(format)) continue;
+    try {
+      const { codec } = await jsquashEncode(PREFLIGHT_PIXELS, 2, 2, format, 75);
+      results.push({ format, ok: true, codec });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      results.push({ format, ok: false, error: message });
+      if (!firstError) firstError = { format, error: message };
+    }
+  }
+
+  return {
+    ok: results.every((r) => r.ok),
+    formats: results,
+    firstError,
+  };
+}

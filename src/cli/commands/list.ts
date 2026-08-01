@@ -9,7 +9,7 @@
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { ListFilters, MediaItem, SortField, SortOrder } from '../../adapters/types.ts';
-import { SiteDb } from '../../engine/state/db.ts';
+import { OPTIMIZE_OPERATIONS, SiteDb } from '../../engine/state/db.ts';
 import type { MediaBrowserAction } from '../components/MediaBrowser.tsx';
 import { parseIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
@@ -105,7 +105,7 @@ export function registerListCommand(program: Command): void {
           if (!options.unoptimized) return new Set<number>();
           try {
             const db = SiteDb.init(getSiteDbPath(site.name));
-            const ids = db.listProcessedWpIds(site.name);
+            const ids = db.listProcessedWpIds(site.name, OPTIMIZE_OPERATIONS);
             db.close();
             return ids;
           } catch {
@@ -382,7 +382,7 @@ export function registerListCommand(program: Command): void {
       if (options.unoptimized) {
         try {
           const db = SiteDb.init(getSiteDbPath(site.name));
-          const processed = db.listProcessedWpIds(site.name);
+          const processed = db.listProcessedWpIds(site.name, OPTIMIZE_OPERATIONS);
           items = items.filter((item) => !processed.has(item.id));
           db.close();
         } catch {

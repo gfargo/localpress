@@ -23,6 +23,11 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
+import {
+  resolveEncoderAfterPreflight,
+  selectPreflightFormats,
+} from '../../engine/image/encoder-preflight.ts';
+import { preflightJsquashEncoder } from '../../engine/image/jsquash.ts';
 import { formatToMime, mimeToExtension } from '../../engine/image/mime.ts';
 import {
   AnimatedImageError,
@@ -31,7 +36,7 @@ import {
 } from '../../engine/image/optimize.ts';
 import type { ImageFormat, OptimizeOptions } from '../../engine/image/types.ts';
 import type { ProcessingHistoryRecord } from '../../engine/state/db.ts';
-import { SiteDb } from '../../engine/state/db.ts';
+import { OPTIMIZE_OPERATIONS, SiteDb } from '../../engine/state/db.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
@@ -86,7 +91,7 @@ export function registerOptimizeCommand(program: Command): void {
     )
     .option(
       '--to <format>',
-      'convert during optimization: webp, avif, or jpeg (defaults to source format)',
+      'convert during optimization: webp, avif, jpeg, or png (defaults to source format)',
     )
     .option(
       '--mode <mode>',
@@ -279,7 +284,7 @@ export function registerOptimizeCommand(program: Command): void {
               },
             };
           },
-          onApply: async (resultBytes, resultMimeType): Promise<ApplyResult> => {
+          onApply: async (resultBytes, resultMimeType, lastStats): Promise<ApplyResult> => {
             const db = SiteDb.init(getSiteDbPath(site.name));
             db.ensureSite(site.name, site.url);
 
@@ -365,31 +370,18 @@ export function registerOptimizeCommand(program: Command): void {
               resultWpId = uploaded.id;
             }
 
-            recordSuccess(
-              db,
-              site.name,
-              item,
-              sourceHash,
-              resultHash,
-              resultMimeType ?? item.mimeType,
-              {},
-              0,
-              {
-                bytesBefore: sourceBytes.length,
-                bytesAfter: resultBytes.length,
-                resultWpId: resultWpId !== item.id ? resultWpId : null,
-              },
-            );
+            // The engine already computed the post-processing dimensions during
+            // onProcess (mirrors the non-preview path's `result.after`) — use
+            // those directly rather than depending on a network re-fetch, which
+            // can fail independently of the replace-in-place that already
+            // committed the new dimensions to WordPress.
+            const after = (lastStats?.after ?? undefined) as
+              | { width?: number; height?: number }
+              | undefined;
 
-            if (historySession) {
-              closeHistorySession(snapshotStore, historySession, {
-                maxSizeBytes: historyConfig.maxSizeBytes,
-              });
-            }
-
-            db.close();
-
-            // Re-fetch the item from WordPress to get fresh metadata for the UI.
+            // Re-fetch the item from WordPress to get fresh metadata for the UI
+            // (filename/mimeType/sizeBytes/url). Best-effort only — recordSuccess
+            // above does not depend on this succeeding.
             let freshItem: import('../../engine/preview/server.ts').ApplyResult['freshItem'];
             try {
               const refreshed = await getAdapter.getMedia(resultWpId ?? id);
@@ -404,6 +396,32 @@ export function registerOptimizeCommand(program: Command): void {
             } catch {
               // Best effort — UI will show basic success without fresh metadata.
             }
+
+            recordSuccess(
+              db,
+              site.name,
+              item,
+              sourceHash,
+              resultHash,
+              resultMimeType ?? item.mimeType,
+              {},
+              0,
+              {
+                bytesBefore: sourceBytes.length,
+                bytesAfter: resultBytes.length,
+                resultWpId: resultWpId !== item.id ? resultWpId : null,
+                width: after?.width,
+                height: after?.height,
+              },
+            );
+
+            if (historySession) {
+              closeHistorySession(snapshotStore, historySession, {
+                maxSizeBytes: historyConfig.maxSizeBytes,
+              });
+            }
+
+            db.close();
 
             return {
               wpId: resultWpId,
@@ -467,7 +485,7 @@ export function registerOptimizeCommand(program: Command): void {
         if (options.unoptimized) {
           try {
             const db = SiteDb.init(getSiteDbPath(site.name));
-            const processed = db.listProcessedWpIds(site.name, ['optimize', 'convert', 'resize']);
+            const processed = db.listProcessedWpIds(site.name, OPTIMIZE_OPERATIONS);
             items = items.filter((item) => !processed.has(item.id));
             db.close();
           } catch {
@@ -526,6 +544,33 @@ export function registerOptimizeCommand(program: Command): void {
         encoder: options.encoder === 'jsquash' ? 'jsquash' : (profileEncoder ?? 'sharp'),
         targetSizeBytes: options.targetSize,
       };
+
+      // Encoder pre-flight: confirm the jSquash WASM codec(s) this run would
+      // need actually load and encode, once, before touching the DB or
+      // WordPress. Without this, a codec that fails to load throws per-item,
+      // mid-run (localpress#293).
+      if (optimizeOpts.encoder === 'jsquash') {
+        const preflightFormats = selectPreflightFormats(optimizeOpts);
+        if (preflightFormats.length > 0) {
+          const preflight = await preflightJsquashEncoder(preflightFormats);
+          const decision = resolveEncoderAfterPreflight({
+            preflightOk: preflight.ok,
+            strict: Boolean(parentOpts.strict),
+          });
+          if (decision.action === 'abort') {
+            error(
+              `jSquash encoder pre-flight failed for '${preflight.firstError?.format}': ${preflight.firstError?.error}\n--strict disallows falling back to sharp. Retry with --encoder sharp, or fix the codec install.`,
+            );
+            process.exit(1);
+          }
+          if (decision.action === 'fallback') {
+            warn(
+              `⚠ jSquash encoder unavailable ('${preflight.firstError?.format}': ${preflight.firstError?.error}) — falling back to sharp.`,
+            );
+            optimizeOpts.encoder = 'sharp';
+          }
+        }
+      }
 
       // Open the site DB for recording processing history.
       const db = SiteDb.init(getSiteDbPath(site.name));
@@ -757,6 +802,8 @@ export function registerOptimizeCommand(program: Command): void {
               bytesBefore: sourceBytes.length,
               bytesAfter: result.bytes.length,
               resultWpId: resultWpId !== item.id ? resultWpId : null,
+              width: result.after.width,
+              height: result.after.height,
             },
           );
 
@@ -924,7 +971,13 @@ function recordSuccess(
   resultMimeType: string,
   opts: OptimizeOptions,
   durationMs: number,
-  sizes: { bytesBefore: number; bytesAfter: number; resultWpId: number | null },
+  sizes: {
+    bytesBefore: number;
+    bytesAfter: number;
+    resultWpId: number | null;
+    width?: number | null;
+    height?: number | null;
+  },
   status: 'success' | 'skipped' = 'success',
 ): void {
   // `resultWpId === null` means the original attachment was replaced in
@@ -939,8 +992,8 @@ function recordSuccess(
     sourceUrl: item.url,
     sourceHash: wasReplacedInPlace ? resultHash : sourceHash,
     sizeBytes: wasReplacedInPlace ? sizes.bytesAfter : sizes.bytesBefore,
-    width: item.width ?? null,
-    height: item.height ?? null,
+    width: wasReplacedInPlace ? (sizes.width ?? item.width ?? null) : (item.width ?? null),
+    height: wasReplacedInPlace ? (sizes.height ?? item.height ?? null) : (item.height ?? null),
     mimeType: wasReplacedInPlace ? resultMimeType : item.mimeType,
     lastSeenAt: Date.now(),
   });

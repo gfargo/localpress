@@ -9,7 +9,15 @@ import { describe, expect, mock, test } from 'bun:test';
 
 const capturedUrlBox: { value: string | null } = { value: null };
 
+// bun:test's mock.module() replaces the module for the whole test process
+// (there is no per-file un-mock), so other files importing 'node:child_process'
+// — e.g. update.test.ts's spawnSync usage — would otherwise see this fake and
+// lose every other real export. Spread the real module through and only
+// override spawn.
+const realChildProcess = await import('node:child_process');
+
 mock.module('node:child_process', () => ({
+  ...realChildProcess,
   spawn: (_cmd: string, args: string[]) => {
     capturedUrlBox.value = args[args.length - 1] ?? null;
     return { on: () => {}, unref: () => {} };

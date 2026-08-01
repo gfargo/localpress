@@ -133,7 +133,7 @@ export class SnapshotStore {
         `SELECT id, site_name, command, params_json, started_at, finished_at, item_count
          FROM sessions
          WHERE site_name = ?
-         ORDER BY started_at DESC
+         ORDER BY started_at DESC, rowid DESC
          LIMIT ? OFFSET ?`,
       )
       .all(siteName, limit, offset) as RawSessionRow[];
@@ -160,7 +160,7 @@ export class SnapshotStore {
              SELECT 1 FROM snapshots
              WHERE session_id = s.id AND restored_at IS NULL
            )
-         ORDER BY started_at DESC LIMIT 1`,
+         ORDER BY started_at DESC, rowid DESC LIMIT 1`,
       )
       .get(siteName) as RawSessionRow | null;
     return row ? mapSessionRow(row) : null;
@@ -417,7 +417,7 @@ export class SnapshotStore {
         .query(
           `SELECT id FROM sessions
            WHERE site_name = ?
-           ORDER BY started_at DESC
+           ORDER BY started_at DESC, rowid DESC
            LIMIT -1 OFFSET ?`,
         )
         .all(siteName, policy.maxSessions) as Array<{ id: string }>;

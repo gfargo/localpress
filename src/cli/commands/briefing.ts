@@ -12,7 +12,8 @@
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import { generateText, isOllamaAvailable } from '../../engine/caption/ollama.ts';
-import { SiteDb } from '../../engine/state/db.ts';
+import { OPTIMIZE_OPERATIONS, SiteDb } from '../../engine/state/db.ts';
+import { ExitCode } from '../../types.ts';
 import type { SiteConfig } from '../../types.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { info, printJson } from '../utils/output.ts';
@@ -37,6 +38,13 @@ export interface CategorySummary {
   examples: string[];
   available: boolean;
   unavailableReason?: string;
+  /**
+   * Present whenever `available === false`. `not-configured` means the check
+   * was never expected to run here (e.g. orphans without SSH) — this does
+   * NOT count as degradation. `error` means the check should have run but
+   * failed (network down, scan threw, etc.) — this DOES count as degradation.
+   */
+  unavailableKind?: 'not-configured' | 'error';
   /** Informational note when the check ran but only over a bounded subset (not an error). */
   note?: string;
 }
@@ -54,6 +62,10 @@ export interface BriefingResult {
   };
   totalIssues: number;
   clean: boolean;
+  /** True only when every category either ran successfully or was not-configured (never errored). */
+  complete: boolean;
+  /** True when at least one category that should have run failed to. */
+  degraded: boolean;
   narrative: string | null;
   narrativeUnavailable: boolean;
 }
@@ -82,9 +94,13 @@ export function registerBriefingCommand(program: Command): void {
         if (cached) {
           try {
             const parsed = JSON.parse(cached) as BriefingResult;
-            db.close();
-            printBriefing(parentOpts.json, { ...parsed, fresh: false });
-            return;
+            if (isCacheEntryUsable(parsed)) {
+              db.close();
+              const cachedResult = { ...parsed, fresh: false };
+              process.exitCode = briefingExitCode(cachedResult);
+              printBriefing(parentOpts.json, cachedResult);
+              return;
+            }
           } catch {
             // Corrupt cache entry — fall through to a live run.
           }
@@ -93,8 +109,13 @@ export function registerBriefingCommand(program: Command): void {
 
       const model: string = options.model ?? config.defaults?.captionModel ?? 'moondream';
       const result = await runBriefing(site, db, model);
-      db.setPref(site.name, CACHE_KEY, JSON.stringify(result));
+      // Don't memoize a degraded/failed run — a transient network blip
+      // shouldn't be cached and served back as the site's health forever.
+      if (result.complete) {
+        db.setPref(site.name, CACHE_KEY, JSON.stringify(result));
+      }
       db.close();
+      process.exitCode = briefingExitCode(result);
       printBriefing(parentOpts.json, result);
     });
 }
@@ -123,12 +144,17 @@ export async function runBriefing(
   };
 
   const totalIssues = Object.values(categories).reduce((sum, c) => sum + c.count, 0);
+  const complete = Object.values(categories).every(
+    (c) => c.available || c.unavailableKind === 'not-configured',
+  );
+  const degraded = !complete;
 
   const { narrative, narrativeUnavailable } = await synthesizeNarrative(
     site.name,
     categories,
     totalIssues,
     model,
+    degraded,
   );
 
   return {
@@ -137,10 +163,35 @@ export async function runBriefing(
     fresh: true,
     categories,
     totalIssues,
-    clean: totalIssues === 0,
+    clean: totalIssues === 0 && complete,
+    complete,
+    degraded,
     narrative,
     narrativeUnavailable,
   };
+}
+
+/**
+ * Non-zero only on total failure — every category unavailable and at least
+ * one of those was a genuine error (not just "not configured"). A partial
+ * degradation (e.g. a11y down, media checks fine) stays exit 0 but is
+ * flagged via `degraded: true` in the JSON output.
+ */
+function briefingExitCode(result: BriefingResult): number {
+  const cats = Object.values(result.categories);
+  const totalFailure =
+    cats.every((c) => !c.available) && cats.some((c) => c.unavailableKind === 'error');
+  return totalFailure ? ExitCode.NetworkError : ExitCode.Success;
+}
+
+/**
+ * A cache entry written before `complete`/`degraded` existed can't be
+ * trusted to reflect completeness correctly (old entries predate the
+ * distinction and would read as either falsely complete or falsely
+ * incomplete). Treat it as a cache miss instead.
+ */
+export function isCacheEntryUsable(parsed: BriefingResult): boolean {
+  return typeof parsed.complete === 'boolean' && typeof parsed.degraded === 'boolean';
 }
 
 // -- Category checks -----------------------------------------------------------
@@ -164,6 +215,7 @@ export async function runMediaChecks(
       count: 0,
       examples: [],
       available: false,
+      unavailableKind: 'error',
       unavailableReason: err instanceof Error ? err.message : String(err),
     };
     return {
@@ -178,7 +230,7 @@ export async function runMediaChecks(
   // actually depend on it.
   let unoptimized: CategorySummary;
   try {
-    const processedIds = db.listProcessedWpIds(siteName);
+    const processedIds = db.listProcessedWpIds(siteName, OPTIMIZE_OPERATIONS);
     const unoptimizedItems = items.filter((i) => !processedIds.has(i.id));
     unoptimized = {
       count: unoptimizedItems.length,
@@ -190,6 +242,7 @@ export async function runMediaChecks(
       count: 0,
       examples: [],
       available: false,
+      unavailableKind: 'error',
       unavailableReason: err instanceof Error ? err.message : String(err),
     };
   }
@@ -219,6 +272,7 @@ export async function runMediaChecks(
       count: 0,
       examples: [],
       available: false,
+      unavailableKind: 'error',
       unavailableReason: err instanceof Error ? err.message : String(err),
     };
   }
@@ -237,16 +291,32 @@ export async function runA11yCheck(site: SiteConfig): Promise<CategorySummary> {
       status: 'publish',
       limit: A11Y_SCAN_LIMIT,
     });
+
+    if (result.errors.length > 0) {
+      return {
+        count: 0,
+        examples: [],
+        available: false,
+        unavailableKind: 'error',
+        unavailableReason: `${result.errors.length} request(s) failed — could not scan content for accessibility issues.`,
+      };
+    }
+
     return {
       count: result.findings.length,
       examples: result.findings.slice(0, 5).map((f) => `"${f.postTitle}": ${f.detail}`),
       available: true,
+      note:
+        result.truncated.length > 0
+          ? `Scan reached the ${A11Y_SCAN_LIMIT}-post limit before finishing: ${result.truncated.join(', ')}.`
+          : undefined,
     };
   } catch (err) {
     return {
       count: 0,
       examples: [],
       available: false,
+      unavailableKind: 'error',
       unavailableReason: err instanceof Error ? err.message : String(err),
     };
   }
@@ -259,6 +329,7 @@ export async function runOrphansCheck(resolver: AdapterResolver): Promise<Catego
       count: 0,
       examples: [],
       available: false,
+      unavailableKind: 'not-configured',
       unavailableReason: 'Requires WP-CLI over SSH — configure SSH access for this site to enable.',
     };
   }
@@ -284,6 +355,7 @@ export async function runOrphansCheck(resolver: AdapterResolver): Promise<Catego
       count: 0,
       examples: [],
       available: false,
+      unavailableKind: 'error',
       unavailableReason: err instanceof Error ? err.message : String(err),
     };
   } finally {
@@ -301,9 +373,18 @@ export async function synthesizeNarrative(
   categories: BriefingResult['categories'],
   totalIssues: number,
   model: string,
+  degraded = false,
 ): Promise<{ narrative: string | null; narrativeUnavailable: boolean }> {
-  // A clean result doesn't need an LLM to say so.
+  // A clean result doesn't need an LLM to say so — but only if every check
+  // actually ran. A degraded run with 0 counted issues means the checks that
+  // failed contributed nothing, not that they found nothing.
   if (totalIssues === 0) {
+    if (degraded) {
+      return {
+        narrative: `Could not complete the briefing for '${siteName}' — one or more checks failed to run (see the unavailable categories above), so nothing can be concluded about the site's health.`,
+        narrativeUnavailable: false,
+      };
+    }
     return {
       narrative: `Everything checked out clean on '${siteName}' — no unoptimized images, missing alt text, broken references, orphaned files, or accessibility issues found.`,
       narrativeUnavailable: false,
@@ -370,11 +451,18 @@ function printBriefing(json: boolean, result: BriefingResult): void {
 
   info(`\n  Total issues: ${result.totalIssues}`);
 
+  if (!result.complete) {
+    info(
+      '\n  ⚠ Briefing incomplete — some checks could not run (see "unavailable" above); the site may not actually be clean.',
+    );
+  }
+
   if (result.narrative) {
     info(`\n${result.narrative}`);
   } else if (result.narrativeUnavailable) {
-    info(
-      '\n  (Narrative unavailable — Ollama is not running. Structured summary above is complete.)',
-    );
+    const completeness = result.complete
+      ? 'Structured summary above is complete.'
+      : 'Structured summary above is incomplete — see the warning above.';
+    info(`\n  (Narrative unavailable — Ollama is not running. ${completeness})`);
   }
 }

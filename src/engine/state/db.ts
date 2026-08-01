@@ -9,6 +9,13 @@ import { Database } from 'bun:sqlite';
 
 import { INITIAL_SCHEMA, MIGRATIONS, type Migration, SCHEMA_VERSION } from './schema.ts';
 
+/**
+ * Operations that count as "optimized" for `--unoptimized` selection. Passed to
+ * `listProcessedWpIds` so that a caption/classify/tag/rename pass doesn't make an
+ * image look "already optimized".
+ */
+export const OPTIMIZE_OPERATIONS = ['optimize', 'convert', 'resize'] as const;
+
 export interface AttachmentRecord {
   siteName: string;
   wpId: number;
@@ -147,7 +154,7 @@ export class SiteDb {
    * List attachment IDs that have been successfully processed.
    *
    * Pass `operations` to restrict to specific operation types — e.g.
-   * `['optimize', 'convert', 'resize']` so that a caption/classify/rename pass
+   * `OPTIMIZE_OPERATIONS` so that a caption/classify/rename pass
    * doesn't make an image look "already optimized" to `optimize --unoptimized`.
    */
   listProcessedWpIds(siteName: string, operations?: readonly string[]): Set<number> {
