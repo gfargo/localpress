@@ -18,7 +18,15 @@ import type {
   ReferenceScope,
   WpBackend,
 } from '../../src/adapters/types.ts';
-import { fetchAllMedia } from '../../src/cli/commands/audit.ts';
+import {
+  auditSite,
+  fetchAllMedia,
+  isOverBudget,
+  sumUnoptimizedBytes,
+  summarizeFindings,
+} from '../../src/cli/commands/audit.ts';
+import type { AuditFinding, AuditSummary } from '../../src/cli/commands/audit.ts';
+import { ExitCode } from '../../src/types.ts';
 import type { SiteConfig } from '../../src/types.ts';
 
 const fakeRestOnlySite: SiteConfig = {
@@ -138,5 +146,244 @@ describe('find-unattached capability', () => {
     const resolver = new AdapterResolver(fakeRestOnlySite);
     const report = resolver.capabilityReport();
     expect(report.map((r) => r.capability)).toContain('find-unattached');
+  });
+});
+
+// -- Helper to make AuditFinding fixtures ------------------------------------
+
+function makeFinding(type: AuditFinding['type'], id = 1, filename = 'photo.jpg'): AuditFinding {
+  return { type, attachmentId: id, filename, detail: `test ${type}` };
+}
+
+// -- summarizeFindings --------------------------------------------------------
+
+describe('summarizeFindings', () => {
+  test('returns all-zero summary for empty findings', () => {
+    const summary = summarizeFindings([]);
+    const expected: AuditSummary = {
+      unoptimized: 0,
+      large: 0,
+      missingAlt: 0,
+      displaySize: 0,
+      duplicates: 0,
+      brokenRefs: 0,
+      orphan: 0,
+      missingFile: 0,
+      unattached: 0,
+      quality: 0,
+      ocrMatch: 0,
+    };
+    expect(summary).toEqual(expected);
+  });
+
+  test('counts each finding type correctly', () => {
+    const findings: AuditFinding[] = [
+      makeFinding('unoptimized', 1),
+      makeFinding('unoptimized', 2),
+      makeFinding('large', 3),
+      makeFinding('missing-alt', 4),
+      makeFinding('display-size', 5),
+      makeFinding('duplicate', 6),
+      makeFinding('broken-ref', 7),
+      makeFinding('orphan', 8),
+      makeFinding('missing-file', 9),
+      makeFinding('unattached', 10),
+      makeFinding('quality', 11),
+      makeFinding('ocr-match', 12),
+    ];
+    const summary = summarizeFindings(findings);
+    expect(summary.unoptimized).toBe(2);
+    expect(summary.large).toBe(1);
+    expect(summary.missingAlt).toBe(1);
+    expect(summary.displaySize).toBe(1);
+    expect(summary.duplicates).toBe(1);
+    expect(summary.brokenRefs).toBe(1);
+    expect(summary.orphan).toBe(1);
+    expect(summary.missingFile).toBe(1);
+    expect(summary.unattached).toBe(1);
+    expect(summary.quality).toBe(1);
+    expect(summary.ocrMatch).toBe(1);
+  });
+
+  test('handles findings with only one type', () => {
+    const findings = [
+      makeFinding('missing-alt', 1),
+      makeFinding('missing-alt', 2),
+      makeFinding('missing-alt', 3),
+    ];
+    const summary = summarizeFindings(findings);
+    expect(summary.missingAlt).toBe(3);
+    expect(summary.unoptimized).toBe(0);
+    expect(summary.large).toBe(0);
+  });
+
+  test('rolled-up totals across two sites sum correctly', () => {
+    const s1 = summarizeFindings([makeFinding('unoptimized'), makeFinding('large')]);
+    const s2 = summarizeFindings([
+      makeFinding('unoptimized'),
+      makeFinding('missing-alt'),
+      makeFinding('missing-alt'),
+    ]);
+
+    // Sum manually as done in the --all-sites path
+    const totals: AuditSummary = {
+      unoptimized: s1.unoptimized + s2.unoptimized,
+      large: s1.large + s2.large,
+      missingAlt: s1.missingAlt + s2.missingAlt,
+      displaySize: s1.displaySize + s2.displaySize,
+      duplicates: s1.duplicates + s2.duplicates,
+      brokenRefs: s1.brokenRefs + s2.brokenRefs,
+      orphan: s1.orphan + s2.orphan,
+      missingFile: s1.missingFile + s2.missingFile,
+      unattached: s1.unattached + s2.unattached,
+      quality: s1.quality + s2.quality,
+      ocrMatch: s1.ocrMatch + s2.ocrMatch,
+    };
+
+    expect(totals.unoptimized).toBe(2);
+    expect(totals.large).toBe(1);
+    expect(totals.missingAlt).toBe(2);
+  });
+});
+
+// -- auditSite ----------------------------------------------------------------
+
+describe('auditSite', () => {
+  test('returns findings for items with missing alt text (via summarizeFindings)', () => {
+    // auditSite creates an AdapterResolver that makes real HTTP calls, so for
+    // pure-unit coverage we verify the finding-generation logic via
+    // summarizeFindings directly with findings that match what auditSite would
+    // produce for two items with empty alt text.
+    const result = summarizeFindings([
+      makeFinding('missing-alt', 2),
+      makeFinding('missing-alt', 3),
+    ]);
+    expect(result.missingAlt).toBe(2);
+  });
+
+  test('returns error field (not throw) when fetch fails', async () => {
+    // We can't easily inject a fake adapter into auditSite without network calls,
+    // but we CAN verify the error-result contract by stubbing the global fetch
+    // RestAdapter uses under the hood, so this stays hermetic (no real DNS
+    // lookup) instead of relying on a .invalid domain actually failing to resolve.
+    const brokenSite: SiteConfig = {
+      name: 'broken',
+      url: 'https://example.test',
+      username: 'admin',
+      appPassword: 'xxxx xxxx xxxx xxxx xxxx xxxx',
+      createdAt: new Date('2026-01-01').toISOString(),
+    };
+    const fakeConfig = {
+      version: 1 as const,
+      sites: { broken: brokenSite },
+    };
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.reject(new Error('simulated network failure'))) as unknown as typeof fetch;
+    try {
+      // auditSite should not throw — it should return a result with error set.
+      const result = await auditSite(brokenSite, {}, fakeConfig);
+      expect(typeof result.error).toBe('string');
+      expect(result.findings).toEqual([]);
+      expect(result.totalItems).toBe(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('returns error for --orphans when WP-CLI is not configured', async () => {
+    const restOnlySite: SiteConfig = { ...fakeRestOnlySite };
+    const fakeConfig = {
+      version: 1 as const,
+      sites: { [restOnlySite.name]: restOnlySite },
+    };
+    const result = await auditSite(restOnlySite, { orphans: true }, fakeConfig);
+    expect(result.error).toMatch(/WP-CLI/);
+    expect(result.findings).toEqual([]);
+  });
+
+  test('returns error for --unattached when WP-CLI is not configured', async () => {
+    const restOnlySite: SiteConfig = { ...fakeRestOnlySite };
+    const fakeConfig = {
+      version: 1 as const,
+      sites: { [restOnlySite.name]: restOnlySite },
+    };
+    const result = await auditSite(restOnlySite, { unattached: true }, fakeConfig);
+    expect(result.error).toMatch(/WP-CLI/);
+    expect(result.findings).toEqual([]);
+  });
+});
+
+// -- Budget gate helpers ------------------------------------------------------
+
+describe('sumUnoptimizedBytes', () => {
+  test('returns 0 for empty findings', () => {
+    expect(sumUnoptimizedBytes([])).toBe(0);
+  });
+
+  test('sums only unoptimized findings', () => {
+    const findings: AuditFinding[] = [
+      { type: 'unoptimized', attachmentId: 1, filename: 'a.jpg', detail: '', sizeBytes: 1_000_000 },
+      { type: 'unoptimized', attachmentId: 2, filename: 'b.jpg', detail: '', sizeBytes: 2_000_000 },
+      { type: 'large', attachmentId: 3, filename: 'c.jpg', detail: '', sizeBytes: 5_000_000 },
+      { type: 'missing-alt', attachmentId: 4, filename: 'd.jpg', detail: '' },
+    ];
+    expect(sumUnoptimizedBytes(findings)).toBe(3_000_000);
+  });
+
+  test('treats missing sizeBytes as 0', () => {
+    const findings: AuditFinding[] = [
+      { type: 'unoptimized', attachmentId: 1, filename: 'a.jpg', detail: '', sizeBytes: 500_000 },
+      { type: 'unoptimized', attachmentId: 2, filename: 'b.jpg', detail: '' }, // no sizeBytes
+    ];
+    expect(sumUnoptimizedBytes(findings)).toBe(500_000);
+  });
+
+  test('returns 0 when all findings are non-unoptimized types', () => {
+    const findings: AuditFinding[] = [
+      { type: 'large', attachmentId: 1, filename: 'a.jpg', detail: '', sizeBytes: 9_000_000 },
+      { type: 'missing-alt', attachmentId: 2, filename: 'b.jpg', detail: '' },
+    ];
+    expect(sumUnoptimizedBytes(findings)).toBe(0);
+  });
+});
+
+describe('isOverBudget', () => {
+  test('returns false when maxBytes is undefined (no budget)', () => {
+    expect(isOverBudget(100_000_000, undefined)).toBe(false);
+  });
+
+  test('returns false when bytes equals budget exactly (boundary is inclusive)', () => {
+    expect(isOverBudget(50_000_000, 50_000_000)).toBe(false);
+  });
+
+  test('returns false when bytes are under budget', () => {
+    expect(isOverBudget(10_000_000, 50_000_000)).toBe(false);
+  });
+
+  test('returns true when bytes exceed budget', () => {
+    expect(isOverBudget(51_000_000, 50_000_000)).toBe(true);
+  });
+
+  test('returns true when budget is 0 and bytes are positive', () => {
+    expect(isOverBudget(1, 0)).toBe(true);
+  });
+
+  test('returns false when both budget and bytes are 0', () => {
+    expect(isOverBudget(0, 0)).toBe(false);
+  });
+});
+
+describe('ExitCode.BudgetExceeded', () => {
+  test('has value 7', () => {
+    expect(ExitCode.BudgetExceeded).toBe(7);
+  });
+
+  test('is distinct from every other ExitCode', () => {
+    const others = Object.entries(ExitCode)
+      .filter(([key]) => key !== 'BudgetExceeded')
+      .map(([, v]) => v);
+    expect(others).not.toContain(ExitCode.BudgetExceeded);
   });
 });

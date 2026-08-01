@@ -14,3 +14,15 @@ export function parseIntOption(flagLabel: string) {
     return parsed;
   };
 }
+
+/** Like `parseIntOption`, but also rejects negative values. */
+export function parseNonNegativeIntOption(flagLabel: string) {
+  const parseAsInt = parseIntOption(flagLabel);
+  return (value: string): number => {
+    const parsed = parseAsInt(value);
+    if (parsed < 0) {
+      throw new InvalidArgumentError(`'${value}' must not be negative for ${flagLabel}.`);
+    }
+    return parsed;
+  };
+}

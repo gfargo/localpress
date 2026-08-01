@@ -18,7 +18,9 @@ import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { MediaItem, WpBackend } from '../../adapters/types.ts';
 import { OPTIMIZE_OPERATIONS, SiteDb } from '../../engine/state/db.ts';
-import { parseIntOption } from '../utils/args.ts';
+import { ExitCode } from '../../types.ts';
+import type { Config, SiteConfig } from '../../types.ts';
+import { parseIntOption, parseNonNegativeIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -42,12 +44,122 @@ export interface AuditFinding {
   attachmentId: number;
   filename: string;
   detail: string;
+  /**
+   * File size in bytes at time of audit.  Populated for `unoptimized` and
+   * `large` findings when the REST API returns a size.  Used by the
+   * `--max-unoptimized-bytes` budget gate.
+   */
+  sizeBytes?: number;
   /** For display-size: the largest registered WP size dimensions. */
   largestSize?: { width: number; height: number; name: string };
   /** For duplicates: the other attachment IDs in the group. */
   duplicateOf?: number[];
   /** For broken-refs: the post IDs where the broken URL was found. */
   referencedIn?: number[];
+}
+
+/** Per-type finding counts produced by summarizeFindings(). */
+export interface AuditSummary {
+  unoptimized: number;
+  large: number;
+  missingAlt: number;
+  displaySize: number;
+  duplicates: number;
+  brokenRefs: number;
+  orphan: number;
+  missingFile: number;
+  unattached: number;
+  quality: number;
+  ocrMatch: number;
+}
+
+/** Result of auditing a single site (success or error). */
+export interface SiteAuditResult {
+  site: string;
+  url?: string;
+  totalItems: number;
+  prunedAttachments: number;
+  findings: AuditFinding[];
+  summary: AuditSummary;
+  /** Set when the site could not be audited (fetch failure, missing capability, etc.). */
+  error?: string;
+}
+
+/** Produce a per-type count summary from a findings array. */
+export function summarizeFindings(findings: AuditFinding[]): AuditSummary {
+  return {
+    unoptimized: findings.filter((f) => f.type === 'unoptimized').length,
+    large: findings.filter((f) => f.type === 'large').length,
+    missingAlt: findings.filter((f) => f.type === 'missing-alt').length,
+    displaySize: findings.filter((f) => f.type === 'display-size').length,
+    duplicates: findings.filter((f) => f.type === 'duplicate').length,
+    brokenRefs: findings.filter((f) => f.type === 'broken-ref').length,
+    orphan: findings.filter((f) => f.type === 'orphan').length,
+    missingFile: findings.filter((f) => f.type === 'missing-file').length,
+    unattached: findings.filter((f) => f.type === 'unattached').length,
+    quality: findings.filter((f) => f.type === 'quality').length,
+    ocrMatch: findings.filter((f) => f.type === 'ocr-match').length,
+  };
+}
+
+/** Sum two AuditSummary objects (for rolling up across sites). */
+function addSummaries(a: AuditSummary, b: AuditSummary): AuditSummary {
+  return {
+    unoptimized: a.unoptimized + b.unoptimized,
+    large: a.large + b.large,
+    missingAlt: a.missingAlt + b.missingAlt,
+    displaySize: a.displaySize + b.displaySize,
+    duplicates: a.duplicates + b.duplicates,
+    brokenRefs: a.brokenRefs + b.brokenRefs,
+    orphan: a.orphan + b.orphan,
+    missingFile: a.missingFile + b.missingFile,
+    unattached: a.unattached + b.unattached,
+    quality: a.quality + b.quality,
+    ocrMatch: a.ocrMatch + b.ocrMatch,
+  };
+}
+
+const ZERO_SUMMARY: AuditSummary = {
+  unoptimized: 0,
+  large: 0,
+  missingAlt: 0,
+  displaySize: 0,
+  duplicates: 0,
+  brokenRefs: 0,
+  orphan: 0,
+  missingFile: 0,
+  unattached: 0,
+  quality: 0,
+  ocrMatch: 0,
+};
+
+/**
+ * Sum the `sizeBytes` of all `unoptimized` findings.
+ *
+ * Findings without a `sizeBytes` value (REST API didn't return one) contribute
+ * 0 — the total can under-count when the API omits sizes, which is documented
+ * as a known limitation.
+ *
+ * @internal exported for unit testing
+ */
+export function sumUnoptimizedBytes(findings: AuditFinding[]): number {
+  return findings
+    .filter((f) => f.type === 'unoptimized')
+    .reduce((acc, f) => acc + (f.sizeBytes ?? 0), 0);
+}
+
+/**
+ * Return `true` when the given byte total exceeds the budget threshold.
+ *
+ * Returns `false` when `maxBytes` is `undefined` (no budget set), when the
+ * total is exactly equal to the budget (boundary is inclusive), or when the
+ * budget is zero and the total is also zero.
+ *
+ * @internal exported for unit testing
+ */
+export function isOverBudget(bytes: number, maxBytes: number | undefined): boolean {
+  if (maxBytes === undefined) return false;
+  return bytes > maxBytes;
 }
 
 export function registerAuditCommand(program: Command): void {
@@ -78,268 +190,179 @@ export function registerAuditCommand(program: Command): void {
       '--ocr-text <term>',
       'flag images that visually contain the supplied text (case-insensitive, via Ollama vision; slow)',
     )
+    .option(
+      '--all-sites',
+      'run the audit across every configured site and print one rolled-up report',
+    )
+    .option(
+      '--max-unoptimized-bytes <bytes>',
+      'CI gate: exit non-zero (code 7) if total unoptimized bytes exceed this budget (e.g. 50000000 for 50 MB)',
+      parseNonNegativeIntOption('--max-unoptimized-bytes'),
+    )
     .action(async (options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
-      const site = resolveActiveSite(config, parentOpts.site);
-      const resolver = new AdapterResolver(site);
-      const adapter = resolver.resolve('list');
 
-      // If no specific check is requested, run all REST-based checks.
-      const runAll =
-        !options.unoptimized &&
-        !options.large &&
-        !options.unattached &&
-        !options.missingAlt &&
-        !options.orphans &&
-        !options.displaySize &&
-        !options.duplicates &&
-        !options.brokenRefs &&
-        !options.quality &&
-        !options.ocrText;
-      // Note: --quality and --ocrText are NOT included in runAll behavior —
-      // they require Ollama and are slow (~10s/image). They must be opted into
-      // explicitly.
-
-      const findings: AuditFinding[] = [];
-      const threshold = options.threshold ?? DEFAULT_THRESHOLD;
-
-      // -- Orphan scan (WP-CLI only) ------------------------------------------
-      if (options.orphans) {
-        const pruneAdapter = resolver.tryResolve('prune-orphans');
-        if (!pruneAdapter) {
-          error('--orphans requires WP-CLI over SSH. Configure SSH access for this site.');
-          process.exit(6);
+      // -- All-sites mode: run audit on every configured site -----------------
+      if (options.allSites) {
+        const sites = Object.values(config.sites) as SiteConfig[];
+        if (sites.length === 0) {
+          error('No sites configured. Run `localpress init` to add one.');
+          process.exit(ExitCode.ConfigError);
         }
 
-        info('Scanning for orphan files via WP-CLI...');
-        try {
-          const pruneResult = await pruneAdapter.pruneOrphans();
-          for (const f of pruneResult.orphanFiles) {
-            findings.push({
-              type: 'orphan',
-              attachmentId: 0,
-              filename: f,
-              detail: 'File on disk with no matching attachment in the database',
-            });
+        // Run sequentially: keeps progress output legible and avoids hammering
+        // multiple WP hosts simultaneously.
+        const results: SiteAuditResult[] = [];
+        for (const site of sites) {
+          info(`\n── ${site.name} ──────────────────────────────`);
+          const result = await auditSite(site, options, config);
+          results.push(result);
+          if (result.error) {
+            // auditSite() encodes the exit code as an "exitN: " prefix on the
+            // error string (see the single-site path below) — strip it here too
+            // so users never see the internal marker.
+            error(`  ${site.name}: ${result.error.replace(/^exit\d+: /, '')}`);
           }
-          for (const id of pruneResult.missingFiles) {
-            findings.push({
-              type: 'missing-file',
-              attachmentId: id,
-              filename: '(missing)',
-              detail: 'Attachment registered in DB but file is missing from disk',
-            });
+        }
+
+        const totals = results.reduce((acc, r) => addSummaries(acc, r.summary), {
+          ...ZERO_SUMMARY,
+        });
+        // auditSite() never returns findings alongside an error (it returns
+        // zeroResult on failure), so `!r.error` is redundant today — kept
+        // explicit in case that contract ever changes.
+        const sitesWithIssues = results.filter((r) => !r.error && r.findings.length > 0).length;
+        const sitesErrored = results.filter((r) => !!r.error).length;
+        const totalUnoptBytes = results.reduce((n, r) => n + sumUnoptimizedBytes(r.findings), 0);
+        const budgetOverrun =
+          options.maxUnoptimizedBytes !== undefined &&
+          isOverBudget(totalUnoptBytes, options.maxUnoptimizedBytes);
+
+        if (parentOpts.json) {
+          printJson({
+            sites: results,
+            totals,
+            sitesWithIssues,
+            sitesErrored,
+            budget:
+              options.maxUnoptimizedBytes !== undefined
+                ? {
+                    maxUnoptimizedBytes: options.maxUnoptimizedBytes,
+                    unoptimizedBytes: totalUnoptBytes,
+                    overBudget: budgetOverrun,
+                  }
+                : undefined,
+          });
+        } else {
+          // Print per-site summary
+          info('\n── Totals ───────────────────────────────────────');
+          info(`  Sites audited:     ${results.length}`);
+          info(`  Sites with issues: ${sitesWithIssues}`);
+          if (sitesErrored > 0) info(`  Sites errored:     ${sitesErrored}`);
+          const totalFindings = results.reduce((n, r) => n + r.findings.length, 0);
+          if (totalFindings === 0 && sitesErrored === 0) {
+            info('  No issues found across all sites. 🎉');
+          } else {
+            const threshold = options.threshold ?? DEFAULT_THRESHOLD;
+            const groups: Array<{ key: keyof AuditSummary; label: string }> = [
+              { key: 'unoptimized', label: 'Unoptimized' },
+              { key: 'large', label: `Large files (≥${formatBytes(threshold)})` },
+              { key: 'missingAlt', label: 'Missing alt text' },
+              { key: 'displaySize', label: 'Oversized for display context' },
+              { key: 'duplicates', label: 'Perceptual duplicates' },
+              { key: 'brokenRefs', label: 'Broken references in content' },
+              { key: 'orphan', label: 'Orphan files (no DB record)' },
+              { key: 'missingFile', label: 'Missing files (DB record, no file)' },
+              { key: 'unattached', label: 'Unattached (no parent post, no references)' },
+              { key: 'quality', label: 'Quality issues' },
+              { key: 'ocrMatch', label: 'OCR matches' },
+            ];
+            for (const { key, label } of groups) {
+              if (totals[key] > 0) {
+                info(`  ${label}: ${totals[key]}`);
+              }
+            }
+            info(`\n  Total findings across all sites: ${totalFindings}`);
           }
-          if (pruneResult.reclaimableBytes > 0) {
+          if (options.maxUnoptimizedBytes !== undefined) {
+            const status = budgetOverrun ? '❌ OVER BUDGET' : '✅ within budget';
             info(
-              `  Found ${pruneResult.orphanFiles.length} orphan file(s), ${formatBytes(pruneResult.reclaimableBytes)} reclaimable.`,
+              `\n  Unoptimized bytes: ${formatBytes(totalUnoptBytes)} / ${formatBytes(options.maxUnoptimizedBytes)} — ${status}`,
             );
           }
-        } catch (err) {
-          warn(`Orphan scan failed: ${err instanceof Error ? err.message : String(err)}`);
         }
-      }
 
-      // -- Unattached scan capability check (WP-CLI only) ----------------------
-      // The actual scan runs after allItems is fetched (needs it for filename
-      // lookups), but we fail fast here if WP-CLI isn't configured.
-      let unattachedAdapter: WpBackend | null = null;
-      if (options.unattached) {
-        unattachedAdapter = resolver.tryResolve('find-unattached');
-        if (!unattachedAdapter) {
-          error('--unattached requires WP-CLI over SSH. Configure SSH access for this site.');
-          process.exit(6);
+        // Budget check must run BEFORE the generic-issues exit so the distinct
+        // exit code (7) is not masked by GenericError (1).
+        if (budgetOverrun) {
+          const budget = options.maxUnoptimizedBytes ?? 0;
+          error(
+            `Unoptimized bytes (${formatBytes(totalUnoptBytes)}) exceed budget (${formatBytes(budget)}).`,
+          );
+          process.exit(ExitCode.BudgetExceeded);
         }
-      }
 
-      // -- Fetch all media items -----------------------------------------------
-      const scanStartedAt = Date.now();
-      let allItems: MediaItem[];
-      try {
-        allItems = await fetchAllMedia(adapter);
-      } catch (err) {
-        error(err instanceof Error ? err.message : String(err));
-        process.exit(4);
+        // Intentionally asymmetric with the single-site path below, which
+        // exits 0 even when findings are present: --all-sites is meant to be
+        // scriptable/CI-friendly (per the acceptance criteria), so a non-zero
+        // exit here signals "issues found" without changing existing
+        // single-site behavior.
+        if (sitesErrored > 0 || sitesWithIssues > 0) {
+          process.exit(ExitCode.GenericError);
+        }
         return;
       }
 
-      if (allItems.length === 0 && findings.length === 0) {
-        info('No media items found in the library.');
+      // -- Single-site mode (original behavior, unchanged) --------------------
+      const site = resolveActiveSite(config, parentOpts.site);
+      const result = await auditSite(site, options, config);
+
+      if (result.error) {
+        // Preserve original per-exit-code behavior for recoverable failures.
+        // auditSite encodes the exit code in the error prefix.
+        error(result.error.replace(/^exit\d+: /, ''));
+        if (result.error.startsWith('exit6:')) {
+          process.exit(ExitCode.CapabilityUnavailable);
+        }
+        process.exit(ExitCode.NetworkError);
         return;
       }
 
-      // Sync the DB's attachment cache to what this full fetch just saw, then
-      // prune rows for attachments that no longer exist remotely — otherwise
-      // `stats`' getLibraryOverview() keeps counting deleted attachments forever.
-      // Also load processed IDs for the --unoptimized check.
-      let processedIds = new Set<number>();
-      let prunedCount = 0;
-      try {
-        const db = SiteDb.init(getSiteDbPath(site.name));
-        db.ensureSite(site.name, site.url);
-        for (const item of allItems) {
-          db.upsertAttachment({
-            siteName: site.name,
-            wpId: item.id,
-            sourceUrl: item.url,
-            sourceHash: null,
-            sizeBytes: item.sizeBytes ?? null,
-            width: item.width ?? null,
-            height: item.height ?? null,
-            mimeType: item.mimeType,
-            lastSeenAt: scanStartedAt,
-          });
-        }
-        prunedCount = db.pruneStaleAttachments(site.name, scanStartedAt);
-        if (runAll || options.unoptimized) {
-          processedIds = db.listProcessedWpIds(site.name, OPTIMIZE_OPERATIONS);
-        }
-        db.close();
-      } catch (err) {
-        warn(
-          `Failed to sync attachment records: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+      const { findings, totalItems, prunedAttachments: prunedCount } = result;
+      const unoptBytes = sumUnoptimizedBytes(findings);
+      const budgetOverrunSingle =
+        options.maxUnoptimizedBytes !== undefined &&
+        isOverBudget(unoptBytes, options.maxUnoptimizedBytes);
 
-      if (prunedCount > 0) {
-        info(`Pruned ${prunedCount} attachment record(s) no longer present remotely.`);
-      }
-
-      for (const item of allItems) {
-        // --unoptimized
-        if ((runAll || options.unoptimized) && !processedIds.has(item.id)) {
-          findings.push({
-            type: 'unoptimized',
-            attachmentId: item.id,
-            filename: item.filename,
-            detail: 'Not yet processed by localpress',
-          });
-        }
-
-        // --large
-        if ((runAll || options.large) && item.sizeBytes && item.sizeBytes >= threshold) {
-          findings.push({
-            type: 'large',
-            attachmentId: item.id,
-            filename: item.filename,
-            detail: `${formatBytes(item.sizeBytes)} (threshold: ${formatBytes(threshold)})`,
-          });
-        }
-
-        // --missing-alt
-        if ((runAll || options.missingAlt) && (!item.altText || item.altText.trim() === '')) {
-          findings.push({
-            type: 'missing-alt',
-            attachmentId: item.id,
-            filename: item.filename,
-            detail: 'No alt text set',
-          });
-        }
-
-        // --display-size: compare source dimensions against largest registered WP size
-        if ((runAll || options.displaySize) && item.width && item.height && item.sizes) {
-          const largestSize = findLargestRegisteredSize(item.sizes);
-          if (largestSize) {
-            const sourcePixels = item.width * item.height;
-            const displayPixels = largestSize.width * largestSize.height;
-            if (displayPixels > 0 && sourcePixels / displayPixels >= DISPLAY_SIZE_RATIO) {
-              const ratio = (sourcePixels / displayPixels).toFixed(1);
-              findings.push({
-                type: 'display-size',
-                attachmentId: item.id,
-                filename: item.filename,
-                detail:
-                  `Source is ${item.width}×${item.height} but largest registered size is ` +
-                  `${largestSize.width}×${largestSize.height} (${largestSize.name}) — ` +
-                  `${ratio}× oversized`,
-                largestSize: {
-                  width: largestSize.width,
-                  height: largestSize.height,
-                  name: largestSize.name,
-                },
-              });
-            }
-          }
-        }
-      }
-
-      // -- Unattached scan (WP-CLI only) ---------------------------------------
-      if (options.unattached && unattachedAdapter) {
-        info('Scanning for unattached media via WP-CLI (this may be slow)...');
-        try {
-          const unattachedIds = await unattachedAdapter.findUnattached();
-          const itemsById = new Map(allItems.map((i) => [i.id, i]));
-          for (const id of unattachedIds) {
-            const item = itemsById.get(id);
-            findings.push({
-              type: 'unattached',
-              attachmentId: id,
-              filename: item?.filename ?? `(attachment ${id})`,
-              detail: 'No parent post and not referenced anywhere in content',
-            });
-          }
-        } catch (err) {
-          warn(`Unattached scan failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-
-      // -- Duplicate detection (dHash via sharp) --------------------------------
-      // Not part of runAll: it downloads every candidate image's full bytes,
-      // which contradicts runAll's "cheap checks only" contract.
-      if (options.duplicates) {
-        const dupeFindings = await detectDuplicates(allItems);
-        findings.push(...dupeFindings);
-      }
-
-      // -- Broken reference detection ------------------------------------------
-      if (options.brokenRefs) {
-        info('Checking for broken attachment references in post content...');
-        const brokenFindings = await detectBrokenRefs(allItems, adapter);
-        findings.push(...brokenFindings);
-      }
-
-      // -- Vision: quality check (slow, per-item Ollama call) ------------------
-      if (options.quality) {
-        const images = allItems.filter((m) => m.mimeType.startsWith('image/'));
-        info(`Vision quality check on ${images.length} image(s) — slow (~10s/image)...`);
-        const effectiveModel: string = config.defaults?.captionModel ?? 'moondream';
-        const qualityFindings = await detectQualityIssues(images, effectiveModel);
-        findings.push(...qualityFindings);
-      }
-
-      // -- Vision: OCR text search (slow, per-item Ollama call) ----------------
-      if (options.ocrText) {
-        const images = allItems.filter((m) => m.mimeType.startsWith('image/'));
-        info(`Vision OCR search for "${options.ocrText}" on ${images.length} image(s) — slow...`);
-        const effectiveModel: string = config.defaults?.captionModel ?? 'moondream';
-        const ocrFindings = await detectOcrMatches(images, options.ocrText, effectiveModel);
-        findings.push(...ocrFindings);
-      }
-
-      // -- Output --------------------------------------------------------------
       if (parentOpts.json) {
         printJson({
           site: site.name,
-          totalItems: allItems.length,
+          totalItems,
           prunedAttachments: prunedCount,
           findings,
-          summary: {
-            unoptimized: findings.filter((f) => f.type === 'unoptimized').length,
-            large: findings.filter((f) => f.type === 'large').length,
-            missingAlt: findings.filter((f) => f.type === 'missing-alt').length,
-            displaySize: findings.filter((f) => f.type === 'display-size').length,
-            duplicates: findings.filter((f) => f.type === 'duplicate').length,
-            brokenRefs: findings.filter((f) => f.type === 'broken-ref').length,
-            orphan: findings.filter((f) => f.type === 'orphan').length,
-            missingFile: findings.filter((f) => f.type === 'missing-file').length,
-            unattached: findings.filter((f) => f.type === 'unattached').length,
-            quality: findings.filter((f) => f.type === 'quality').length,
-            ocrMatch: findings.filter((f) => f.type === 'ocr-match').length,
-          },
+          summary: result.summary,
+          budget:
+            options.maxUnoptimizedBytes !== undefined
+              ? {
+                  maxUnoptimizedBytes: options.maxUnoptimizedBytes,
+                  unoptimizedBytes: unoptBytes,
+                  overBudget: budgetOverrunSingle,
+                }
+              : undefined,
         });
       } else {
-        info(`Audited ${allItems.length} item(s) on '${site.name}':\n`);
+        const threshold = options.threshold ?? DEFAULT_THRESHOLD;
+        if (totalItems === 0 && findings.length === 0) {
+          info('No media items found in the library.');
+          return;
+        }
+
+        if (prunedCount > 0) {
+          info(`Pruned ${prunedCount} attachment record(s) no longer present remotely.`);
+        }
+
+        info(`Audited ${totalItems} item(s) on '${site.name}':\n`);
 
         const groups: Record<string, { label: string; items: AuditFinding[] }> = {
           unoptimized: {
@@ -412,8 +435,291 @@ export function registerAuditCommand(program: Command): void {
             );
           }
         }
+        if (options.maxUnoptimizedBytes !== undefined) {
+          const status = budgetOverrunSingle ? '❌ OVER BUDGET' : '✅ within budget';
+          info(
+            `\n  Unoptimized bytes: ${formatBytes(unoptBytes)} / ${formatBytes(options.maxUnoptimizedBytes)} — ${status}`,
+          );
+        }
+      }
+
+      if (budgetOverrunSingle) {
+        const budget = options.maxUnoptimizedBytes ?? 0;
+        error(
+          `Unoptimized bytes (${formatBytes(unoptBytes)}) exceed budget (${formatBytes(budget)}).`,
+        );
+        process.exit(ExitCode.BudgetExceeded);
       }
     });
+}
+
+// -- Per-site audit logic (extracted for reuse and testability) ---------------
+
+/**
+ * Run the full audit pipeline for a single site.
+ *
+ * Returns a SiteAuditResult. On recoverable failures (fetch error, missing
+ * WP-CLI capability) the `error` field is set and the result is otherwise
+ * zero-filled — no process.exit() is called, so multi-site runs continue.
+ *
+ * @internal exported for unit testing only
+ */
+export async function auditSite(
+  site: SiteConfig,
+  // biome-ignore lint/suspicious/noExplicitAny: options is Commander's parsed object
+  options: Record<string, any>,
+  config: Config,
+): Promise<SiteAuditResult> {
+  const zeroResult: SiteAuditResult = {
+    site: site.name,
+    url: site.url,
+    totalItems: 0,
+    prunedAttachments: 0,
+    findings: [],
+    summary: { ...ZERO_SUMMARY },
+  };
+
+  const resolver = new AdapterResolver(site);
+  const adapter = resolver.resolve('list');
+
+  // If no specific check is requested, run all REST-based checks.
+  const runAll =
+    !options.unoptimized &&
+    !options.large &&
+    !options.unattached &&
+    !options.missingAlt &&
+    !options.orphans &&
+    !options.displaySize &&
+    !options.duplicates &&
+    !options.brokenRefs &&
+    !options.quality &&
+    !options.ocrText;
+  // Note: --quality and --ocrText are NOT included in runAll behavior —
+  // they require Ollama and are slow (~10s/image). They must be opted into explicitly.
+
+  const findings: AuditFinding[] = [];
+  const threshold = options.threshold ?? DEFAULT_THRESHOLD;
+
+  // -- Orphan scan (WP-CLI only) -----------------------------------------------
+  if (options.orphans) {
+    const pruneAdapter = resolver.tryResolve('prune-orphans');
+    if (!pruneAdapter) {
+      return {
+        ...zeroResult,
+        error: 'exit6: --orphans requires WP-CLI over SSH. Configure SSH access for this site.',
+      };
+    }
+
+    info('Scanning for orphan files via WP-CLI...');
+    try {
+      const pruneResult = await pruneAdapter.pruneOrphans();
+      for (const f of pruneResult.orphanFiles) {
+        findings.push({
+          type: 'orphan',
+          attachmentId: 0,
+          filename: f,
+          detail: 'File on disk with no matching attachment in the database',
+        });
+      }
+      for (const id of pruneResult.missingFiles) {
+        findings.push({
+          type: 'missing-file',
+          attachmentId: id,
+          filename: '(missing)',
+          detail: 'Attachment registered in DB but file is missing from disk',
+        });
+      }
+      if (pruneResult.reclaimableBytes > 0) {
+        info(
+          `  Found ${pruneResult.orphanFiles.length} orphan file(s), ${formatBytes(pruneResult.reclaimableBytes)} reclaimable.`,
+        );
+      }
+    } catch (err) {
+      warn(`Orphan scan failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // -- Unattached scan capability check (WP-CLI only) --------------------------
+  // The actual scan runs after allItems is fetched (needs it for filename
+  // lookups), but we fail fast here if WP-CLI isn't configured.
+  let unattachedAdapter: WpBackend | null = null;
+  if (options.unattached) {
+    unattachedAdapter = resolver.tryResolve('find-unattached');
+    if (!unattachedAdapter) {
+      return {
+        ...zeroResult,
+        error: 'exit6: --unattached requires WP-CLI over SSH. Configure SSH access for this site.',
+      };
+    }
+  }
+
+  // -- Fetch all media items ---------------------------------------------------
+  const scanStartedAt = Date.now();
+  let allItems: MediaItem[];
+  try {
+    allItems = await fetchAllMedia(adapter);
+  } catch (err) {
+    return {
+      ...zeroResult,
+      error: `exit4: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  // Sync the DB's attachment cache to what this full fetch just saw, then prune
+  // rows for attachments that no longer exist remotely — otherwise `stats`'
+  // getLibraryOverview() keeps counting deleted attachments forever.
+  // Also load processed IDs for the --unoptimized check.
+  let processedIds = new Set<number>();
+  let prunedCount = 0;
+  try {
+    const db = SiteDb.init(getSiteDbPath(site.name));
+    db.ensureSite(site.name, site.url);
+    for (const item of allItems) {
+      db.upsertAttachment({
+        siteName: site.name,
+        wpId: item.id,
+        sourceUrl: item.url,
+        sourceHash: null,
+        sizeBytes: item.sizeBytes ?? null,
+        width: item.width ?? null,
+        height: item.height ?? null,
+        mimeType: item.mimeType,
+        lastSeenAt: scanStartedAt,
+      });
+    }
+    prunedCount = db.pruneStaleAttachments(site.name, scanStartedAt);
+    if (runAll || options.unoptimized) {
+      processedIds = db.listProcessedWpIds(site.name, OPTIMIZE_OPERATIONS);
+    }
+    db.close();
+  } catch (err) {
+    warn(`Failed to sync attachment records: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (prunedCount > 0) {
+    info(`Pruned ${prunedCount} attachment record(s) no longer present remotely.`);
+  }
+
+  for (const item of allItems) {
+    // --unoptimized
+    if ((runAll || options.unoptimized) && !processedIds.has(item.id)) {
+      findings.push({
+        type: 'unoptimized',
+        attachmentId: item.id,
+        filename: item.filename,
+        detail: 'Not yet processed by localpress',
+        sizeBytes: item.sizeBytes,
+      });
+    }
+
+    // --large
+    if ((runAll || options.large) && item.sizeBytes && item.sizeBytes >= threshold) {
+      findings.push({
+        type: 'large',
+        attachmentId: item.id,
+        filename: item.filename,
+        detail: `${formatBytes(item.sizeBytes)} (threshold: ${formatBytes(threshold)})`,
+      });
+    }
+
+    // --missing-alt
+    if ((runAll || options.missingAlt) && (!item.altText || item.altText.trim() === '')) {
+      findings.push({
+        type: 'missing-alt',
+        attachmentId: item.id,
+        filename: item.filename,
+        detail: 'No alt text set',
+      });
+    }
+
+    // --display-size: compare source dimensions against largest registered WP size
+    if ((runAll || options.displaySize) && item.width && item.height && item.sizes) {
+      const largestSize = findLargestRegisteredSize(item.sizes);
+      if (largestSize) {
+        const sourcePixels = item.width * item.height;
+        const displayPixels = largestSize.width * largestSize.height;
+        if (displayPixels > 0 && sourcePixels / displayPixels >= DISPLAY_SIZE_RATIO) {
+          const ratio = (sourcePixels / displayPixels).toFixed(1);
+          findings.push({
+            type: 'display-size',
+            attachmentId: item.id,
+            filename: item.filename,
+            detail:
+              `Source is ${item.width}×${item.height} but largest registered size is ` +
+              `${largestSize.width}×${largestSize.height} (${largestSize.name}) — ` +
+              `${ratio}× oversized`,
+            largestSize: {
+              width: largestSize.width,
+              height: largestSize.height,
+              name: largestSize.name,
+            },
+          });
+        }
+      }
+    }
+  }
+
+  // -- Unattached scan (WP-CLI only) ------------------------------------------
+  if (options.unattached && unattachedAdapter) {
+    info('Scanning for unattached media via WP-CLI (this may be slow)...');
+    try {
+      const unattachedIds = await unattachedAdapter.findUnattached();
+      const itemsById = new Map(allItems.map((i) => [i.id, i]));
+      for (const id of unattachedIds) {
+        const item = itemsById.get(id);
+        findings.push({
+          type: 'unattached',
+          attachmentId: id,
+          filename: item?.filename ?? `(attachment ${id})`,
+          detail: 'No parent post and not referenced anywhere in content',
+        });
+      }
+    } catch (err) {
+      warn(`Unattached scan failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // -- Duplicate detection (dHash via sharp) -----------------------------------
+  // Not part of runAll: it downloads every candidate image's full bytes,
+  // which contradicts runAll's "cheap checks only" contract.
+  if (options.duplicates) {
+    const dupeFindings = await detectDuplicates(allItems);
+    findings.push(...dupeFindings);
+  }
+
+  // -- Broken reference detection ---------------------------------------------
+  if (options.brokenRefs) {
+    info('Checking for broken attachment references in post content...');
+    const brokenFindings = await detectBrokenRefs(allItems, adapter);
+    findings.push(...brokenFindings);
+  }
+
+  // -- Vision: quality check (slow, per-item Ollama call) ---------------------
+  if (options.quality) {
+    const images = allItems.filter((m) => m.mimeType.startsWith('image/'));
+    info(`Vision quality check on ${images.length} image(s) — slow (~10s/image)...`);
+    const effectiveModel: string = config.defaults?.captionModel ?? 'moondream';
+    const qualityFindings = await detectQualityIssues(images, effectiveModel);
+    findings.push(...qualityFindings);
+  }
+
+  // -- Vision: OCR text search (slow, per-item Ollama call) ------------------
+  if (options.ocrText) {
+    const images = allItems.filter((m) => m.mimeType.startsWith('image/'));
+    info(`Vision OCR search for "${options.ocrText}" on ${images.length} image(s) — slow...`);
+    const effectiveModel: string = config.defaults?.captionModel ?? 'moondream';
+    const ocrFindings = await detectOcrMatches(images, options.ocrText, effectiveModel);
+    findings.push(...ocrFindings);
+  }
+
+  return {
+    site: site.name,
+    url: site.url,
+    totalItems: allItems.length,
+    prunedAttachments: prunedCount,
+    findings,
+    summary: summarizeFindings(findings),
+  };
 }
 
 // -- Display-size helpers -----------------------------------------------------
