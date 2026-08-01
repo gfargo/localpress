@@ -41,7 +41,11 @@ export interface PreviewServerOptions {
   /** Called when the user clicks "Process" with the given params. Returns result bytes. */
   onProcess: (params: Record<string, unknown>) => Promise<ProcessResult>;
   /** Called when the user clicks "Apply" to commit the result. */
-  onApply: (resultBytes: Buffer, resultMimeType: string | null) => Promise<ApplyResult>;
+  onApply: (
+    resultBytes: Buffer,
+    resultMimeType: string | null,
+    lastStats: Record<string, unknown> | null,
+  ) => Promise<ApplyResult>;
   /** Auto-shutdown timeout in ms. Default: 10 minutes. */
   timeoutMs?: number;
   /** HTML content for the UI page. */
@@ -88,6 +92,7 @@ export async function startPreviewServer(
   const state: {
     lastResultBytes: Buffer | null;
     lastResultMimeType: string | null;
+    lastResultStats: Record<string, unknown> | null;
     timeoutId: ReturnType<typeof setTimeout> | null;
     server: ReturnType<typeof Bun.serve> | null;
     wsConnected: boolean;
@@ -96,6 +101,7 @@ export async function startPreviewServer(
   } = {
     lastResultBytes: null,
     lastResultMimeType: null,
+    lastResultStats: null,
     timeoutId: null,
     server: null,
     wsConnected: false,
@@ -207,6 +213,7 @@ export async function startPreviewServer(
           const result = await options.onProcess(params);
           state.lastResultBytes = result.bytes;
           state.lastResultMimeType = result.mimeType;
+          state.lastResultStats = result.stats;
           return new Response(
             JSON.stringify({
               stats: result.stats,
@@ -234,7 +241,11 @@ export async function startPreviewServer(
         }
         try {
           info('  Applying optimized image to WordPress...');
-          const result = await options.onApply(state.lastResultBytes, state.lastResultMimeType);
+          const result = await options.onApply(
+            state.lastResultBytes,
+            state.lastResultMimeType,
+            state.lastResultStats,
+          );
           info(`  ✓ Applied successfully (${result.message})`);
           // Delay shutdown to ensure the response is fully sent to the browser
           // before the server closes the TCP connection. Resolve before shutting

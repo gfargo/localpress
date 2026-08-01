@@ -284,7 +284,7 @@ export function registerOptimizeCommand(program: Command): void {
               },
             };
           },
-          onApply: async (resultBytes, resultMimeType): Promise<ApplyResult> => {
+          onApply: async (resultBytes, resultMimeType, lastStats): Promise<ApplyResult> => {
             const db = SiteDb.init(getSiteDbPath(site.name));
             db.ensureSite(site.name, site.url);
 
@@ -370,31 +370,18 @@ export function registerOptimizeCommand(program: Command): void {
               resultWpId = uploaded.id;
             }
 
-            recordSuccess(
-              db,
-              site.name,
-              item,
-              sourceHash,
-              resultHash,
-              resultMimeType ?? item.mimeType,
-              {},
-              0,
-              {
-                bytesBefore: sourceBytes.length,
-                bytesAfter: resultBytes.length,
-                resultWpId: resultWpId !== item.id ? resultWpId : null,
-              },
-            );
+            // The engine already computed the post-processing dimensions during
+            // onProcess (mirrors the non-preview path's `result.after`) — use
+            // those directly rather than depending on a network re-fetch, which
+            // can fail independently of the replace-in-place that already
+            // committed the new dimensions to WordPress.
+            const after = (lastStats?.after ?? undefined) as
+              | { width?: number; height?: number }
+              | undefined;
 
-            if (historySession) {
-              closeHistorySession(snapshotStore, historySession, {
-                maxSizeBytes: historyConfig.maxSizeBytes,
-              });
-            }
-
-            db.close();
-
-            // Re-fetch the item from WordPress to get fresh metadata for the UI.
+            // Re-fetch the item from WordPress to get fresh metadata for the UI
+            // (filename/mimeType/sizeBytes/url). Best-effort only — recordSuccess
+            // above does not depend on this succeeding.
             let freshItem: import('../../engine/preview/server.ts').ApplyResult['freshItem'];
             try {
               const refreshed = await getAdapter.getMedia(resultWpId ?? id);
@@ -409,6 +396,32 @@ export function registerOptimizeCommand(program: Command): void {
             } catch {
               // Best effort — UI will show basic success without fresh metadata.
             }
+
+            recordSuccess(
+              db,
+              site.name,
+              item,
+              sourceHash,
+              resultHash,
+              resultMimeType ?? item.mimeType,
+              {},
+              0,
+              {
+                bytesBefore: sourceBytes.length,
+                bytesAfter: resultBytes.length,
+                resultWpId: resultWpId !== item.id ? resultWpId : null,
+                width: after?.width,
+                height: after?.height,
+              },
+            );
+
+            if (historySession) {
+              closeHistorySession(snapshotStore, historySession, {
+                maxSizeBytes: historyConfig.maxSizeBytes,
+              });
+            }
+
+            db.close();
 
             return {
               wpId: resultWpId,
@@ -789,6 +802,8 @@ export function registerOptimizeCommand(program: Command): void {
               bytesBefore: sourceBytes.length,
               bytesAfter: result.bytes.length,
               resultWpId: resultWpId !== item.id ? resultWpId : null,
+              width: result.after.width,
+              height: result.after.height,
             },
           );
 
@@ -956,7 +971,13 @@ function recordSuccess(
   resultMimeType: string,
   opts: OptimizeOptions,
   durationMs: number,
-  sizes: { bytesBefore: number; bytesAfter: number; resultWpId: number | null },
+  sizes: {
+    bytesBefore: number;
+    bytesAfter: number;
+    resultWpId: number | null;
+    width?: number | null;
+    height?: number | null;
+  },
   status: 'success' | 'skipped' = 'success',
 ): void {
   // `resultWpId === null` means the original attachment was replaced in
@@ -971,8 +992,8 @@ function recordSuccess(
     sourceUrl: item.url,
     sourceHash: wasReplacedInPlace ? resultHash : sourceHash,
     sizeBytes: wasReplacedInPlace ? sizes.bytesAfter : sizes.bytesBefore,
-    width: item.width ?? null,
-    height: item.height ?? null,
+    width: wasReplacedInPlace ? (sizes.width ?? item.width ?? null) : (item.width ?? null),
+    height: wasReplacedInPlace ? (sizes.height ?? item.height ?? null) : (item.height ?? null),
     mimeType: wasReplacedInPlace ? resultMimeType : item.mimeType,
     lastSeenAt: Date.now(),
   });
