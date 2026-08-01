@@ -14,37 +14,34 @@
  * without restoring it — depending on file load order that leaves `spawnSync`
  * undefined when this file imports it. Bun.spawnSync isn't affected.
  *
- * "Unreachable" is simulated by binding a real TCP server on an OS-assigned
- * loopback port and closing it before use, rather than a hardcoded low port
- * (e.g. 127.0.0.1:1) or a `.invalid` hostname. A closed loopback port gets
- * ECONNREFUSED straight from the kernel — no DNS lookup, no routing beyond
- * loopback, and no dependency on a fixed port/hostname staying unreachable
- * on every network the tests happen to run on (some CI network layers proxy
- * or intercept low ports and reserved-TLD lookups differently than a local
- * machine).
+ * "Unreachable" is simulated with a syntactically-invalid site URL rather
+ * than an actually-unreachable network address. We tried two real-network
+ * approaches first — a hardcoded low port + `.invalid` hostname, then an
+ * OS-assigned loopback port bound and closed just before use — and *both*
+ * passed reliably locally but produced exit 0 in CI (i.e. the REST call
+ * apparently succeeded, or at least didn't throw). That points at CI's
+ * network layer not refusing connections/failing DNS the same way a local
+ * machine does, for reasons we can't control from here. A malformed URL
+ * sidesteps the network stack entirely: `RestAdapter.apiUrl()` calls
+ * `new URL(...)` on `${site.url}/wp-json/wp/v2${path}`, which throws
+ * synchronously for a string with no valid scheme — no socket is ever
+ * opened, so there's nothing for a network layer to intercept. Doctor's
+ * catch block treats any non-`WpApiError` thrown from the connectivity
+ * check as `code: 'network'` (see src/cli/commands/doctor.ts), so this
+ * still exercises the real "connection check failed" → NetworkError path.
  */
 
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const CLI_ENTRY = join(process.cwd(), 'src', 'cli', 'index.ts');
 
-/** Bind an ephemeral loopback port, then close it, so it's guaranteed refused. */
-async function unreachableLoopbackUrl(): Promise<string> {
-  const port = await new Promise<number>((resolve, reject) => {
-    const srv = createServer();
-    srv.on('error', reject);
-    srv.listen(0, '127.0.0.1', () => {
-      const address = srv.address();
-      const boundPort = typeof address === 'object' && address ? address.port : 0;
-      srv.close(() => resolve(boundPort));
-    });
-  });
-  return `http://127.0.0.1:${port}`;
-}
+/** No scheme — `new URL()` throws synchronously, before any socket is opened. */
+const UNREACHABLE_SITE_URL = 'not-a-valid-url-without-a-scheme';
+/** A second, distinct malformed URL for the "independent failure" test below. */
+const UNREACHABLE_SITE_URL_2 = 'ht!tp://also-not-a-valid-url';
 
 /** Spawn the CLI with an ephemeral config dir.  No site is seeded by default. */
 function runCli(
@@ -124,17 +121,15 @@ describe('doctor exit codes', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Unreachable site — connection refused
+  // Unreachable site — connectivity check throws
   // -------------------------------------------------------------------------
-  test('doctor with unreachable site exits 4 (NetworkError)', async () => {
-    const siteUrl = await unreachableLoopbackUrl();
-    const { exitCode } = runCliWithSite(['doctor'], siteUrl);
+  test('doctor with unreachable site exits 4 (NetworkError)', () => {
+    const { exitCode } = runCliWithSite(['doctor'], UNREACHABLE_SITE_URL);
     expect(exitCode).toBe(4);
   });
 
-  test('doctor --json with unreachable site exits 4 and emits connectionOk:false', async () => {
-    const siteUrl = await unreachableLoopbackUrl();
-    const { stdout, exitCode } = runCliWithSite(['doctor', '--json'], siteUrl);
+  test('doctor --json with unreachable site exits 4 and emits connectionOk:false', () => {
+    const { stdout, exitCode } = runCliWithSite(['doctor', '--json'], UNREACHABLE_SITE_URL);
     expect(exitCode).toBe(4);
 
     // stdout should contain a JSON object with connectionOk:false
@@ -150,21 +145,18 @@ describe('doctor exit codes', () => {
     expect(errorIssues.length).toBeGreaterThan(0);
   });
 
-  test('doctor --all-sites with unreachable site exits 4', async () => {
-    const siteUrl = await unreachableLoopbackUrl();
-    const { exitCode } = runCliWithSite(['doctor', '--all-sites'], siteUrl);
+  test('doctor --all-sites with unreachable site exits 4', () => {
+    const { exitCode } = runCliWithSite(['doctor', '--all-sites'], UNREACHABLE_SITE_URL);
     expect(exitCode).toBe(4);
   });
 
   // -------------------------------------------------------------------------
-  // A second, independently-bound unreachable port — exercises the same
-  // network-failure path (the doctor code doesn't distinguish ECONNREFUSED
-  // from ENOTFOUND; both are "fetch never got a response") without relying
-  // on real DNS resolution of a reserved-but-not-universally-honored TLD.
+  // A second, distinct malformed URL — exercises the same "any non-WpApiError
+  // thrown from the connectivity check is a NetworkError" path with a
+  // different failure shape (unparseable scheme vs. no scheme at all).
   // -------------------------------------------------------------------------
-  test('doctor with a second unreachable site exits 4 (NetworkError)', async () => {
-    const siteUrl = await unreachableLoopbackUrl();
-    const { exitCode } = runCliWithSite(['doctor'], siteUrl);
+  test('doctor with a second unreachable site exits 4 (NetworkError)', () => {
+    const { exitCode } = runCliWithSite(['doctor'], UNREACHABLE_SITE_URL_2);
     expect(exitCode).toBe(4);
   });
 });
