@@ -279,7 +279,7 @@ export function registerOptimizeCommand(program: Command): void {
               },
             };
           },
-          onApply: async (resultBytes, resultMimeType): Promise<ApplyResult> => {
+          onApply: async (resultBytes, resultMimeType, lastStats): Promise<ApplyResult> => {
             const db = SiteDb.init(getSiteDbPath(site.name));
             db.ensureSite(site.name, site.url);
 
@@ -365,10 +365,18 @@ export function registerOptimizeCommand(program: Command): void {
               resultWpId = uploaded.id;
             }
 
-            // Re-fetch the item from WordPress to get fresh metadata — both
-            // for the UI and, when replaced in place, the post-processing
-            // width/height that must be recorded (the live file no longer
-            // matches item.width/height).
+            // The engine already computed the post-processing dimensions during
+            // onProcess (mirrors the non-preview path's `result.after`) — use
+            // those directly rather than depending on a network re-fetch, which
+            // can fail independently of the replace-in-place that already
+            // committed the new dimensions to WordPress.
+            const after = (lastStats?.after ?? undefined) as
+              | { width?: number; height?: number }
+              | undefined;
+
+            // Re-fetch the item from WordPress to get fresh metadata for the UI
+            // (filename/mimeType/sizeBytes/url). Best-effort only — recordSuccess
+            // above does not depend on this succeeding.
             let freshItem: import('../../engine/preview/server.ts').ApplyResult['freshItem'];
             try {
               const refreshed = await getAdapter.getMedia(resultWpId ?? id);
@@ -397,8 +405,8 @@ export function registerOptimizeCommand(program: Command): void {
                 bytesBefore: sourceBytes.length,
                 bytesAfter: resultBytes.length,
                 resultWpId: resultWpId !== item.id ? resultWpId : null,
-                width: freshItem?.width,
-                height: freshItem?.height,
+                width: after?.width,
+                height: after?.height,
               },
             );
 
