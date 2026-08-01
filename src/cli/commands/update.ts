@@ -13,7 +13,6 @@
  * downloading directly.
  */
 
-import { spawnSync } from 'node:child_process';
 import { createWriteStream, existsSync } from 'node:fs';
 import { chmod, cp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -274,6 +273,7 @@ async function downloadAndReplace(
     if (!isJson) info('Extracting...');
     await mkdir(tmpExtract, { recursive: true });
     const isZip = downloadUrl.endsWith('.zip');
+    const { spawnSync } = await import('node:child_process');
     const extractResult = isZip
       ? spawnSync('unzip', ['-q', tmpArchive, '-d', tmpExtract])
       : spawnSync('tar', ['xzf', tmpArchive, '-C', tmpExtract]);

@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import * as childProcess from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,7 +15,7 @@ describe('init --non-interactive', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'localpress-init-test-'));
 
     try {
-      const result = spawnSync(
+      const result = childProcess.spawnSync(
         'bun',
         [
           'run',
