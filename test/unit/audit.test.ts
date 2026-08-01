@@ -19,11 +19,11 @@ import type {
   WpBackend,
 } from '../../src/adapters/types.ts';
 import {
-  fetchAllMedia,
-  summarizeFindings,
   auditSite,
-  sumUnoptimizedBytes,
+  fetchAllMedia,
   isOverBudget,
+  sumUnoptimizedBytes,
+  summarizeFindings,
 } from '../../src/cli/commands/audit.ts';
 import type { AuditFinding, AuditSummary } from '../../src/cli/commands/audit.ts';
 import { ExitCode } from '../../src/types.ts';
@@ -151,11 +151,7 @@ describe('find-unattached capability', () => {
 
 // -- Helper to make AuditFinding fixtures ------------------------------------
 
-function makeFinding(
-  type: AuditFinding['type'],
-  id = 1,
-  filename = 'photo.jpg',
-): AuditFinding {
+function makeFinding(type: AuditFinding['type'], id = 1, filename = 'photo.jpg'): AuditFinding {
   return { type, attachmentId: id, filename, detail: `test ${type}` };
 }
 
@@ -210,7 +206,11 @@ describe('summarizeFindings', () => {
   });
 
   test('handles findings with only one type', () => {
-    const findings = [makeFinding('missing-alt', 1), makeFinding('missing-alt', 2), makeFinding('missing-alt', 3)];
+    const findings = [
+      makeFinding('missing-alt', 1),
+      makeFinding('missing-alt', 2),
+      makeFinding('missing-alt', 3),
+    ];
     const summary = summarizeFindings(findings);
     expect(summary.missingAlt).toBe(3);
     expect(summary.unoptimized).toBe(0);
@@ -219,7 +219,11 @@ describe('summarizeFindings', () => {
 
   test('rolled-up totals across two sites sum correctly', () => {
     const s1 = summarizeFindings([makeFinding('unoptimized'), makeFinding('large')]);
-    const s2 = summarizeFindings([makeFinding('unoptimized'), makeFinding('missing-alt'), makeFinding('missing-alt')]);
+    const s2 = summarizeFindings([
+      makeFinding('unoptimized'),
+      makeFinding('missing-alt'),
+      makeFinding('missing-alt'),
+    ]);
 
     // Sum manually as done in the --all-sites path
     const totals: AuditSummary = {

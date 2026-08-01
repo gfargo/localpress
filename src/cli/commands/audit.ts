@@ -190,7 +190,10 @@ export function registerAuditCommand(program: Command): void {
       '--ocr-text <term>',
       'flag images that visually contain the supplied text (case-insensitive, via Ollama vision; slow)',
     )
-    .option('--all-sites', 'run the audit across every configured site and print one rolled-up report')
+    .option(
+      '--all-sites',
+      'run the audit across every configured site and print one rolled-up report',
+    )
     .option(
       '--max-unoptimized-bytes <bytes>',
       'CI gate: exit non-zero (code 7) if total unoptimized bytes exceed this budget (e.g. 50000000 for 50 MB)',
@@ -223,16 +226,15 @@ export function registerAuditCommand(program: Command): void {
           }
         }
 
-        const totals = results.reduce((acc, r) => addSummaries(acc, r.summary), { ...ZERO_SUMMARY });
+        const totals = results.reduce((acc, r) => addSummaries(acc, r.summary), {
+          ...ZERO_SUMMARY,
+        });
         // auditSite() never returns findings alongside an error (it returns
         // zeroResult on failure), so `!r.error` is redundant today — kept
         // explicit in case that contract ever changes.
         const sitesWithIssues = results.filter((r) => !r.error && r.findings.length > 0).length;
         const sitesErrored = results.filter((r) => !!r.error).length;
-        const totalUnoptBytes = results.reduce(
-          (n, r) => n + sumUnoptimizedBytes(r.findings),
-          0,
-        );
+        const totalUnoptBytes = results.reduce((n, r) => n + sumUnoptimizedBytes(r.findings), 0);
         const budgetOverrun =
           options.maxUnoptimizedBytes !== undefined &&
           isOverBudget(totalUnoptBytes, options.maxUnoptimizedBytes);
@@ -243,13 +245,14 @@ export function registerAuditCommand(program: Command): void {
             totals,
             sitesWithIssues,
             sitesErrored,
-            budget: options.maxUnoptimizedBytes !== undefined
-              ? {
-                  maxUnoptimizedBytes: options.maxUnoptimizedBytes,
-                  unoptimizedBytes: totalUnoptBytes,
-                  overBudget: budgetOverrun,
-                }
-              : undefined,
+            budget:
+              options.maxUnoptimizedBytes !== undefined
+                ? {
+                    maxUnoptimizedBytes: options.maxUnoptimizedBytes,
+                    unoptimizedBytes: totalUnoptBytes,
+                    overBudget: budgetOverrun,
+                  }
+                : undefined,
           });
         } else {
           // Print per-site summary
@@ -293,8 +296,9 @@ export function registerAuditCommand(program: Command): void {
         // Budget check must run BEFORE the generic-issues exit so the distinct
         // exit code (7) is not masked by GenericError (1).
         if (budgetOverrun) {
+          const budget = options.maxUnoptimizedBytes ?? 0;
           error(
-            `Unoptimized bytes (${formatBytes(totalUnoptBytes)}) exceed budget (${formatBytes(options.maxUnoptimizedBytes!)}).`,
+            `Unoptimized bytes (${formatBytes(totalUnoptBytes)}) exceed budget (${formatBytes(budget)}).`,
           );
           process.exit(ExitCode.BudgetExceeded);
         }
@@ -338,13 +342,14 @@ export function registerAuditCommand(program: Command): void {
           prunedAttachments: prunedCount,
           findings,
           summary: result.summary,
-          budget: options.maxUnoptimizedBytes !== undefined
-            ? {
-                maxUnoptimizedBytes: options.maxUnoptimizedBytes,
-                unoptimizedBytes: unoptBytes,
-                overBudget: budgetOverrunSingle,
-              }
-            : undefined,
+          budget:
+            options.maxUnoptimizedBytes !== undefined
+              ? {
+                  maxUnoptimizedBytes: options.maxUnoptimizedBytes,
+                  unoptimizedBytes: unoptBytes,
+                  overBudget: budgetOverrunSingle,
+                }
+              : undefined,
         });
       } else {
         const threshold = options.threshold ?? DEFAULT_THRESHOLD;
@@ -439,8 +444,9 @@ export function registerAuditCommand(program: Command): void {
       }
 
       if (budgetOverrunSingle) {
+        const budget = options.maxUnoptimizedBytes ?? 0;
         error(
-          `Unoptimized bytes (${formatBytes(unoptBytes)}) exceed budget (${formatBytes(options.maxUnoptimizedBytes!)}).`,
+          `Unoptimized bytes (${formatBytes(unoptBytes)}) exceed budget (${formatBytes(budget)}).`,
         );
         process.exit(ExitCode.BudgetExceeded);
       }
@@ -542,8 +548,7 @@ export async function auditSite(
     if (!unattachedAdapter) {
       return {
         ...zeroResult,
-        error:
-          'exit6: --unattached requires WP-CLI over SSH. Configure SSH access for this site.',
+        error: 'exit6: --unattached requires WP-CLI over SSH. Configure SSH access for this site.',
       };
     }
   }
@@ -588,9 +593,7 @@ export async function auditSite(
     }
     db.close();
   } catch (err) {
-    warn(
-      `Failed to sync attachment records: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    warn(`Failed to sync attachment records: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   if (prunedCount > 0) {
