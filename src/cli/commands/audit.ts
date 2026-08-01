@@ -176,11 +176,17 @@ export function registerAuditCommand(program: Command): void {
           const result = await auditSite(site, options, config);
           results.push(result);
           if (result.error) {
-            error(`  ${site.name}: ${result.error}`);
+            // auditSite() encodes the exit code as an "exitN: " prefix on the
+            // error string (see the single-site path below) — strip it here too
+            // so users never see the internal marker.
+            error(`  ${site.name}: ${result.error.replace(/^exit\d+: /, '')}`);
           }
         }
 
         const totals = results.reduce((acc, r) => addSummaries(acc, r.summary), { ...ZERO_SUMMARY });
+        // auditSite() never returns findings alongside an error (it returns
+        // zeroResult on failure), so `!r.error` is redundant today — kept
+        // explicit in case that contract ever changes.
         const sitesWithIssues = results.filter((r) => !r.error && r.findings.length > 0).length;
         const sitesErrored = results.filter((r) => !!r.error).length;
 
@@ -219,6 +225,11 @@ export function registerAuditCommand(program: Command): void {
           }
         }
 
+        // Intentionally asymmetric with the single-site path below, which
+        // exits 0 even when findings are present: --all-sites is meant to be
+        // scriptable/CI-friendly (per the acceptance criteria), so a non-zero
+        // exit here signals "issues found" without changing existing
+        // single-site behavior.
         if (sitesErrored > 0 || sitesWithIssues > 0) {
           process.exit(ExitCode.GenericError);
         }

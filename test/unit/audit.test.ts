@@ -256,12 +256,12 @@ describe('auditSite', () => {
 
   test('returns error field (not throw) when fetch fails', async () => {
     // We can't easily inject a fake adapter into auditSite without network calls,
-    // but we CAN verify the error-result contract by checking that a site with
-    // a broken URL returns an error-shaped result rather than throwing.
-    // Use a dummy config with a site that will fail DNS.
+    // but we CAN verify the error-result contract by stubbing the global fetch
+    // RestAdapter uses under the hood, so this stays hermetic (no real DNS
+    // lookup) instead of relying on a .invalid domain actually failing to resolve.
     const brokenSite: SiteConfig = {
       name: 'broken',
-      url: 'https://this-domain-does-not-exist-localpress-test.invalid',
+      url: 'https://example.test',
       username: 'admin',
       appPassword: 'xxxx xxxx xxxx xxxx xxxx xxxx',
       createdAt: new Date('2026-01-01').toISOString(),
@@ -271,11 +271,18 @@ describe('auditSite', () => {
       sites: { broken: brokenSite },
     };
 
-    // auditSite should not throw — it should return a result with error set.
-    const result = await auditSite(brokenSite, {}, fakeConfig);
-    expect(typeof result.error).toBe('string');
-    expect(result.findings).toEqual([]);
-    expect(result.totalItems).toBe(0);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.reject(new Error('simulated network failure'))) as unknown as typeof fetch;
+    try {
+      // auditSite should not throw — it should return a result with error set.
+      const result = await auditSite(brokenSite, {}, fakeConfig);
+      expect(typeof result.error).toBe('string');
+      expect(result.findings).toEqual([]);
+      expect(result.totalItems).toBe(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test('returns error for --orphans when WP-CLI is not configured', async () => {
