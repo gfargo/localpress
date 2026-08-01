@@ -6,13 +6,18 @@
  *   - unreachable site     → exit 4 (NetworkError), connectionOk:false in --json
  *   - healthy site         → exit 0 (manual / integration tests only — needs live WP)
  *
- * Technique: spawnSync + isolated XDG_CONFIG_HOME (same pattern as
- * cli-error-handling.test.ts).  Unreachable URLs use 127.0.0.1:1 to force
- * an immediate ECONNREFUSED without touching DNS.
+ * Technique: Bun.spawnSync + isolated XDG_CONFIG_HOME (same pattern as
+ * cli-error-handling.test.ts). We use Bun.spawnSync rather than
+ * node:child_process's spawnSync because other unit test files replace the
+ * whole node:child_process module process-wide via `mock.module()` (see
+ * preview-server.test.ts / editor-detect.test.ts / quick-view-auth.test.ts)
+ * without restoring it — depending on file load order that leaves `spawnSync`
+ * undefined when this file imports it. Bun.spawnSync isn't affected.
+ * Unreachable URLs use 127.0.0.1:1 to force an immediate ECONNREFUSED without
+ * touching DNS.
  */
 
 import { describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,15 +31,14 @@ function runCli(
 ): { stdout: string; stderr: string; exitCode: number } {
   const configDir = mkdtempSync(join(tmpdir(), 'localpress-doctor-test-'));
   try {
-    const result = spawnSync('bun', ['run', CLI_ENTRY, ...args], {
-      encoding: 'utf-8',
+    const result = Bun.spawnSync(['bun', 'run', CLI_ENTRY, ...args], {
       env: { ...process.env, XDG_CONFIG_HOME: configDir, ...extraEnv },
       timeout: 30_000,
     });
     return {
-      stdout: result.stdout ?? '',
-      stderr: result.stderr ?? '',
-      exitCode: result.status ?? 1,
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode ?? 1,
     };
   } finally {
     rmSync(configDir, { recursive: true, force: true });
@@ -69,15 +73,14 @@ function runCliWithSite(
     };
     writeFileSync(join(localpressDir, 'config.json'), JSON.stringify(config), { mode: 0o600 });
 
-    const result = spawnSync('bun', ['run', CLI_ENTRY, ...args], {
-      encoding: 'utf-8',
+    const result = Bun.spawnSync(['bun', 'run', CLI_ENTRY, ...args], {
       env: { ...process.env, XDG_CONFIG_HOME: configDir },
       timeout: 30_000,
     });
     return {
-      stdout: result.stdout ?? '',
-      stderr: result.stderr ?? '',
-      exitCode: result.status ?? 1,
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode ?? 1,
     };
   } finally {
     rmSync(configDir, { recursive: true, force: true });
