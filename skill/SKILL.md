@@ -206,6 +206,10 @@ localpress audit --broken-refs --json
 localpress audit --quality --json
 localpress audit --ocr-text "Sale" --json
 
+# CI gate: exit 7 (BudgetExceeded) if unoptimized bytes exceed 50 MB;
+# exit 0 when within budget. Combine with --all-sites to gate every site at once.
+localpress audit --json --max-unoptimized-bytes 50000000
+
 # Find where an attachment is used
 localpress references 123 --json
 ```
@@ -257,6 +261,14 @@ The top-level shape is an object with pagination metadata, **not** a bare array 
 ```
 
 `--quality` and `--ocr-text <term>` are opt-in only (each is a per-image Ollama vision call, ~10s/image) — they are never included in the default "run everything" audit.
+
+With `--max-unoptimized-bytes <bytes>`, the output also includes a `budget` object (same shape in single-site and `--all-sites` mode — the latter uses the sum across all sites), and the process exits with `ExitCode.BudgetExceeded` (7) when over budget, `0` otherwise:
+
+```json
+{
+  "budget": { "maxUnoptimizedBytes": 50000000, "unoptimizedBytes": 62914560, "overBudget": true }
+}
+```
 
 #### `stats --json` output
 

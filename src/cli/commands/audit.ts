@@ -20,7 +20,7 @@ import type { MediaItem, WpBackend } from '../../adapters/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { ExitCode } from '../../types.ts';
 import type { Config, SiteConfig } from '../../types.ts';
-import { parseIntOption } from '../utils/args.ts';
+import { parseIntOption, parseNonNegativeIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -194,7 +194,7 @@ export function registerAuditCommand(program: Command): void {
     .option(
       '--max-unoptimized-bytes <bytes>',
       'CI gate: exit non-zero (code 7) if total unoptimized bytes exceed this budget (e.g. 50000000 for 50 MB)',
-      parseIntOption('--max-unoptimized-bytes'),
+      parseNonNegativeIntOption('--max-unoptimized-bytes'),
     )
     .action(async (options) => {
       const parentOpts = program.opts();
@@ -240,7 +240,7 @@ export function registerAuditCommand(program: Command): void {
             budget: options.maxUnoptimizedBytes !== undefined
               ? {
                   maxUnoptimizedBytes: options.maxUnoptimizedBytes,
-                  totalUnoptimizedBytes: totalUnoptBytes,
+                  unoptimizedBytes: totalUnoptBytes,
                   overBudget: budgetOverrun,
                 }
               : undefined,

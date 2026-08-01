@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`audit --max-unoptimized-bytes <bytes>`**: CI budget gate — exits with code `7` (`BudgetExceeded`) when total unoptimized bytes exceed the given threshold; exits `0` when within budget. Works with both single-site and `--all-sites` modes. The `--json` output includes a `budget` object with `maxUnoptimizedBytes`, `unoptimizedBytes`/`totalUnoptimizedBytes`, and `overBudget`. See the README "CI budget gate" section for a copy-pasteable GitHub Actions snippet.
+- **`audit --max-unoptimized-bytes <bytes>`**: CI budget gate — exits with code `7` (`BudgetExceeded`) when total unoptimized bytes exceed the given threshold; exits `0` when within budget. Works with both single-site and `--all-sites` modes. The `--json` output includes a `budget` object with `maxUnoptimizedBytes`, `unoptimizedBytes`, and `overBudget` — the same shape in both modes. See the README "CI budget gate" section for a copy-pasteable GitHub Actions snippet.
 - **`ExitCode.BudgetExceeded = 7`**: new named exit code in `src/types.ts` for the budget-exceeded condition.
 
 ## [2.4.5](https://github.com/gfargo/localpress/compare/v2.4.4...v2.4.5) (2026-07-20)
