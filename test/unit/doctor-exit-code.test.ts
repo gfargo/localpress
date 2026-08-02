@@ -28,7 +28,7 @@
  *   exercised deterministically regardless of environment.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,9 +36,26 @@ import { Command, Option } from 'commander';
 import { registerDoctorCommand } from '../../src/cli/commands/doctor.ts';
 import { saveConfig } from '../../src/cli/utils/config.ts';
 import { setOutputOptions } from '../../src/cli/utils/output.ts';
+import { preflightJsquashEncoder } from '../../src/engine/image/jsquash.ts';
 
 const CLI_ENTRY = join(process.cwd(), 'src', 'cli', 'index.ts');
 const SITE_NAME = 'testsite';
+
+/**
+ * Pre-warm the jSquash WASM codecs before any test in this file runs.
+ *
+ * The in-process doctor tests mock `globalThis.fetch` to simulate an
+ * unreachable site. jSquash WASM modules use `fetch` to load their binary on
+ * first initialization. If the mock is active when the module first loads, the
+ * WASM state is permanently broken for the rest of the process — poisoning the
+ * `encoder-preflight` tests that run later in the same test suite.
+ *
+ * Running a no-op preflight here ensures all jSquash WASM modules are fully
+ * initialized before any fetch mock is installed.
+ */
+beforeAll(async () => {
+  await preflightJsquashEncoder(['jpeg', 'png', 'webp', 'avif']);
+});
 
 /** Spawn the CLI with an ephemeral config dir. No site is seeded by default. */
 function runCli(
