@@ -10,7 +10,8 @@
 
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
-import type { SiteConfig } from '../../types.ts';
+import { WpApiError } from '../../adapters/types.ts';
+import { ExitCode, type SiteConfig } from '../../types.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -77,6 +78,12 @@ interface DoctorIssue {
   severity: 'error' | 'warning' | 'info';
   message: string;
   fix?: string;
+  /**
+   * Structured classification for error-severity issues, used to pick an
+   * exit code. Set this explicitly at each push site rather than pattern-
+   * matching `message` later — message text is for humans and can change.
+   */
+  code?: 'auth' | 'network' | 'generic';
 }
 
 export function registerDoctorCommand(program: Command): void {
@@ -99,8 +106,10 @@ export function registerDoctorCommand(program: Command): void {
 
       if (siteNames.length === 0) {
         error('No sites configured. Run `localpress init` to add one.');
-        process.exit(3);
+        process.exit(ExitCode.ConfigError);
       }
+
+      let worstExit: number = ExitCode.Success;
 
       for (const name of siteNames) {
         const site = config.sites[name];
@@ -122,23 +131,33 @@ export function registerDoctorCommand(program: Command): void {
             connectionOk = true;
           }
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          if (msg.includes('401') || msg.includes('Unauthorized')) {
+          // WpApiError means the server responded (with a structured HTTP
+          // status) — so this is an application-level error, not a
+          // connectivity failure. Anything else means fetch() itself never
+          // got a response (DNS failure, connection refused, timeout, etc.).
+          // We key off that distinction — and the exact HTTP status for auth
+          // — rather than pattern-matching error message text, which varies
+          // by runtime (e.g. Bun's fetch() doesn't include Node-style codes
+          // like ECONNREFUSED/ENOTFOUND in its error messages).
+          if (err instanceof WpApiError && err.status === 401) {
             issues.push({
               severity: 'error',
               message: 'Authentication failed — Application Password rejected',
               fix: 'Run `localpress sites remove <name>` then `localpress init` to re-enter credentials',
+              code: 'auth',
             });
-          } else if (msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED')) {
+          } else if (err instanceof WpApiError) {
             issues.push({
               severity: 'error',
-              message: `Cannot reach ${site.url} — check the URL and your network connection`,
-              fix: 'Verify the site URL with `localpress sites` and update if needed',
+              message: `REST API error: ${err.message}`,
+              code: 'generic',
             });
           } else {
             issues.push({
               severity: 'error',
-              message: `REST API error: ${msg}`,
+              message: `Cannot reach ${site.url} — check the URL and your network connection`,
+              fix: 'Verify the site URL with `localpress sites` and update if needed',
+              code: 'network',
             });
           }
         }
@@ -176,6 +195,7 @@ export function registerDoctorCommand(program: Command): void {
                   severity: 'error',
                   message:
                     'sharp installation completed but module still not found. Try restarting your shell.',
+                  code: 'generic',
                 });
               }
             } else {
@@ -183,6 +203,7 @@ export function registerDoctorCommand(program: Command): void {
                 severity: 'error',
                 message: 'Auto-install failed. Neither bun nor npm is available.',
                 fix: 'Install bun or npm, then run `localpress doctor --fix` again',
+                code: 'generic',
               });
             }
           } else {
@@ -191,6 +212,7 @@ export function registerDoctorCommand(program: Command): void {
               message:
                 'sharp is not installed — optimize, convert, resize, and remove-bg will not work',
               fix: 'Run `localpress doctor --fix` to auto-install, or manually: `bun install -g sharp`',
+              code: 'generic',
             });
           }
         }
@@ -262,15 +284,22 @@ export function registerDoctorCommand(program: Command): void {
             }
           }
           // For auth errors, offer to re-test with updated credentials.
-          const authIssue = issues.find(
-            (i) => i.severity === 'error' && i.message.includes('Authentication'),
-          );
+          const authIssue = issues.find((i) => i.severity === 'error' && i.code === 'auth');
           if (authIssue && connectionOk === false) {
             info('\n  To update credentials, run:');
             info(`    localpress sites remove ${name}`);
             info('    localpress init');
           }
         }
+
+        // -- Exit code accumulation --------------------------------------------
+        // Map this site's error-severity issues to an exit code and track the
+        // worst code seen across all sites (for --all-sites). The exit codes
+        // this loop can produce (Success=0, GenericError=1, NetworkError=4,
+        // AuthError=5) are numbered by increasing severity, so a plain max
+        // is correct — no need for an explicit precedence chain.
+        const siteExitCode = issueListToExitCode(issues);
+        worstExit = Math.max(worstExit, siteExitCode);
 
         // -- Output ------------------------------------------------------------
         if (parentOpts.json) {
@@ -332,7 +361,38 @@ export function registerDoctorCommand(program: Command): void {
           }
         }
       }
+
+      // Set process.exitCode after the loop so --all-sites finishes all sites.
+      if (worstExit !== ExitCode.Success) {
+        process.exitCode = worstExit;
+      }
     });
+}
+
+// -- Exit code helpers --------------------------------------------------------
+
+/**
+ * Map a site's issue list to the appropriate ExitCode, keyed off each
+ * issue's structured `code` (not message text — see DoctorIssue.code).
+ * Priority: Auth(5) > Network(4) > Generic(1) > Success(0).
+ */
+function issueListToExitCode(issues: DoctorIssue[]): number {
+  const errorIssues = issues.filter((i) => i.severity === 'error');
+
+  if (errorIssues.some((i) => i.code === 'auth')) {
+    return ExitCode.AuthError;
+  }
+
+  if (errorIssues.some((i) => i.code === 'network')) {
+    return ExitCode.NetworkError;
+  }
+
+  if (errorIssues.length > 0) {
+    // Any other error (e.g. sharp missing, or an uncategorized REST error).
+    return ExitCode.GenericError;
+  }
+
+  return ExitCode.Success;
 }
 
 // -- Plugin detection ---------------------------------------------------------
