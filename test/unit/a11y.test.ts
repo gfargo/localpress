@@ -194,4 +194,74 @@ describe('runA11yScan', () => {
     expect(result.errors[0].postType).toBe('posts');
     expect(result.complete).toBe(false);
   });
+
+  test('non-multiple-of-20 limit: every post analyzed exactly once, none duplicated or skipped', async () => {
+    // Regression for OSS-1357: per_page was shrinking on the final page, which moved the
+    // server-side offset backwards. Posts 21-30 were checked twice; posts 41-50 never checked.
+    const TOTAL_POSTS = 100;
+
+    const mockPaginatedFetch = (contentFor: (id: number) => string) =>
+      (async (url: string | URL | Request) => {
+        const u = new URL(url.toString());
+        if (!u.pathname.includes('/posts')) throw new Error(`unexpected url: ${u}`);
+
+        const page = Number.parseInt(u.searchParams.get('page') ?? '1', 10);
+        const perPage = Number.parseInt(u.searchParams.get('per_page') ?? '20', 10);
+
+        const start = (page - 1) * perPage; // 0-based
+        const slice = Array.from({ length: perPage }, (_, i) => start + i + 1) // 1-based IDs
+          .filter((id) => id <= TOTAL_POSTS)
+          .map((id) => ({
+            id,
+            title: { rendered: `Post ${id}` },
+            content: { rendered: contentFor(id) },
+          }));
+
+        const totalPages = Math.ceil(TOTAL_POSTS / perPage);
+        return jsonResponse(slice, { headers: { 'X-WP-TotalPages': String(totalPages) } });
+      }) as typeof fetch;
+
+    // First pass: content has no a11y issues, so a purely count-based assertion suffices here.
+    globalThis.fetch = mockPaginatedFetch((id) => `<p>content-${id}</p>`);
+
+    const result = await runA11yScan({
+      baseUrl: BASE_URL,
+      auth: AUTH,
+      types: ['posts'],
+      status: 'publish',
+      limit: 50,
+    });
+
+    expect(result.postsChecked).toBe(50);
+    expect(result.errors).toEqual([]);
+    expect(result.findings).toEqual([]);
+
+    // Second pass: every post has a missing-alt image, so finding.postId tells us exactly
+    // which IDs were analyzed — verifying no duplicates and no gaps.
+    globalThis.fetch = mockPaginatedFetch((id) => `<img src="x.jpg"><p>content-${id}</p>`);
+
+    const result2 = await runA11yScan({
+      baseUrl: BASE_URL,
+      auth: AUTH,
+      types: ['posts'],
+      status: 'publish',
+      limit: 50,
+    });
+
+    expect(result2.postsChecked).toBe(50);
+
+    const ids = result2.findings.map((f) => f.postId);
+    const uniqueIds = new Set(ids);
+
+    // Exactly 50 unique IDs analyzed (no duplicates).
+    expect(uniqueIds.size).toBe(50);
+
+    // IDs are exactly 1–50 (no gaps, none skipped, none from 51+).
+    for (let i = 1; i <= 50; i++) {
+      expect(uniqueIds.has(i)).toBe(true);
+    }
+    for (let i = 51; i <= 100; i++) {
+      expect(uniqueIds.has(i)).toBe(false);
+    }
+  });
 });
