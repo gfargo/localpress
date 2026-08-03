@@ -5,6 +5,30 @@ All notable changes to localpress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0](https://github.com/gfargo/localpress/compare/v2.4.5...v2.5.0) (2026-08-02)
+
+
+### Features
+
+* **audit:** add --all-sites rolled-up report ([#295](https://github.com/gfargo/localpress/issues/295)) ([9d91fe2](https://github.com/gfargo/localpress/commit/9d91fe25278477b8cd2875713d14b458f9d3f4b7))
+* **optimize:** add jSquash encoder pre-flight with strict/fallback ([#304](https://github.com/gfargo/localpress/issues/304)) ([c451fa3](https://github.com/gfargo/localpress/commit/c451fa3abe715d027d2fd140f2bdc163b8e4c80c))
+
+
+### Bug Fixes
+
+* **a11y:** keep per_page fixed to prevent pagination offset regression ([#296](https://github.com/gfargo/localpress/issues/296)) ([521cb8d](https://github.com/gfargo/localpress/commit/521cb8d407817c818fba24143084f3d9908fa84f))
+* **briefing:** exclude non-optimize operations from unoptimized counts ([#305](https://github.com/gfargo/localpress/issues/305)) ([deb3d9c](https://github.com/gfargo/localpress/commit/deb3d9c6f7d5ebe021cfadfc6608d4e9e36b587c))
+* **briefing:** stop reporting false-clean when checks fail to run ([#302](https://github.com/gfargo/localpress/issues/302)) ([5a2abcd](https://github.com/gfargo/localpress/commit/5a2abcd764338a2761aba1abe2b19a65c0a4e613))
+* **doctor:** set non-zero exit code when error-severity issues are found ([#300](https://github.com/gfargo/localpress/issues/300)) ([012eda3](https://github.com/gfargo/localpress/commit/012eda3e5d5c4d99eb67dc283f601ea9ef79f109))
+* **history:** add rowid tie-breaker to session ORDER BY queries ([#299](https://github.com/gfargo/localpress/issues/299)) ([311adc6](https://github.com/gfargo/localpress/commit/311adc6a4dc91ef160917e84f75617403c0ba4a1))
+* **mcp:** add dryRun param and destructive-write warning to references tool ([#298](https://github.com/gfargo/localpress/issues/298)) ([c29a90f](https://github.com/gfargo/localpress/commit/c29a90f3abfcc754e0d5c067cc200b2165ac545f))
+* **optimize:** record post-processing width/height after replace-in-place ([#306](https://github.com/gfargo/localpress/issues/306)) ([f9874a9](https://github.com/gfargo/localpress/commit/f9874a9a1a848ff20e36f697f7bb07794dcd79ec))
+
+
+### Documentation
+
+* **optimize:** add png to --to help text ([#297](https://github.com/gfargo/localpress/issues/297)) ([9491a8e](https://github.com/gfargo/localpress/commit/9491a8ef9152db61d4e8e109b88e3b5d2747cadb))
+
 ## [Unreleased]
 
 ### Added
