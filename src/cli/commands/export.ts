@@ -173,19 +173,20 @@ export function registerExportCommand(program: Command): void {
       if (parentOpts.dryRun) {
         info(`Would export ${items.length} item(s) to ${destPath}`);
         if (parentOpts.json) {
+          const dryRunItems = items.map((i) => ({ id: i.id, filename: i.filename }));
           printJson(
             dryRunPayload(
               {
                 operation: 'export',
                 count: items.length,
-                items: items.map((i) => ({ id: i.id, filename: i.filename })),
+                items: dryRunItems,
                 destination: destPath,
               },
               {
                 action: 'dry-run',
                 itemCount: items.length,
                 destination: destPath,
-                items: items.map((i) => ({ id: i.id, filename: i.filename })),
+                items: dryRunItems,
               },
             ),
           );

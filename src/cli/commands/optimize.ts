@@ -514,25 +514,15 @@ export function registerOptimizeCommand(program: Command): void {
           info(`  ... and ${items.length - 20} more`);
         }
         if (parentOpts.json) {
+          const dryRunItems = items.map((i) => ({
+            id: i.id,
+            filename: i.filename,
+            sizeBytes: i.sizeBytes,
+          }));
           printJson(
             dryRunPayload(
-              {
-                operation: 'optimize',
-                count: items.length,
-                items: items.map((i) => ({
-                  id: i.id,
-                  filename: i.filename,
-                  sizeBytes: i.sizeBytes,
-                })),
-              },
-              {
-                count: items.length,
-                items: items.map((i) => ({
-                  id: i.id,
-                  filename: i.filename,
-                  sizeBytes: i.sizeBytes,
-                })),
-              },
+              { operation: 'optimize', count: items.length, items: dryRunItems },
+              { count: items.length, items: dryRunItems },
             ),
           );
         }

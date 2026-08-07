@@ -706,7 +706,6 @@ export function registerTools(server: McpServer): void {
             opt(bArgv, '--profile', a.profile);
             if (a.stripMetadata === true) bArgv.push('--strip-metadata');
             else if (a.stripMetadata === false) bArgv.push('--no-strip-metadata');
-            flag(bArgv, '--dry-run', a.dryRun);
             return bArgv;
           },
           idArray,
@@ -866,7 +865,6 @@ export function registerTools(server: McpServer): void {
             opt(bArgv, '--model', a.model);
             opt(bArgv, '--language', a.language);
             flag(bArgv, '--overwrite', a.overwrite);
-            flag(bArgv, '--dry-run', a.dryRun);
             return bArgv;
           },
           idArray,
