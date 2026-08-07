@@ -968,14 +968,7 @@ localpress defines stable exit codes (`src/types.ts`):
 | 5 | Auth error (Application Password rejected) |
 | 6 | Capability unavailable (e.g. replace-in-place needs WP-CLI) |
 
-Most per-command failure paths honor this table and call `error()` (below) before exiting with the matching code.
-
-**Two exceptions exist today (tracked in [#128](https://github.com/gfargo/localpress/issues/128), open as of this writing) where the contract is NOT honored, even with `--json`:**
-
-1. An uncaught/unexpected error that bubbles past a command's own handling hits the top-level catch in `src/cli/index.ts` — it always prints plain text (`error: <message>`) to stderr and exits `1`, regardless of `--json`.
-2. Commander's own parse errors (unknown command, missing required argument) use commander's built-in behavior — plain text to stderr, exit `1` — not the documented `InvalidUsage` (2).
-
-An agent parsing exit codes should treat `1` as "generic failure, message is plain text OR JSON" rather than assuming JSON is always available, until #128 lands.
+Most per-command failure paths honor this table and call `error()` (below) before exiting with the matching code. This includes uncaught errors that bubble to the top-level catch in `src/cli/index.ts` and commander's own parse errors (unknown command, missing required argument), both of which map to `InvalidUsage` (2) and, with `--json`, emit structured JSON rather than plain text.
 
 In `--json` mode, errors and warnings emitted via the per-command `error()`/`warn()` helpers (`src/cli/utils/output.ts`) go to **stderr** as structured JSON — stdout carries only the data payload:
 
