@@ -291,6 +291,8 @@ With `--max-unoptimized-bytes <bytes>`, the output also includes a `budget` obje
 }
 ```
 
+With `--all-sites`, the top-level shape is always `{ "sites": [ ... ] }` (an object wrapping an array of per-site results as shown above), regardless of how many sites are configured — the shape does not flip between a bare object and a bare array.
+
 #### `references --json` output
 
 ```json
