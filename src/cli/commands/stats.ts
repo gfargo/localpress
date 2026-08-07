@@ -83,7 +83,7 @@ export function registerStatsCommand(program: Command): void {
       }
 
       if (parentOpts.json) {
-        printJson(results.length === 1 ? results[0] : results);
+        printJson(options.allSites ? { sites: results } : results[0]);
         return;
       }
 
