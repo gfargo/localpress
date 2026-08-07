@@ -18,6 +18,7 @@ import { parseIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { dryRunPayload } from '../utils/run-mode.ts';
 
 /** ZIP32 (classic ZIP) format limits — 32-bit size/offset fields, 16-bit entry count. */
 export const ZIP32_MAX_ENTRIES = 0xffff;
@@ -172,12 +173,22 @@ export function registerExportCommand(program: Command): void {
       if (parentOpts.dryRun) {
         info(`Would export ${items.length} item(s) to ${destPath}`);
         if (parentOpts.json) {
-          printJson({
-            action: 'dry-run',
-            itemCount: items.length,
-            destination: destPath,
-            items: items.map((i) => ({ id: i.id, filename: i.filename })),
-          });
+          printJson(
+            dryRunPayload(
+              {
+                operation: 'export',
+                count: items.length,
+                items: items.map((i) => ({ id: i.id, filename: i.filename })),
+                destination: destPath,
+              },
+              {
+                action: 'dry-run',
+                itemCount: items.length,
+                destination: destPath,
+                items: items.map((i) => ({ id: i.id, filename: i.filename })),
+              },
+            ),
+          );
         }
         return;
       }

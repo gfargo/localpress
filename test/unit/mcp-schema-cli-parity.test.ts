@@ -155,4 +155,62 @@ describe('MCP tool schema ↔ CLI flag parity', () => {
       }
     });
   }
+
+  /**
+   * Every mutating MCP tool must declare a `dryRun` arg and map it to
+   * `--dry-run` (OSS-1343 / #278) — otherwise an explicit-ID call (which
+   * executes immediately on the CLI side) is unreachable in preview mode
+   * from an MCP-speaking agent.
+   */
+  const MUTATING_TOOLS = [
+    'optimize',
+    'convert',
+    'resize',
+    'remove_bg',
+    'caption',
+    'generate_title',
+    'generate_description',
+    'vision',
+    'tag',
+    'rename',
+    'delete',
+    'update_metadata',
+    'push',
+    'regenerate',
+    'import',
+    'undo',
+    'posts_create',
+    'posts_update',
+    'posts_delete',
+  ];
+
+  test('parser found every expected mutating tool', () => {
+    const names = new Set(usages.map((u) => u.name));
+    for (const name of MUTATING_TOOLS) {
+      expect(names.has(name), `expected a registered tool named '${name}'`).toBe(true);
+    }
+  });
+
+  const starts: number[] = [];
+  const marker = 'server.registerTool(';
+  let idx = toolsSource.indexOf(marker);
+  while (idx !== -1) {
+    starts.push(idx);
+    idx = toolsSource.indexOf(marker, idx + marker.length);
+  }
+  const blocksByName = new Map<string, string>();
+  for (let i = 0; i < starts.length; i++) {
+    const block = toolsSource.slice(starts[i], starts[i + 1] ?? toolsSource.length);
+    const nameMatch = /server\.registerTool\(\s*['"]([\w]+)['"]/.exec(block);
+    if (nameMatch) blocksByName.set(nameMatch[1], block);
+  }
+
+  for (const name of MUTATING_TOOLS) {
+    test(`${name}: declares a dryRun arg mapped to --dry-run`, () => {
+      const block = blocksByName.get(name);
+      expect(block, `tool '${name}' not found in tools.ts`).toBeDefined();
+      expect(block).toContain('dryRun:');
+      expect(block).toMatch(/flag\(\s*(?:argv|bArgv),\s*['"]--dry-run['"]/);
+    });
+  }
 });

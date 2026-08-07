@@ -13,7 +13,7 @@ import type { ReferenceScope } from '../../adapters/types.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 export function registerReferencesCommand(program: Command): void {
   program
@@ -127,12 +127,21 @@ export function registerReferencesCommand(program: Command): void {
         }
 
         if (parentOpts.json) {
-          printJson({
-            action: 'update-references',
-            fromId: id,
-            toId: newId,
-            dryRun: isDryRun,
-          });
+          if (isDryRun) {
+            printJson(
+              dryRunPayload(
+                { operation: 'references.update', fromId: id, toId: newId },
+                { action: 'update-references', fromId: id, toId: newId },
+              ),
+            );
+          } else {
+            printJson({
+              action: 'update-references',
+              fromId: id,
+              toId: newId,
+              dryRun: false,
+            });
+          }
         }
         return;
       }

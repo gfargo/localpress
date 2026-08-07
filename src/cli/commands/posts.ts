@@ -12,7 +12,7 @@ import type { SiteConfig } from '../../types.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 interface WpPost {
   id: number;
@@ -355,7 +355,12 @@ export function registerPostsCommand(program: Command): void {
       if (resolveDryRun(parentOpts, false)) {
         warn(`[dry-run] would create ${options.type}: "${options.title}" [${options.status}]`);
         if (parentOpts.json) {
-          printJson({ dryRun: true, action: 'create', fields: body });
+          printJson(
+            dryRunPayload(
+              { operation: 'posts.create', fields: body },
+              { action: 'create', fields: body },
+            ),
+          );
         }
         return;
       }
@@ -456,7 +461,12 @@ export function registerPostsCommand(program: Command): void {
       if (resolveDryRun(parentOpts, false)) {
         warn(`[dry-run] would update ${options.type} #${id}: ${Object.keys(body).join(', ')}`);
         if (parentOpts.json) {
-          printJson({ dryRun: true, action: 'update', id, fields: body });
+          printJson(
+            dryRunPayload(
+              { operation: 'posts.update', items: [{ id }], fields: body },
+              { action: 'update', id, fields: body },
+            ),
+          );
         }
         return;
       }
@@ -517,7 +527,16 @@ export function registerPostsCommand(program: Command): void {
           `[dry-run] would ${options.force ? 'permanently delete' : 'trash'} ${options.type} #${id}`,
         );
         if (parentOpts.json) {
-          printJson({ dryRun: true, action: options.force ? 'delete' : 'trash', id });
+          printJson(
+            dryRunPayload(
+              {
+                operation: 'posts.delete',
+                items: [{ id }],
+                force: Boolean(options.force),
+              },
+              { action: options.force ? 'delete' : 'trash', id },
+            ),
+          );
         }
         return;
       }

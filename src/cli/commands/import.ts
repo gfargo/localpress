@@ -26,7 +26,7 @@ import type { ImageFormat } from '../../engine/image/types.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 /** Image extensions we recognize for import. */
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.avif', '.gif', '.svg']);
@@ -285,12 +285,22 @@ export function registerImportCommand(program: Command): void {
         if (options.optimize) info(`  with optimization (quality=${options.quality ?? 'default'})`);
         if (options.to) info(`  converting to: ${options.to}`);
         if (parentOpts.json) {
-          printJson({
-            action: 'dry-run',
-            fileCount: filesToImport.length,
-            site: site.name,
-            files: filesToImport.map((f) => basename(f.path)),
-          });
+          printJson(
+            dryRunPayload(
+              {
+                operation: 'import',
+                count: filesToImport.length,
+                items: filesToImport.map((f) => ({ file: basename(f.path) })),
+                site: site.name,
+              },
+              {
+                action: 'dry-run',
+                fileCount: filesToImport.length,
+                site: site.name,
+                files: filesToImport.map((f) => basename(f.path)),
+              },
+            ),
+          );
         }
         return;
       }

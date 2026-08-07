@@ -16,7 +16,7 @@ import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { MediaItem } from '../../adapters/types.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 export function registerRegenerateCommand(program: Command): void {
   program
@@ -90,7 +90,12 @@ export function registerRegenerateCommand(program: Command): void {
           `Dry-run: would regenerate thumbnails for ${ids.length} attachment(s). Pass --apply to execute.`,
         );
         if (parentOpts.json) {
-          printJson({ dryRun: true, count: ids.length, ids });
+          printJson(
+            dryRunPayload(
+              { operation: 'regenerate', count: ids.length, items: ids.map((id) => ({ id })) },
+              { count: ids.length, ids },
+            ),
+          );
         }
         return;
       }

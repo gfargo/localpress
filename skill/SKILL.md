@@ -387,9 +387,18 @@ When a result changed the file's format via WP-CLI replace-in-place (e.g. PNG �
   "count": 45,
   "items": [
     { "id": 123, "filename": "photo.jpg", "sizeBytes": 524288 }
-  ]
+  ],
+  "changes": {
+    "operation": "optimize",
+    "count": 45,
+    "items": [
+      { "id": 123, "filename": "photo.jpg", "sizeBytes": 524288 }
+    ]
+  }
 }
 ```
+
+`convert`, `resize`, `remove-bg`, and `regenerate` follow the same shape (see [Dry-run output contract](#dry-run-output-contract)).
 
 ```bash
 # Generate alt text for specific attachments (requires Ollama running locally)
@@ -490,6 +499,8 @@ The generated text (whether a title or a description) is always under `generated
 }
 ```
 
+When `dryRun` is `true` (bulk without `--apply`, or explicit `--dry-run`), the payload additionally carries `changes: { "operation": "title"|"describe", "count": N, "items": [{ "id", "filename" }, …] }` — see [Dry-run output contract](#dry-run-output-contract). `caption` follows the same pattern.
+
 #### `classify --json` output
 
 ```json
@@ -534,6 +545,8 @@ The generated text (whether a title or a description) is always under `generated
 }
 ```
 
+`vision` is print-only by default (`applied: false`) — in that mode the payload also carries `dryRun: true` and `changes: { "operation": "vision", "count": N, "items": [{ "id", "filename" }, …] }`.
+
 #### `metadata --json` output
 
 ```json
@@ -554,6 +567,8 @@ The generated text (whether a title or a description) is always under `generated
 }
 ```
 
+Passing global `--dry-run` returns `{ "dryRun": true, "ids": [123], "changes": { "operation": "metadata", "count": 1, "items": [{ "id": 123 }], "fields": { "altText": "Screenshot of the dashboard", "title": "Dashboard overview" } } }` instead and writes nothing. Note the top-level `changes` here is the normalized block (`operation`/`count`/`items`/`fields`), not the same shape as the per-result `changes` shown above.
+
 #### `rename --json` output
 
 ```json
@@ -566,7 +581,7 @@ The generated text (whether a title or a description) is always under `generated
 }
 ```
 
-`rename` updates the WordPress slug (`post_name` / permalink) only — it does not rename the underlying file on disk.
+`rename` updates the WordPress slug (`post_name` / permalink) only — it does not rename the underlying file on disk. When `dryRun` is `true`, the payload also carries `changes: { "operation": "rename", "count": N, "items": [{ "id", "filename" }, …] }`.
 
 ### Content management (posts, delete, a11y)
 
@@ -622,7 +637,7 @@ Same item shape as `posts list`, plus `content` (string), `categories` (number[]
 { "action": "created", "post": { "id": 46, "title": "New Post", "status": "draft", "type": "post", "date": "…", "modified": "…", "slug": "new-post", "link": "…", "author": 1, "featuredMedia": 0 } }
 ```
 
-`posts update` uses `"action": "updated"`. Passing global `--dry-run` returns `{ "dryRun": true, "action": "update", "id": 45, "fields": { ... } }` instead and makes no request.
+`posts update` uses `"action": "updated"`. Passing global `--dry-run` returns `{ "dryRun": true, "action": "update", "id": 45, "fields": { ... }, "changes": { "operation": "posts.update", "items": [{ "id": 45 }], "fields": { ... } } }` instead and makes no request. `posts create` dry-run returns `{ "dryRun": true, "action": "create", "fields": { ... }, "changes": { "operation": "posts.create", "fields": { ... } } }`.
 
 #### `posts delete --json` output
 
@@ -630,7 +645,7 @@ Same item shape as `posts list`, plus `content` (string), `categories` (number[]
 { "action": "trashed", "id": 45 }
 ```
 
-`action` is `"deleted"` when `--force` is passed. Global `--dry-run` returns `{ "dryRun": true, "action": "trash"|"delete", "id": 45 }` instead.
+`action` is `"deleted"` when `--force` is passed. Global `--dry-run` returns `{ "dryRun": true, "action": "trash"|"delete", "id": 45, "changes": { "operation": "posts.delete", "items": [{ "id": 45 }], "force": false } }` instead.
 
 #### `delete --json` output
 
@@ -643,7 +658,7 @@ Same item shape as `posts list`, plus `content` (string), `categories` (number[]
 }
 ```
 
-Global `--dry-run` returns `{ "dryRun": true, "force": false, "ids": [123, 124] }` and deletes nothing.
+Global `--dry-run` returns `{ "dryRun": true, "force": false, "ids": [123, 124], "changes": { "operation": "delete", "count": 2, "items": [{ "id": 123 }, { "id": 124 }], "force": false } }` and deletes nothing.
 
 #### `a11y --json` output
 
@@ -755,6 +770,8 @@ localpress import ./photos/ --dry-run --json
 }
 ```
 
+Global `--dry-run` returns `{ "dryRun": true, "itemCount": 42, "destination": "./backup.zip", "items": [...], "changes": { "operation": "export", "count": 42, "items": [{ "id", "filename" }, …], "destination": "./backup.zip" } }` and downloads nothing. (`export` itself never mutates WordPress — the dry-run gate exists to preview a large local download before it starts.)
+
 #### `import --json` output
 
 ```json
@@ -775,6 +792,8 @@ localpress import ./photos/ --dry-run --json
 ```
 
 When `idMappings` is non-empty (only populated with `--preserve-metadata` against a manifest), run `localpress references <oldId> --update-to <newId>` for each mapping to rewrite references from the old site to the new attachment IDs.
+
+`import --dry-run --json` returns `{ "dryRun": true, "fileCount": N, "site": "production", "files": [...], "changes": { "operation": "import", "count": N, "items": [{ "file" }, …], "site": "production" } }` instead and uploads nothing. Neither `export` nor `import` use `action: "dry-run"` as a discriminator any more — `dryRun: true` is the only signal to check.
 ### Maintenance (regenerate, watch, watch-status, update, completions)
 
 ```bash
@@ -803,7 +822,7 @@ localpress completions bash >> ~/.bashrc
 { "succeeded": 2, "failed": 0, "total": 2, "results": [{ "id": 123, "status": "success" }, { "id": 124, "status": "success" }] }
 ```
 
-Bulk `--all` without `--apply` returns `{ "dryRun": true, "count": N, "ids": [...] }` instead and regenerates nothing.
+Bulk `--all` without `--apply` returns `{ "dryRun": true, "count": N, "ids": [...], "changes": { "operation": "regenerate", "count": N, "items": [{ "id" }, …] } }` instead and regenerates nothing.
 
 #### `watch` output — a stream of NDJSON events, not one terminal JSON blob
 
@@ -863,7 +882,12 @@ localpress push ./optimized.webp --json
 
 # Upload as a replacement for an existing attachment
 localpress push ./optimized.webp --replace 123 --json
+
+# Preview without uploading
+localpress push ./optimized.webp --replace 123 --dry-run --json
 ```
+
+`push --dry-run --json` returns `{ "dryRun": true, "file": "optimized.webp", "replace": 123, "changes": { "operation": "push", "items": [{ "file": "optimized.webp", "replace": 123 }], "fields": { "title": "...", "altText": "...", "caption": "...", "description": "..." } } }` and uploads nothing. `changes.fields` only includes whichever of `--title`/`--alt`/`--caption`/`--description` were actually passed.
 
 ### Time machine (history, undo)
 
@@ -920,7 +944,16 @@ localpress undo --attachment 123 --json       # most recent un-restored snapshot
 Dry-run (default for session-targeted undo):
 
 ```json
-{ "dryRun": true, "count": 3, "snapshots": [{ "id": 42, "attachmentId": 123, "operation": "optimize", "kind": "binary", "filename": "hero.jpg" }] }
+{
+  "dryRun": true,
+  "count": 3,
+  "snapshots": [{ "id": 42, "attachmentId": 123, "operation": "optimize", "kind": "binary", "filename": "hero.jpg" }],
+  "changes": {
+    "operation": "undo",
+    "count": 3,
+    "items": [{ "id": 42, "attachmentId": 123, "operation": "optimize", "kind": "binary", "filename": "hero.jpg" }]
+  }
+}
 ```
 
 Executed (`--apply`, or always for `--snapshot`/`--attachment` targeting):
@@ -955,6 +988,19 @@ The MCP server exposes the same functionality as the CLI (47+ tools + 4 resource
 | `--strict` | Fail loudly when capability fallbacks would activate |
 | `--concurrency <n>` | Parallel workers for bulk ops |
 | `--yes` | Skip confirmation prompts |
+
+### Dry-run output contract
+
+Every mutating command's `--json` dry-run payload uses the same discriminator and carries a normalized `changes` block, regardless of command:
+
+```json
+{ "dryRun": true, "changes": { "operation": "optimize", "count": 2, "items": [{ "id": 123, "filename": "hero.jpg" }] } }
+```
+
+- `dryRun` is always the boolean discriminator — never `action: "dry-run"`.
+- `changes.operation` identifies the command (e.g. `"optimize"`, `"posts.update"`).
+- `changes.count` + `changes.items` describe bulk/list operations; `changes.fields` describes a single-record field diff (e.g. `metadata`, `posts create`/`update`).
+- Each command's pre-existing top-level fields (`count`, `ids`, `results`, `id`, `fields`, …) are kept alongside `changes` for backward compatibility — `changes` is additive, not a replacement.
 
 ## Error handling
 

@@ -27,7 +27,7 @@ import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 const VALID_FORMATS = new Set(['webp', 'avif', 'jpeg', 'png']);
 
@@ -55,7 +55,17 @@ export function registerConvertCommand(program: Command): void {
           `Dry-run: would convert ${ids.length} attachment(s) → ${targetFormat}. Omit --dry-run to execute.`,
         );
         if (parentOpts.json) {
-          printJson({ dryRun: true, count: ids.length, ids, to: targetFormat });
+          printJson(
+            dryRunPayload(
+              {
+                operation: 'convert',
+                count: ids.length,
+                items: ids.map((id) => ({ id })),
+                to: targetFormat,
+              },
+              { count: ids.length, ids, to: targetFormat },
+            ),
+          );
         }
         return;
       }

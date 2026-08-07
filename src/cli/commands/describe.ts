@@ -16,7 +16,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunItemsFromResults, dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 export function registerDescribeCommand(program: Command): void {
   program
@@ -139,10 +139,20 @@ export function registerDescribeCommand(program: Command): void {
       db.close();
 
       if (parentOpts.json) {
-        printJson({
-          dryRun: isDryRun,
-          ...result,
-        });
+        if (isDryRun) {
+          printJson(
+            dryRunPayload(
+              {
+                operation: 'describe',
+                count: result.processed,
+                items: dryRunItemsFromResults(result.results),
+              },
+              result,
+            ),
+          );
+        } else {
+          printJson({ dryRun: false, ...result });
+        }
         return;
       }
 

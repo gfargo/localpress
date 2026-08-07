@@ -29,7 +29,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 interface DeleteResultRecord {
   id: number;
@@ -69,7 +69,17 @@ export function registerDeleteCommand(program: Command): void {
           info(`  would delete #${id}${options.force ? ' (permanent)' : ' (to trash)'}`);
         }
         if (parentOpts.json) {
-          printJson({ dryRun: true, force: Boolean(options.force), ids });
+          printJson(
+            dryRunPayload(
+              {
+                operation: 'delete',
+                count: ids.length,
+                items: ids.map((id) => ({ id })),
+                force: Boolean(options.force),
+              },
+              { force: Boolean(options.force), ids },
+            ),
+          );
         }
         return;
       }

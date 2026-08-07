@@ -29,7 +29,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 interface MetadataResultRecord {
   id: number;
@@ -78,7 +78,17 @@ export function registerMetadataCommand(program: Command): void {
         const fields = Object.keys(incoming).join(', ');
         warn(`[dry-run] would set ${fields} on ${ids.length} attachment(s): ${ids.join(', ')}`);
         if (parentOpts.json) {
-          printJson({ dryRun: true, ids, changes: incoming });
+          printJson(
+            dryRunPayload(
+              {
+                operation: 'metadata',
+                count: ids.length,
+                items: ids.map((id) => ({ id })),
+                fields: incoming,
+              },
+              { ids },
+            ),
+          );
         }
         return;
       }
