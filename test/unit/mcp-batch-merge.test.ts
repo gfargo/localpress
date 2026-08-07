@@ -52,6 +52,58 @@ describe('mergeBatchedOutputs', () => {
     expect(merged.dryRun).toBe(true);
     expect(merged.results).toEqual([{ id: 1 }]);
   });
+
+  test('merges the dry-run `changes` block across chunks instead of keeping only the first (N-05 regression)', () => {
+    const chunk = (start: number, count: number) => ({
+      dryRun: true,
+      processed: count,
+      changes: {
+        operation: 'optimize',
+        count,
+        items: Array.from({ length: count }, (_, i) => ({ id: start + i })),
+      },
+    });
+
+    const merged = mergeBatchedOutputs([chunk(1, 5), chunk(6, 5)]);
+
+    expect(merged.processed).toBe(10);
+    expect(merged.changes).toEqual({
+      operation: 'optimize',
+      count: 10,
+      items: [
+        { id: 1 },
+        { id: 2 },
+        { id: 3 },
+        { id: 4 },
+        { id: 5 },
+        { id: 6 },
+        { id: 7 },
+        { id: 8 },
+        { id: 9 },
+        { id: 10 },
+      ],
+    });
+  });
+
+  test('keeps `fields` from the first chunk when merging a metadata-shaped `changes` block', () => {
+    const merged = mergeBatchedOutputs([
+      {
+        dryRun: true,
+        changes: { operation: 'metadata', count: 1, items: [{ id: 1 }], fields: { title: 'a' } },
+      },
+      {
+        dryRun: true,
+        changes: { operation: 'metadata', count: 1, items: [{ id: 2 }], fields: { title: 'a' } },
+      },
+    ]);
+
+    expect(merged.changes).toEqual({
+      operation: 'metadata',
+      count: 2,
+      items: [{ id: 1 }, { id: 2 }],
+      fields: { title: 'a' },
+    });
+  });
 });
 
 describe('resolveChunkOutput', () => {

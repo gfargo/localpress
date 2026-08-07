@@ -130,6 +130,13 @@ const BATCH_CHUNK_SIZE = 5;
  * boolean field is OR'd across chunks. This way each command's native JSON
  * contract (e.g. caption's `dryRun`/`skipped`, optimize's `totalSavedBytes`)
  * is preserved rather than coerced into one shared shape.
+ *
+ * `changes` (the standardized dry-run block, see `dryRunPayload()` in
+ * run-mode.ts) gets its own merge: `count` sums and `items` concatenates
+ * across chunks, `operation`/`fields` are taken from the first chunk that has
+ * them. Without this, `changes` — being a plain object — would fall into the
+ * catch-all "first chunk wins" branch below and silently under-report a
+ * batched dry-run's full pending change set.
  */
 export function mergeBatchedOutputs(
   outputs: Array<Record<string, unknown>>,
@@ -143,6 +150,10 @@ export function mergeBatchedOutputs(
         if (Array.isArray(value)) allResults.push(...value);
         continue;
       }
+      if (key === 'changes' && isPlainObject(value)) {
+        merged.changes = mergeChanges(merged.changes, value);
+        continue;
+      }
       if (typeof value === 'number') {
         merged[key] = ((merged[key] as number) ?? 0) + value;
       } else if (typeof value === 'boolean') {
@@ -154,6 +165,26 @@ export function mergeBatchedOutputs(
   }
 
   merged.results = allResults;
+  return merged;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function mergeChanges(existing: unknown, next: Record<string, unknown>): Record<string, unknown> {
+  if (!isPlainObject(existing)) return { ...next };
+
+  const merged: Record<string, unknown> = { ...existing };
+  for (const [key, value] of Object.entries(next)) {
+    if (key === 'count' && typeof value === 'number') {
+      merged.count = ((merged.count as number) ?? 0) + value;
+    } else if (key === 'items' && Array.isArray(value)) {
+      merged.items = Array.isArray(merged.items) ? [...merged.items, ...value] : [...value];
+    } else if (!(key in merged)) {
+      merged[key] = value;
+    }
+  }
   return merged;
 }
 
@@ -659,8 +690,11 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--dry-run', a.dryRun);
 
       // Use batched processing for explicit IDs to avoid timeouts on large sets.
+      // Dry-runs do no per-image processing, so the timeout batching guards
+      // against can't happen here — run them as a single call so the
+      // `changes` block covers every ID instead of just the first chunk.
       const idArray = Array.isArray(a.ids) ? (a.ids as number[]) : [];
-      if (idArray.length > BATCH_CHUNK_SIZE) {
+      if (idArray.length > BATCH_CHUNK_SIZE && a.dryRun !== true) {
         return runCliBatched(
           (batchIds) => {
             const bArgv = ['optimize', ...batchIds.map(String)];
@@ -822,8 +856,10 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--dry-run', a.dryRun);
 
       // Batch explicit IDs to avoid timeouts (each image takes 2-30s via Ollama).
+      // Dry-runs do no per-image Ollama work, so run them unbatched — the
+      // `changes` block then covers every ID instead of just the first chunk.
       const idArray = Array.isArray(a.ids) ? (a.ids as number[]) : [];
-      if (idArray.length > BATCH_CHUNK_SIZE) {
+      if (idArray.length > BATCH_CHUNK_SIZE && a.dryRun !== true) {
         return runCliBatched(
           (batchIds) => {
             const bArgv = ['caption', ...batchIds.map(String)];
