@@ -13,7 +13,80 @@
  * All codecs are lazy-loaded so they don't affect CLI boot time.
  */
 
+import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { simd, threads } from 'wasm-feature-detect';
 import type { ImageFormat } from './types.ts';
+
+const require = createRequire(import.meta.url);
+
+/**
+ * Read a `.wasm` file's bytes off disk. jSquash's emscripten codecs are built
+ * for `-sENVIRONMENT=web,worker`; their only non-throwing load path is
+ * `WebAssembly.instantiateStreaming`, which Bun doesn't implement. Feeding
+ * `wasmBinary` directly via `init()` bypasses that path entirely — emscripten
+ * only reaches for streaming fetch when `wasmBinary` is unset.
+ */
+async function loadWasmBinary(specifier: string): Promise<ArrayBuffer> {
+  const buf = await readFile(require.resolve(specifier));
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+
+let jpegReady: Promise<void> | undefined;
+async function ensureJpeg(): Promise<void> {
+  if (!jpegReady) {
+    jpegReady = (async () => {
+      const [{ init }, wasmBinary] = await Promise.all([
+        import('@jsquash/jpeg/encode'),
+        loadWasmBinary('@jsquash/jpeg/codec/enc/mozjpeg_enc.wasm'),
+      ]);
+      await init({ wasmBinary });
+    })();
+  }
+  await jpegReady;
+}
+
+let webpReady: Promise<void> | undefined;
+async function ensureWebp(): Promise<void> {
+  if (!webpReady) {
+    webpReady = (async () => {
+      const [{ init }, useSimd] = await Promise.all([import('@jsquash/webp/encode'), simd()]);
+      const wasmBinary = await loadWasmBinary(
+        useSimd
+          ? '@jsquash/webp/codec/enc/webp_enc_simd.wasm'
+          : '@jsquash/webp/codec/enc/webp_enc.wasm',
+      );
+      await init({ wasmBinary });
+    })();
+  }
+  await webpReady;
+}
+
+let avifReady: Promise<void> | undefined;
+async function ensureAvif(): Promise<void> {
+  if (!avifReady) {
+    avifReady = (async () => {
+      // Mirrors @jsquash/avif/encode.js's own selection logic so the WASM
+      // bytes we preload match the variant its glue expects to import.
+      const isRunningInNode =
+        typeof process !== 'undefined' && !!process.release && process.release.name === 'node';
+      const isRunningInCloudflareWorker =
+        (globalThis as { caches?: { default?: unknown } }).caches?.default !== undefined;
+      const useMultiThread = !isRunningInNode && !isRunningInCloudflareWorker && (await threads());
+
+      const [{ init }, wasmBinary] = await Promise.all([
+        import('@jsquash/avif/encode'),
+        loadWasmBinary(
+          useMultiThread
+            ? '@jsquash/avif/codec/enc/avif_enc_mt.wasm'
+            : '@jsquash/avif/codec/enc/avif_enc.wasm',
+        ),
+      ]);
+      await init({ wasmBinary });
+    })();
+  }
+  await avifReady;
+}
 
 /**
  * Encode raw pixel data using a jSquash WASM codec.
@@ -35,6 +108,7 @@ export async function jsquashEncode(
 
   switch (format) {
     case 'jpeg': {
+      await ensureJpeg();
       const jpegMod = await import('@jsquash/jpeg');
       const result = (await jpegMod.encode(imageData, { quality })) as ArrayBuffer;
       return { bytes: Buffer.from(result), codec: 'jsquash/mozjpeg' };
@@ -55,12 +129,14 @@ export async function jsquashEncode(
     }
 
     case 'webp': {
+      await ensureWebp();
       const webpMod = await import('@jsquash/webp');
       const result = (await webpMod.encode(imageData, { quality })) as ArrayBuffer;
       return { bytes: Buffer.from(result), codec: 'jsquash/webp' };
     }
 
     case 'avif': {
+      await ensureAvif();
       const avifMod = await import('@jsquash/avif');
       const result = (await avifMod.encode(imageData, {
         quality,
