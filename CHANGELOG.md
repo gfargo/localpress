@@ -5,6 +5,24 @@ All notable changes to localpress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0](https://github.com/gfargo/localpress/compare/v2.5.0...v2.6.0) (2026-08-08)
+
+
+### Features
+
+* **dry-run:** standardize one dry-run contract across every command ([#310](https://github.com/gfargo/localpress/issues/310)) ([d74700e](https://github.com/gfargo/localpress/commit/d74700e9445492aa5e2813cf9ae0c76600aaa308))
+
+
+### Bug Fixes
+
+* **jsquash:** preload WASM binaries so mozjpeg/webp/avif codecs load under Bun ([#311](https://github.com/gfargo/localpress/issues/311)) ([9e15db2](https://github.com/gfargo/localpress/commit/9e15db2f28ba8a7fd50326c1556ed8c878481dc8))
+* **stats:** stabilize --all-sites --json shape ([#307](https://github.com/gfargo/localpress/issues/307)) ([39ef2e6](https://github.com/gfargo/localpress/commit/39ef2e6b4889494e5c1246ff5db0ecd370d7d64e))
+
+
+### Documentation
+
+* **skill:** remove stale exit-code exceptions section ([#308](https://github.com/gfargo/localpress/issues/308)) ([7051531](https://github.com/gfargo/localpress/commit/7051531b1b4aae6d0b8654be3021bc2e58d275ff))
+
 ## [2.5.0](https://github.com/gfargo/localpress/compare/v2.4.5...v2.5.0) (2026-08-02)
 
 
