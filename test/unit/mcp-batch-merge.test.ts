@@ -10,7 +10,11 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { mergeBatchedOutputs, resolveChunkOutput } from '../../src/cli/mcp/tools.ts';
+import {
+  mergeBatchedOutputs,
+  resolveChunkOutput,
+  shapeCliResponse,
+} from '../../src/cli/mcp/tools.ts';
 
 describe('mergeBatchedOutputs', () => {
   test('preserves caption shape (dryRun/skipped) and omits totalSavedBytes', () => {
@@ -159,5 +163,74 @@ describe('resolveChunkOutput', () => {
 
     expect(output).toEqual(stdout);
     expect(stderrNote).toBeUndefined();
+  });
+});
+
+describe('shapeCliResponse', () => {
+  test('a non-zero exit with a parseable JSON object attaches structuredContent and is not an error (#272)', () => {
+    const stdout = { deleted: 2, failures: 1, results: [{ id: 1 }, { id: 2 }] };
+    const response = shapeCliResponse({ ok: false, stdout, stderr: '', exitCode: 4 });
+
+    expect(response.isError).toBeUndefined();
+    expect(response.structuredContent).toEqual(stdout);
+    expect(response.content[0].text).toContain('exit 4');
+  });
+
+  test('a non-zero exit with array stdout (NDJSON) is still a hard error', () => {
+    const response = shapeCliResponse({
+      ok: false,
+      stdout: [{ id: 1 }, { id: 2 }],
+      stderr: '',
+      exitCode: 1,
+    });
+
+    expect(response.isError).toBe(true);
+    expect((response as { structuredContent?: unknown }).structuredContent).toBeUndefined();
+  });
+
+  test('a non-zero exit with raw text stdout is a hard error', () => {
+    const response = shapeCliResponse({ ok: false, stdout: 'boom', stderr: '', exitCode: 1 });
+
+    expect(response.isError).toBe(true);
+    expect(response.content[0].text).toContain('boom');
+    expect(response.content[0].text).toContain('(exit 1)');
+    expect((response as { structuredContent?: unknown }).structuredContent).toBeUndefined();
+  });
+
+  test('a non-zero exit with null stdout (spawn error) is a hard error', () => {
+    const response = shapeCliResponse({
+      ok: false,
+      stdout: null,
+      stderr: 'spawn failed',
+      exitCode: -1,
+    });
+
+    expect(response.isError).toBe(true);
+    expect((response as { structuredContent?: unknown }).structuredContent).toBeUndefined();
+  });
+
+  test('a successful run with object stdout attaches structuredContent and includes stderr in text', () => {
+    const stdout = { processed: 3 };
+    const response = shapeCliResponse({
+      ok: true,
+      stdout,
+      stderr: 'a warning',
+      exitCode: 0,
+    });
+
+    expect(response.isError).toBeUndefined();
+    expect(response.structuredContent).toEqual(stdout);
+    expect(response.content[0].text).toContain('--- stderr ---\na warning');
+  });
+
+  test('a successful run with array stdout wraps structuredContent in items', () => {
+    const response = shapeCliResponse({
+      ok: true,
+      stdout: [{ id: 1 }, { id: 2 }],
+      stderr: '',
+      exitCode: 0,
+    });
+
+    expect(response.structuredContent).toEqual({ items: [{ id: 1 }, { id: 2 }] });
   });
 });
