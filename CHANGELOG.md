@@ -5,6 +5,29 @@ All notable changes to localpress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0](https://github.com/gfargo/localpress/compare/v2.5.0...v2.6.0) (2026-08-08)
+
+
+### Features
+
+* **dry-run:** standardize one dry-run contract across every command ([#310](https://github.com/gfargo/localpress/issues/310)) ([d74700e](https://github.com/gfargo/localpress/commit/d74700e9445492aa5e2813cf9ae0c76600aaa308))
+* **mcp:** expose verify on the agent surface (MCP tool, SKILL.md, README) ([#314](https://github.com/gfargo/localpress/issues/314)) ([3ab87f5](https://github.com/gfargo/localpress/commit/3ab87f572a5022051329f07ffe7a7245c9337364))
+
+
+### Bug Fixes
+
+* **jsquash:** preload WASM binaries so mozjpeg/webp/avif codecs load under Bun ([#311](https://github.com/gfargo/localpress/issues/311)) ([9e15db2](https://github.com/gfargo/localpress/commit/9e15db2f28ba8a7fd50326c1556ed8c878481dc8))
+* **mcp:** preserve structuredContent on non-zero-exit partial failures ([#313](https://github.com/gfargo/localpress/issues/313)) ([7309f7e](https://github.com/gfargo/localpress/commit/7309f7e1c725f993681a84fe290a551b3a4a7147))
+* **stats:** stabilize --all-sites --json shape ([#307](https://github.com/gfargo/localpress/issues/307)) ([39ef2e6](https://github.com/gfargo/localpress/commit/39ef2e6b4889494e5c1246ff5db0ecd370d7d64e))
+* **stats:** stats Optimized count no longer includes non-image ops ([#312](https://github.com/gfargo/localpress/issues/312)) ([00cd227](https://github.com/gfargo/localpress/commit/00cd2273cf2ffd39d9e69625e00fec69d45c94b7))
+
+
+### Documentation
+
+* fix version/schema/count drift in CLAUDE.md, README.md, SKILL.md ([#315](https://github.com/gfargo/localpress/issues/315)) ([2869378](https://github.com/gfargo/localpress/commit/28693781596d2f8ef388644894e7c515d1545654))
+* **skill:** fix remaining SKILL.md JSON-example drift ([#316](https://github.com/gfargo/localpress/issues/316)) ([9472fc8](https://github.com/gfargo/localpress/commit/9472fc8a240919b7b2bb7ace44ec7b81fbef3781))
+* **skill:** remove stale exit-code exceptions section ([#308](https://github.com/gfargo/localpress/issues/308)) ([7051531](https://github.com/gfargo/localpress/commit/7051531b1b4aae6d0b8654be3021bc2e58d275ff))
+
 ## [2.5.0](https://github.com/gfargo/localpress/compare/v2.4.5...v2.5.0) (2026-08-02)
 
 
