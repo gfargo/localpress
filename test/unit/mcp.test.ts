@@ -56,6 +56,7 @@ describe('mcp server', () => {
       expect(names).toContain('optimize');
       expect(names).toContain('caption');
       expect(names).toContain('remove_bg');
+      expect(names).toContain('verify');
 
       // Sanity: we expose ≥ 20 tools.
       expect(tools.length).toBeGreaterThanOrEqual(20);
