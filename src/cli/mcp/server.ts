@@ -28,7 +28,7 @@ export async function startMcpServer(): Promise<void> {
         resources: {},
       },
       instructions:
-        "localpress is a CLI for local-compute WordPress media optimization. Tools call the local CLI, which talks to the user's configured WordPress site via REST + Application Passwords (and optionally WP-CLI over SSH). Every tool accepts an optional `site` arg; when omitted, the active site from config is used. Bulk ops (list+optimize/convert/resize/caption with --unoptimized or --all) are dry-run by default — pass `apply: true` to execute.",
+        "localpress is a CLI for local-compute WordPress media optimization. Tools call the local CLI, which talks to the user's configured WordPress site via REST + Application Passwords (and optionally WP-CLI over SSH). Every tool accepts an optional `site` arg; when omitted, the active site from config is used. Bulk ops targeted with --all/--unoptimized/--missing-* (optimize, and the caption family: caption/title/describe/tag) are dry-run by default — pass `apply: true` to execute.",
     },
   );
 

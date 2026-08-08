@@ -216,7 +216,7 @@ localpress references 123 --json
 
 #### `list --json` output
 
-The top-level shape is an object with pagination metadata, **not** a bare array (`src/cli/commands/list.ts:437`):
+The top-level shape is an object with pagination metadata, **not** a bare array (`src/cli/commands/list.ts:394`):
 
 ```json
 {
@@ -246,6 +246,7 @@ The top-level shape is an object with pagination metadata, **not** a bare array 
 {
   "site": "production",
   "totalItems": 150,
+  "prunedAttachments": 0,
   "findings": [
     { "type": "unoptimized", "attachmentId": 123, "filename": "photo.jpg", "detail": "Not yet processed" },
     { "type": "large", "attachmentId": 456, "filename": "banner.png", "detail": "2.4 MB (threshold: 1.0 MB)" },
@@ -256,7 +257,7 @@ The top-level shape is an object with pagination metadata, **not** a bare array 
     { "type": "quality", "attachmentId": 404, "filename": "blurry.jpg", "detail": "motion blur on subject" },
     { "type": "ocr-match", "attachmentId": 505, "filename": "banner.jpg", "detail": "title bar reads \"Sale\"" }
   ],
-  "summary": { "unoptimized": 45, "large": 12, "missingAlt": 23, "displaySize": 8, "duplicates": 3, "brokenRefs": 2, "orphan": 0, "missingFile": 0, "quality": 1, "ocrMatch": 1 }
+  "summary": { "unoptimized": 45, "large": 12, "missingAlt": 23, "displaySize": 8, "duplicates": 3, "brokenRefs": 2, "orphan": 0, "missingFile": 0, "unattached": 0, "quality": 1, "ocrMatch": 1 }
 }
 ```
 
@@ -431,7 +432,9 @@ localpress caption --list-models --json
 
 ```json
 {
+  "dryRun": false,
   "processed": 3,
+  "skipped": 0,
   "failures": 0,
   "results": [
     {
@@ -670,9 +673,14 @@ Global `--dry-run` returns `{ "dryRun": true, "force": false, "ids": [123, 124],
     { "type": "generic-link-text", "postId": 45, "postTitle": "Summer Sale", "detail": "Link text \"click here\" is not descriptive of its destination", "element": "<a href=\"/shop\">click here</a>" },
     { "type": "missing-img-alt", "postId": 67, "postTitle": "Gallery", "detail": "Image in content has no alt attribute", "element": "<img src=\"...\">" }
   ],
-  "summary": { "headingSkip": 0, "multipleH1": 1, "genericLinkText": 3, "missingImgAlt": 2, "emptyLink": 0 }
+  "summary": { "headingSkip": 0, "multipleH1": 1, "genericLinkText": 3, "missingImgAlt": 2, "emptyLink": 0 },
+  "errors": [],
+  "truncated": [],
+  "complete": true
 }
 ```
+
+When fetching a post's content fails partway through the scan, `errors` is non-empty and the process exits **4** (`ExitCode.NetworkError`) — but the payload above is still emitted in full, with `findings`/`summary` reflecting whatever was successfully checked. Don't treat a non-zero exit from `a11y --json` as "no output": parse the partial payload and inspect `errors` for what was skipped.
 
 ### Site briefing
 
@@ -1019,7 +1027,7 @@ The MCP server exposes the same functionality as the CLI (47+ tools + 4 resource
 | Flag | Effect |
 | --- | --- |
 | `--site <name>` | Override the active site for this command |
-| `--json` | Machine-readable NDJSON output (always use from agents) |
+| `--json` | Machine-readable output: a single JSON object/array per command (always use from agents). Exception: `watch` streams NDJSON, one JSON event per line, until Ctrl+C. |
 | `--quiet` | Errors only; suppress info messages |
 | `--dry-run` | Show what would happen without executing |
 | `--apply` | Execute bulk operations (overrides default dry-run) |
