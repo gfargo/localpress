@@ -684,6 +684,43 @@ describe('processing history — skipped status and revert (localpress#97)', () 
     expect(db.getLibraryOverview('test-site').unoptimized).toBe(1);
     db.close();
   });
+
+  test('getLibraryOverview does not count a caption pass as optimized', () => {
+    const db = createTestDb();
+    const now = Date.now();
+
+    db.upsertAttachment({
+      siteName: 'test-site',
+      wpId: 1,
+      sourceUrl: 'https://example.test/img-1.jpg',
+      sourceHash: null,
+      sizeBytes: 1000,
+      width: null,
+      height: null,
+      mimeType: 'image/jpeg',
+      lastSeenAt: now,
+    });
+
+    db.recordProcessing({
+      siteName: 'test-site',
+      wpId: 1,
+      operation: 'caption',
+      paramsJson: null,
+      sourceHash: 'h1',
+      resultHash: 'h1',
+      bytesBefore: null,
+      bytesAfter: null,
+      resultWpId: null,
+      ranAt: now,
+      durationMs: 50,
+      status: 'success',
+      errorMessage: null,
+    });
+
+    expect(db.getLibraryOverview('test-site').optimized).toBe(0);
+    expect(db.getLibraryOverview('test-site').unoptimized).toBe(1);
+    db.close();
+  });
 });
 
 describe('pruneStaleAttachments', () => {

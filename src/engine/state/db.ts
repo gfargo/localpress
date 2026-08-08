@@ -324,13 +324,15 @@ export class SiteDb {
       )
       .get(siteName) as { total_attachments: number; total_size_bytes: number } | null;
 
+    const placeholders = OPTIMIZE_OPERATIONS.map(() => '?').join(', ');
     const processedCount = this.db
       .query(
         `SELECT COUNT(DISTINCT wp_id) AS optimized
          FROM processing_history
-         WHERE site_name = ? AND status = 'success' AND reverted_at IS NULL`,
+         WHERE site_name = ? AND status = 'success' AND reverted_at IS NULL
+           AND operation IN (${placeholders})`,
       )
-      .get(siteName) as { optimized: number } | null;
+      .get(siteName, ...OPTIMIZE_OPERATIONS) as { optimized: number } | null;
 
     const totalAttachments = row?.total_attachments ?? 0;
     const optimized = processedCount?.optimized ?? 0;

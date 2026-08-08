@@ -134,6 +134,22 @@ describe('getLibraryOverview', () => {
     expect(overview.optimized).toBe(1);
     expect(overview.unoptimized).toBe(1);
   });
+
+  test('non-image operations (caption, title, tag, etc.) do not count as optimized', () => {
+    seedAttachments([
+      { wpId: 1, mimeType: 'image/jpeg', sizeBytes: 500_000 },
+      { wpId: 2, mimeType: 'image/png', sizeBytes: 300_000 },
+    ]);
+
+    seedProcessing([
+      { wpId: 1, operation: 'caption', bytesBefore: 500_000, bytesAfter: 500_000 },
+      { wpId: 2, operation: 'convert', bytesBefore: 300_000, bytesAfter: 150_000 },
+    ]);
+
+    const overview = db.getLibraryOverview(SITE_NAME);
+    expect(overview.optimized).toBe(1);
+    expect(overview.unoptimized).toBe(1);
+  });
 });
 
 // -- getStats -----------------------------------------------------------------
