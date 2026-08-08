@@ -968,7 +968,7 @@ localpress defines stable exit codes (`src/types.ts`):
 | 5 | Auth error (Application Password rejected) |
 | 6 | Capability unavailable (e.g. replace-in-place needs WP-CLI) |
 
-Most per-command failure paths honor this table and call `error()` (below) before exiting with the matching code. This includes uncaught errors that bubble to the top-level catch in `src/cli/index.ts` and commander's own parse errors (unknown command, missing required argument), both of which map to `InvalidUsage` (2) and, with `--json`, emit structured JSON rather than plain text.
+Most per-command failure paths honor this table and call `error()` (below) before exiting with the matching code. This includes uncaught errors that bubble to the top-level catch in `src/cli/index.ts` (exit `GenericError`, 1) and commander's own parse errors — unknown command, missing required argument (exit `InvalidUsage`, 2) — both of which now emit structured JSON with `--json` rather than plain text.
 
 In `--json` mode, errors and warnings emitted via the per-command `error()`/`warn()` helpers (`src/cli/utils/output.ts`) go to **stderr** as structured JSON — stdout carries only the data payload:
 
