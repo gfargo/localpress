@@ -1,6 +1,6 @@
 # CLAUDE.md — handoff for the next agent
 
-You're picking up `localpress` at **v2.4.4**. All 39 CLI commands are implemented and working, including a first-party MCP server. The project compiles, tests pass, and the CLI boots cleanly.
+You're picking up `localpress` at **v2.5.0**. All 39 CLI commands are implemented and working, including a first-party MCP server. The project compiles, tests pass, and the CLI boots cleanly.
 
 **Read in this order before writing any code:**
 
@@ -13,7 +13,7 @@ You're picking up `localpress` at **v2.4.4**. All 39 CLI commands are implemente
 
 ## Current status
 
-**Version:** 2.4.4
+**Version:** 2.5.0
 **Status:** All planned v1.0 features plus the full v2.0 content/AI/MCP expansion have shipped. `CHANGELOG.md` is the authoritative release history — this file gives a summary, not a substitute.
 
 ### What's implemented
@@ -53,7 +53,7 @@ You're picking up `localpress` at **v2.4.4**. All 39 CLI commands are implemente
 **State management:**
 - SQLite per-site databases with attachment tracking and processing history
 - Idempotent processing via SHA-256 hash comparison
-- Schema migrations — currently **schema v4** (see `src/engine/state/schema.ts`): v2 added the `preferences` table (UI state persistence), v3 added `watch_mappings` (directory-watch file→attachment tracking), v4 added `sessions` + `snapshots` (time-machine/undo)
+- Schema migrations — currently **schema v5** (see `src/engine/state/schema.ts`): v2 added the `preferences` table (UI state persistence), v3 added `watch_mappings` (directory-watch file→attachment tracking), v4 added `sessions` + `snapshots` (time-machine/undo), v5 added a `reverted_at` column to `processing_history` (so undo excludes reverted rows from stats/idempotency)
 - `stats` command exposes cumulative savings, per-operation breakdown, last-run dates
 - Interactive browser position persistence across sessions (page + cursor saved to SQLite)
 
@@ -69,7 +69,7 @@ You're picking up `localpress` at **v2.4.4**. All 39 CLI commands are implemente
 - Full config listing with password redaction
 
 **MCP server (`localpress mcp`):**
-- First-party Model Context Protocol server exposing 47+ typed tools + resources — the CLI's full capability surface (media CRUD, posts CRUD, a11y audit, history/undo, export/import, health_check, search_by_url) available directly to any MCP-speaking agent host
+- First-party Model Context Protocol server exposing 47 typed tools + resources — the CLI's full capability surface (media CRUD, posts CRUD, a11y audit, history/undo, export/import, health_check, search_by_url) available directly to any MCP-speaking agent host
 - See `src/cli/mcp/{server,tools,invoke,resources}.ts` and the README's MCP section for setup
 
 **Distribution:**
@@ -81,7 +81,7 @@ You're picking up `localpress` at **v2.4.4**. All 39 CLI commands are implemente
   GitHub Release → Homebrew formula bump. See **[Releasing](#releasing)** below.
 
 **Testing:**
-- 232 test cases across 23 files: unit tests (`test/unit/`), integration tests against Dockerized WordPress (`test/integration/`, fully passing — including write-auth via Application Passwords), and tarball smoke tests (`test/tarball/`, exercise the built binary end-to-end)
+- 897 test cases across 75 files (`bun test`: 861 pass, 36 skip when no Docker WordPress / built tarball is present locally): unit tests (`test/unit/`), integration tests against Dockerized WordPress (`test/integration/`, fully passing in CI — including write-auth via Application Passwords), and tarball smoke tests (`test/tarball/`, exercise the built binary end-to-end)
 
 **CI:**
 - GitHub Actions: typecheck + lint + unit tests on PR
@@ -126,7 +126,7 @@ These were debated and resolved during planning. **Don't relitigate without stro
 | WP integration | REST (always) + WP-CLI over SSH (opt-in); `McpAdapter` backend still deferred | Auto-detect; pick best per operation |
 | **Agent integration** | **First-party MCP server (`localpress mcp`), shipped v1.14.0, alongside the markdown skill** | **Reverses the original "no MCP server" call.** At planning time we assumed composing with whatever WP MCP the user already had was enough; in practice agent hosts wanted one typed tool surface that talks straight to the CLI's capability layer (dry-run, resolver, snapshots) rather than re-deriving REST calls themselves. The skill still works standalone; the MCP server is the deeper integration for MCP-native hosts. |
 | Replace-in-place | Default; falls back to new attachment + references report | REST API cannot replace attachment file bytes |
-| State management | SQLite (source of truth), schema v4 | Local fast cache + portable; migrations tracked in `src/engine/state/schema.ts` |
+| State management | SQLite (source of truth), schema v5 | Local fast cache + portable; migrations tracked in `src/engine/state/schema.ts` |
 | Bulk safety | Dry-run by default for `--all` / `--unoptimized`; explicit IDs execute; enforced via shared `resolveDryRun` helper | Don't surprise users |
 | Auth storage | Plain config file, mode 0600 | System keychain remains a future upgrade |
 | Distribution | Bun-compiled binaries/tarballs via Homebrew tap + GitHub Releases | No npm; single binary, no runtime deps |
@@ -190,8 +190,8 @@ localpress/
 ├── src/
 │   ├── types.ts                      ← shared types (SiteConfig, ExitCode, OptimizationProfile)
 │   ├── cli/
-│   │   ├── index.ts                  ← entry point; commander setup, 37 commands
-│   │   ├── commands/                 ← one file per command (37 total)
+│   │   ├── index.ts                  ← entry point; commander setup, 39 commands
+│   │   ├── commands/                 ← one file per command (39 total)
 │   │   │   ├── init.ts, sites.ts, doctor.ts, config.ts
 │   │   │   ├── list.ts, show.ts, stats.ts, audit.ts, references.ts, a11y.ts, briefing.ts
 │   │   │   ├── caption.ts, title.ts, describe.ts, classify.ts, tag.ts, vision.ts, metadata.ts
@@ -206,7 +206,7 @@ localpress/
 │   │   │   └── HistoryBrowser.tsx    ← Ink TUI for history/undo browsing
 │   │   ├── mcp/
 │   │   │   ├── server.ts             ← MCP server entry (localpress mcp)
-│   │   │   ├── tools.ts              ← tool definitions (47+ typed tools)
+│   │   │   ├── tools.ts              ← tool definitions (47 typed tools)
 │   │   │   ├── invoke.ts             ← tool → CLI invocation bridge
 │   │   │   └── resources.ts          ← MCP resources
 │   │   └── utils/
@@ -227,10 +227,10 @@ localpress/
 │       ├── editor/                   ← detect.ts, watcher.ts (edit round-trip)
 │       ├── history/                  ← index.ts, store.ts, types.ts (time-machine snapshots)
 │       └── state/
-│           ├── schema.ts             ← SQL DDL, migrations (schema v4)
+│           ├── schema.ts             ← SQL DDL, migrations (schema v5)
 │           └── db.ts                 ← SiteDb wrapper (bun:sqlite) + getStats()
 ├── test/
-│   ├── unit/                         ← 21 files (db, config, ssh, mcp, history, export-import, profile, stats, ...)
+│   ├── unit/                         ← 72 files (db, config, ssh, mcp, history, export-import, profile, stats, ...)
 │   ├── integration/
 │   │   ├── docker-compose.yml        ← WordPress + MySQL
 │   │   ├── setup-wp.sh               ← WP-CLI setup + test data
