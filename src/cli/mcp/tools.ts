@@ -53,10 +53,27 @@ function ids(argv: string[], value: unknown): void {
   }
 }
 
-/** Run a CLI command and shape the response for MCP. */
-async function runCli(args: string[], site?: string, concurrency?: number) {
-  const result = await invokeCli({ args, site, concurrency });
-  if (!result.ok) {
+/**
+ * Shape a CLI invocation result into an MCP tool response.
+ *
+ * Several commands (a11y, caption, delete, metadata, classify, regenerate,
+ * ...) print a complete, trustworthy `--json` payload and *then* exit
+ * non-zero as a deliberate partial-failure signal. Treating every non-zero
+ * exit as a hard error buries that payload in a text blob and breaks
+ * structured consumption precisely when it matters most. So: attach
+ * `structuredContent` whenever stdout parses to a usable object, regardless
+ * of exit code, and only set `isError` when there is no parseable payload to
+ * fall back on.
+ */
+export function shapeCliResponse(result: Pick<CliResult, 'ok' | 'stdout' | 'stderr' | 'exitCode'>) {
+  // Only a non-array object is a "trustworthy payload" for the purposes of
+  // overriding a non-zero exit code — matches resolveChunkOutput's array
+  // handling below, so a failed run's NDJSON/array stdout doesn't get
+  // silently wrapped into a misleadingly-successful { items } response.
+  const isUsableObject =
+    typeof result.stdout === 'object' && result.stdout !== null && !Array.isArray(result.stdout);
+
+  if (!result.ok && !isUsableObject) {
     return {
       isError: true as const,
       content: [
@@ -71,28 +88,35 @@ async function runCli(args: string[], site?: string, concurrency?: number) {
     };
   }
 
-  // Build text content — include stderr warnings/errors if present.
-  const textContent =
-    typeof result.stdout === 'string' ? result.stdout : JSON.stringify(result.stdout, null, 2);
-  const fullText = result.stderr
-    ? `${textContent}\n\n--- stderr ---\n${result.stderr}`
-    : textContent;
-
-  // structuredContent must be a record (object), not an array.
-  // Wrap arrays in { items: [...] } to satisfy the MCP protocol.
+  // Success, or a non-zero exit that still printed a trustworthy JSON object
+  // (deliberate partial-failure signal). Attach structuredContent; note the
+  // non-zero exit in the text so the signal isn't silently lost.
+  // structuredContent must be a record (object), not an array — wrap arrays
+  // in { items: [...] } to satisfy the MCP protocol.
   let structured: Record<string, unknown> | undefined;
   if (typeof result.stdout === 'object' && result.stdout !== null) {
-    if (Array.isArray(result.stdout)) {
-      structured = { items: result.stdout };
-    } else {
-      structured = result.stdout as Record<string, unknown>;
-    }
+    structured = Array.isArray(result.stdout)
+      ? { items: result.stdout }
+      : (result.stdout as Record<string, unknown>);
   }
 
+  const textContent =
+    typeof result.stdout === 'string' ? result.stdout : JSON.stringify(result.stdout, null, 2);
+  const parts = [textContent];
+  if (!result.ok)
+    parts.push(`--- exit ${result.exitCode} (partial failure — see JSON payload) ---`);
+  if (result.stderr) parts.push(`--- stderr ---\n${result.stderr}`);
+
   return {
-    content: [{ type: 'text' as const, text: fullText }],
+    content: [{ type: 'text' as const, text: parts.join('\n\n') }],
     structuredContent: structured,
   };
+}
+
+/** Run a CLI command and shape the response for MCP. */
+async function runCli(args: string[], site?: string, concurrency?: number) {
+  const result = await invokeCli({ args, site, concurrency });
+  return shapeCliResponse(result);
 }
 
 /**
