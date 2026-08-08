@@ -964,6 +964,44 @@ Executed (`--apply`, or always for `--snapshot`/`--attachment` targeting):
 
 If replace-in-place is unavailable when restoring a binary snapshot, `undo` falls back to uploading the original bytes as a new attachment (same fallback behavior as `optimize`/`edit`) and warns that the attachment ID changed.
 
+### Verification (verify)
+
+Cross-checks the local SQLite state against live WordPress for one or more attachments — mime type, size, dimensions, and (with `--hash`) a SHA-256 of the remote file. Answers "did my writes actually land?" / "did another plugin (Smush, ShortPixel) silently re-process this image?". Read-only — never writes to the site or the local DB.
+
+```bash
+localpress verify 123 124 --json
+localpress verify --all --json
+localpress verify 123 --hash --json    # also downloads the remote file to compare SHA-256 (slower)
+```
+
+#### `verify --json` output
+
+```json
+{
+  "site": "production",
+  "verified": 2,
+  "ok": 1,
+  "drift": 1,
+  "missing": 0,
+  "unverified": 0,
+  "results": [
+    { "id": 123, "filename": "hero.webp", "status": "ok", "findings": [] },
+    {
+      "id": 124,
+      "filename": "banner.webp",
+      "status": "drift",
+      "findings": [
+        { "field": "sizeBytes", "local": 40000, "remote": 61000, "severity": "drift" }
+      ]
+    }
+  ]
+}
+```
+
+`status` is one of `ok` / `drift` / `missing-local` / `missing-remote`. With `--hash`, each result also carries a `hashVerified` boolean, and a mismatch adds a `sha256` finding — `hashVerified: false` means the check couldn't be performed (no local hash on record, or the download failed), not that it passed.
+
+**Exit code:** `verify` exits `1` whenever it finds any drift, missing attachment, or unverified hash — this is expected, not a crash. Read the JSON payload (`drift`/`missing`/`unverified` counts and per-result `findings`) rather than relying on the exit code alone. The `verify` MCP tool absorbs this and always returns a normal (non-error) result with the parsed JSON as `structuredContent`, so agents calling it through MCP see drift as data.
+
 ### MCP server
 
 ```bash

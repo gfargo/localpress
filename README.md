@@ -172,6 +172,7 @@ across every configured site at once.
 | **Round-trip** | `edit` |
 | **Low-level** | `pull`, `push`, `delete` |
 | **Time-machine** | `history`, `undo` |
+| **Verification** | `verify` |
 | **Maintenance** | `update`, `completions` |
 
 All commands accept `--json` for machine-readable output and `--help` for usage details.

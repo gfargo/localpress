@@ -632,6 +632,72 @@ export function registerTools(server: McpServer): void {
     },
   );
 
+  server.registerTool(
+    'verify',
+    {
+      title: 'Verify writes landed (local DB ↔ remote WordPress)',
+      description:
+        "Cross-check localpress's local SQLite state against live WordPress for one or more attachments: mime type, size, dimensions, and (with hash=true) a SHA-256 of the remote file. " +
+        'Answers "did my writes actually land / did another plugin re-process my image?". Read-only. ' +
+        'Reports drift as data — a drift/missing/unverified result is a normal successful response, not an error.',
+      inputSchema: {
+        ...commonSiteArg,
+        ids: z
+          .array(z.number().int().positive())
+          .optional()
+          .describe(
+            'Attachment IDs to verify. Omit and set all=true to verify everything tracked locally.',
+          ),
+        all: z.boolean().optional().describe('Verify all locally-tracked attachments'),
+        hash: z
+          .boolean()
+          .optional()
+          .describe(
+            'Also download each remote file and compare its SHA-256 (slower, but catches silent re-uploads)',
+          ),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['verify'];
+      ids(argv, a.ids);
+      flag(argv, '--hash', a.hash);
+      flag(argv, '--all', a.all);
+
+      // verify exits 1 whenever it finds drift/missing/unverified attachments
+      // — that's a *successful* verification with findings, not a tool error.
+      // Parse the JSON regardless of exit code; only fall back to isError when
+      // there's no parseable JSON object (usage error / crash).
+      const result = await invokeCli({ args: argv, site: a.site as string | undefined });
+      if (
+        typeof result.stdout === 'object' &&
+        result.stdout !== null &&
+        !Array.isArray(result.stdout)
+      ) {
+        const structured = result.stdout as Record<string, unknown>;
+        const text = JSON.stringify(structured, null, 2);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: result.stderr ? `${text}\n\n--- stderr ---\n${result.stderr}` : text,
+            },
+          ],
+          structuredContent: structured,
+        };
+      }
+      return {
+        isError: true as const,
+        content: [
+          {
+            type: 'text' as const,
+            text: `${result.stderr || 'verify failed'} (exit ${result.exitCode})`,
+          },
+        ],
+      };
+    },
+  );
+
   // ---------------------------------------------------------------------------
   // Processing
   // ---------------------------------------------------------------------------
