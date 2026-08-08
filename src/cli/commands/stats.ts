@@ -119,13 +119,13 @@ export function registerStatsCommand(program: Command): void {
               ? ((overview.optimized / overview.totalAttachments) * 100).toFixed(1)
               : '0.0';
 
-          info('  Library:');
+          info('  Library (local index):');
           info(`    Total attachments:   ${overview.totalAttachments.toLocaleString()}`);
           info(`    Total size:          ${formatBytes(overview.totalSizeBytes)}`);
           info(
-            `    Optimized:           ${overview.optimized.toLocaleString()} (${optimizedPct}%)`,
+            `    Image-optimized:     ${overview.optimized.toLocaleString()} (${optimizedPct}%)`,
           );
-          info(`    Unoptimized:         ${overview.unoptimized.toLocaleString()}`);
+          info(`    Not image-optimized: ${overview.unoptimized.toLocaleString()}`);
           info('');
         }
 
