@@ -81,7 +81,7 @@ You're picking up `localpress` at **v2.5.0**. All 39 CLI commands are implemente
   GitHub Release → Homebrew formula bump. See **[Releasing](#releasing)** below.
 
 **Testing:**
-- 680 test cases across 75 files: unit tests (`test/unit/`), integration tests against Dockerized WordPress (`test/integration/`, fully passing — including write-auth via Application Passwords), and tarball smoke tests (`test/tarball/`, exercise the built binary end-to-end)
+- 897 test cases across 75 files (`bun test`: 861 pass, 36 skip when no Docker WordPress / built tarball is present locally): unit tests (`test/unit/`), integration tests against Dockerized WordPress (`test/integration/`, fully passing in CI — including write-auth via Application Passwords), and tarball smoke tests (`test/tarball/`, exercise the built binary end-to-end)
 
 **CI:**
 - GitHub Actions: typecheck + lint + unit tests on PR
