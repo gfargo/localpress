@@ -1273,6 +1273,7 @@ export function registerTools(server: McpServer): void {
           .boolean()
           .optional()
           .describe('Export all files into a single flat directory (no subdirectories)'),
+        dryRun: z.boolean().optional().describe('Preview which items would be exported'),
         concurrency: z.number().int().positive().optional().describe('Parallel workers'),
       },
     },
@@ -1288,6 +1289,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--larger-than', a.largerThan);
       flag(argv, '--include-sizes', a.includeSizes);
       flag(argv, '--flat', a.flat);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );

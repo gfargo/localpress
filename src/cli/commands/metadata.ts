@@ -86,7 +86,11 @@ export function registerMetadataCommand(program: Command): void {
                 items: ids.map((id) => ({ id })),
                 fields: incoming,
               },
-              { ids },
+              // `fields` also lives at the top level (not just under `changes`)
+              // since `changes` on `main` used to *be* the raw field diff —
+              // callers that read `result.fields` instead of `result.changes`
+              // keep working without learning the new normalized shape.
+              { ids, fields: incoming },
             ),
           );
         }

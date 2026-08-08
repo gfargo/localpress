@@ -176,6 +176,10 @@ describe('dry-run output shape — representative commands', () => {
     expectDryRunShape(payload, 'metadata');
     const changes = payload.changes as DryRunChanges;
     expect(changes.fields).toEqual({ altText: 'a photo' });
+    // `changes` used to *be* the raw field diff on `main`; now that `changes`
+    // is the normalized block, the raw diff stays reachable at the top level
+    // under `fields` so pre-existing consumers aren't left with no equivalent.
+    expect(payload.fields).toEqual({ altText: 'a photo' });
   });
 
   test('delete --dry-run --json', async () => {

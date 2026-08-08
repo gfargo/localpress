@@ -177,6 +177,7 @@ describe('MCP tool schema ↔ CLI flag parity', () => {
     'update_metadata',
     'push',
     'regenerate',
+    'export',
     'import',
     'undo',
     'posts_create',

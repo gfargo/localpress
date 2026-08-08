@@ -567,7 +567,7 @@ When `dryRun` is `true` (bulk without `--apply`, or explicit `--dry-run`), the p
 }
 ```
 
-Passing global `--dry-run` returns `{ "dryRun": true, "ids": [123], "changes": { "operation": "metadata", "count": 1, "items": [{ "id": 123 }], "fields": { "altText": "Screenshot of the dashboard", "title": "Dashboard overview" } } }` instead and writes nothing. Note the top-level `changes` here is the normalized block (`operation`/`count`/`items`/`fields`), not the same shape as the per-result `changes` shown above.
+Passing global `--dry-run` returns `{ "dryRun": true, "ids": [123], "fields": { "altText": "Screenshot of the dashboard", "title": "Dashboard overview" }, "changes": { "operation": "metadata", "count": 1, "items": [{ "id": 123 }], "fields": { "altText": "Screenshot of the dashboard", "title": "Dashboard overview" } } }` instead and writes nothing. Note the top-level `changes` here is the normalized block (`operation`/`count`/`items`/`fields`), not the same shape as the per-result `changes` shown above — the raw field diff (what `changes` meant pre-standardization) is still reachable at the top level as `fields`.
 
 #### `rename --json` output
 
