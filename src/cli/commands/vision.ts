@@ -38,7 +38,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 type Field = 'alt' | 'title' | 'description' | 'tags' | 'classify';
 const ALL_FIELDS: readonly Field[] = ['alt', 'title', 'description', 'tags', 'classify'] as const;
@@ -313,13 +313,27 @@ export function registerVisionCommand(program: Command): void {
       db.close();
 
       if (parentOpts.json) {
-        printJson({
-          applied: apply,
-          fields,
-          processed: results.length,
-          failures,
-          results,
-        });
+        if (!apply) {
+          printJson(
+            dryRunPayload(
+              {
+                operation: 'vision',
+                count: results.length,
+                items: results.map((r) => ({ id: r.id, filename: r.filename })),
+              },
+              { applied: apply, fields, processed: results.length, failures, results },
+            ),
+          );
+        } else {
+          printJson({
+            dryRun: false,
+            applied: apply,
+            fields,
+            processed: results.length,
+            failures,
+            results,
+          });
+        }
       } else if (results.length > 0 || failures > 0) {
         info(
           `\n  Done: ${results.length} processed, ${failures} failed${apply ? '' : ' (print-only — re-run with --apply to write)'}.`,

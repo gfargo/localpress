@@ -39,6 +39,7 @@ const MUTATING_COMMANDS = [
   'delete.ts',
   'metadata.ts',
   'import.ts',
+  'push.ts',
   'regenerate.ts',
   'undo.ts',
   'posts.ts',
@@ -55,6 +56,23 @@ describe('dry-run honesty — all mutating commands gate execution', () => {
 
       const source = readFileSync(filepath, 'utf8');
       expect(source).toContain('resolveDryRun(');
+    });
+  }
+});
+
+/**
+ * One dry-run contract (OSS-1343 / #278): every mutating command's dry-run
+ * `--json` payload must be built via the shared `dryRunPayload()` helper
+ * (`dryRun: true` discriminator + a normalized `changes` block), not an
+ * ad-hoc object literal. `dry-run-shape.test.ts` proves this at runtime for
+ * a representative sample; this static check covers every mutating command.
+ */
+describe('dry-run honesty — all mutating commands use the shared dryRunPayload() shape', () => {
+  for (const filename of MUTATING_COMMANDS) {
+    test(`${filename} calls dryRunPayload(`, () => {
+      const filepath = join(COMMANDS_DIR, filename);
+      const source = readFileSync(filepath, 'utf8');
+      expect(source).toContain('dryRunPayload(');
     });
   }
 });

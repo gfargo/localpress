@@ -14,6 +14,7 @@ import { CapabilityUnavailableError, type UpdateMetadata } from '../../adapters/
 import { parseIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
+import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 export function registerPushCommand(program: Command): void {
   program
@@ -43,6 +44,33 @@ export function registerPushCommand(program: Command): void {
       }
       const fileBuffer = Buffer.from(await file.arrayBuffer());
       const filename = basename(filePath);
+
+      if (resolveDryRun(parentOpts, false)) {
+        const meta = {
+          title: options.title,
+          altText: options.alt,
+          caption: options.caption,
+          description: options.description,
+        };
+        if (options.replace !== undefined) {
+          warn(`[dry-run] would replace attachment #${options.replace} with ${filename}`);
+        } else {
+          warn(`[dry-run] would upload ${filename} as a new attachment`);
+        }
+        if (parentOpts.json) {
+          printJson(
+            dryRunPayload(
+              {
+                operation: 'push',
+                items: [{ file: filename, replace: options.replace ?? null }],
+                fields: meta,
+              },
+              { file: filename, replace: options.replace ?? null },
+            ),
+          );
+        }
+        return;
+      }
 
       if (options.replace !== undefined) {
         // Attempt replace-in-place.

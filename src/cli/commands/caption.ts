@@ -30,7 +30,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunItemsFromResults, dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 export function registerCaptionCommand(program: Command): void {
   program
@@ -392,13 +392,18 @@ export function registerCaptionCommand(program: Command): void {
       db.close();
 
       if (parentOpts.json) {
-        printJson({
-          dryRun: isDryRun,
-          processed: results.filter((r) => !r.skipped).length,
-          skipped: results.filter((r) => r.skipped).length,
-          failures,
-          results,
-        });
+        const processed = results.filter((r) => !r.skipped).length;
+        const skippedCount = results.filter((r) => r.skipped).length;
+        if (isDryRun) {
+          printJson(
+            dryRunPayload(
+              { operation: 'caption', count: processed, items: dryRunItemsFromResults(results) },
+              { processed, skipped: skippedCount, failures, results },
+            ),
+          );
+        } else {
+          printJson({ dryRun: false, processed, skipped: skippedCount, failures, results });
+        }
         return;
       }
 

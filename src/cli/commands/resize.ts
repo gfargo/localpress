@@ -27,7 +27,7 @@ import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 export function registerResizeCommand(program: Command): void {
   program
@@ -51,7 +51,12 @@ export function registerResizeCommand(program: Command): void {
       if (isDryRun) {
         info(`Dry-run: would resize ${ids.length} attachment(s). Omit --dry-run to execute.`);
         if (parentOpts.json) {
-          printJson({ dryRun: true, count: ids.length, ids });
+          printJson(
+            dryRunPayload(
+              { operation: 'resize', count: ids.length, items: ids.map((id) => ({ id })) },
+              { count: ids.length, ids },
+            ),
+          );
         }
         return;
       }

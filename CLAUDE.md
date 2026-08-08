@@ -145,7 +145,7 @@ These were debated and resolved during planning. **Don't relitigate without stro
 
 **`--json` output stability:** the skill and the MCP server both consume `--json`. Treat the JSON shapes as a public API.
 
-**Dry-run:** destructive/bulk commands route through the shared `resolveDryRun` helper rather than checking `--dry-run` ad hoc — keep new destructive commands consistent with this.
+**Dry-run:** destructive/bulk commands route through the shared `resolveDryRun` helper rather than checking `--dry-run` ad hoc — keep new destructive commands consistent with this. Their dry-run `--json` payload must be built via `dryRunPayload()` (`src/cli/utils/run-mode.ts`): a top-level `dryRun: true` discriminator (never `action: 'dry-run'`) plus a normalized `changes` block (`{ operation, count?, items?, fields? }`), with the command's pre-existing fields kept alongside additively. Every mutating MCP tool (`src/cli/mcp/tools.ts`) should declare a `dryRun` arg mapped to `--dry-run`, even when it already has `apply`, so explicit-ID calls (which execute immediately by default) stay previewable.
 
 **Lazy loading:** sharp, onnxruntime-node, and jsquash codecs are all lazy-loaded via dynamic `import()` so the CLI boots fast even if native binaries are missing.
 

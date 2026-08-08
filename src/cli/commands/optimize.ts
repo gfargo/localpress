@@ -41,7 +41,7 @@ import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 import { getCachedClassification } from './classify.ts';
 export { mimeToExtension };
 
@@ -514,11 +514,17 @@ export function registerOptimizeCommand(program: Command): void {
           info(`  ... and ${items.length - 20} more`);
         }
         if (parentOpts.json) {
-          printJson({
-            dryRun: true,
-            count: items.length,
-            items: items.map((i) => ({ id: i.id, filename: i.filename, sizeBytes: i.sizeBytes })),
-          });
+          const dryRunItems = items.map((i) => ({
+            id: i.id,
+            filename: i.filename,
+            sizeBytes: i.sizeBytes,
+          }));
+          printJson(
+            dryRunPayload(
+              { operation: 'optimize', count: items.length, items: dryRunItems },
+              { count: items.length, items: dryRunItems },
+            ),
+          );
         }
         return;
       }

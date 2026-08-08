@@ -33,3 +33,49 @@ export function resolveDryRun(parentOpts: RunModeOpts, defaultDryRun: boolean): 
   if (parentOpts.dryRun) return true;
   return defaultDryRun;
 }
+
+/**
+ * Normalized description of what a dry-run would have changed. Every
+ * mutating command's `--json` dry-run output carries one of these under
+ * `changes`, so an agent can inspect the shape of a pending mutation without
+ * learning a per-command schema.
+ */
+export interface DryRunChanges {
+  /** Command/subcommand identifier, e.g. 'optimize', 'posts.update'. */
+  operation: string;
+  /** Number of affected items, for bulk/list operations. */
+  count?: number;
+  /** Affected entities (attachments, posts, files, …), for bulk/list operations. */
+  items?: Array<Record<string, unknown>>;
+  /** Field-level diff, for single-record operations. */
+  fields?: object;
+  [k: string]: unknown;
+}
+
+/**
+ * One dry-run contract, exposed everywhere: every mutating command's
+ * dry-run `--json` payload uses `dryRun: true` as its discriminator (never
+ * `action: 'dry-run'`) and carries a normalized `changes` block. `legacy`
+ * fields are spread in additively so existing consumers of a command's
+ * pre-existing dry-run shape (skill, MCP, scripts) keep working.
+ */
+export interface DryRunPayload {
+  dryRun: true;
+  changes: DryRunChanges;
+  [k: string]: unknown;
+}
+
+export function dryRunPayload(changes: DryRunChanges, legacy: object = {}): DryRunPayload {
+  return { ...legacy, dryRun: true, changes };
+}
+
+/**
+ * Reduce a bulk-run results array (caption/title/describe/tag/rename/…) down
+ * to the `{ id, filename }` pairs of items that were actually acted on (not
+ * skipped), for use in a dry-run `changes.items` block.
+ */
+export function dryRunItemsFromResults<
+  T extends { id: number; filename: string; skipped: boolean },
+>(results: T[]): Array<{ id: number; filename: string }> {
+  return results.filter((r) => !r.skipped).map((r) => ({ id: r.id, filename: r.filename }));
+}

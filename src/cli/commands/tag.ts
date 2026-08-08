@@ -37,7 +37,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunItemsFromResults, dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 interface TagResult {
   id: number;
@@ -260,7 +260,16 @@ export function registerTagCommand(program: Command): void {
       const skipped = results.filter((r) => r.skipped).length;
 
       if (parentOpts.json) {
-        printJson({ dryRun: isDryRun, processed, skipped, failures, results });
+        if (isDryRun) {
+          printJson(
+            dryRunPayload(
+              { operation: 'tag', count: processed, items: dryRunItemsFromResults(results) },
+              { processed, skipped, failures, results },
+            ),
+          );
+        } else {
+          printJson({ dryRun: false, processed, skipped, failures, results });
+        }
       } else if (processed + skipped > 0 || failures > 0) {
         const dryNote = isDryRun ? ' (dry run — WordPress not updated)' : '';
         info(`\n  Done: ${processed} tagged, ${skipped} skipped, ${failures} failed${dryNote}.`);

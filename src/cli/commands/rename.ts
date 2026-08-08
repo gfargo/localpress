@@ -35,7 +35,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunItemsFromResults, dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 interface RenameResult {
   id: number;
@@ -218,13 +218,18 @@ export function registerRenameCommand(program: Command): void {
       db.close();
 
       if (parentOpts.json) {
-        printJson({
-          dryRun,
-          renamed: results.filter((r) => !r.skipped).length,
-          skipped: results.filter((r) => r.skipped).length,
-          failures,
-          results,
-        });
+        const renamed = results.filter((r) => !r.skipped).length;
+        const skippedCount = results.filter((r) => r.skipped).length;
+        if (dryRun) {
+          printJson(
+            dryRunPayload(
+              { operation: 'rename', count: renamed, items: dryRunItemsFromResults(results) },
+              { renamed, skipped: skippedCount, failures, results },
+            ),
+          );
+        } else {
+          printJson({ dryRun: false, renamed, skipped: skippedCount, failures, results });
+        }
       } else {
         info('');
         info(

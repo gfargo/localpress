@@ -130,6 +130,13 @@ const BATCH_CHUNK_SIZE = 5;
  * boolean field is OR'd across chunks. This way each command's native JSON
  * contract (e.g. caption's `dryRun`/`skipped`, optimize's `totalSavedBytes`)
  * is preserved rather than coerced into one shared shape.
+ *
+ * `changes` (the standardized dry-run block, see `dryRunPayload()` in
+ * run-mode.ts) gets its own merge: `count` sums and `items` concatenates
+ * across chunks, `operation`/`fields` are taken from the first chunk that has
+ * them. Without this, `changes` — being a plain object — would fall into the
+ * catch-all "first chunk wins" branch below and silently under-report a
+ * batched dry-run's full pending change set.
  */
 export function mergeBatchedOutputs(
   outputs: Array<Record<string, unknown>>,
@@ -143,6 +150,10 @@ export function mergeBatchedOutputs(
         if (Array.isArray(value)) allResults.push(...value);
         continue;
       }
+      if (key === 'changes' && isPlainObject(value)) {
+        merged.changes = mergeChanges(merged.changes, value);
+        continue;
+      }
       if (typeof value === 'number') {
         merged[key] = ((merged[key] as number) ?? 0) + value;
       } else if (typeof value === 'boolean') {
@@ -154,6 +165,26 @@ export function mergeBatchedOutputs(
   }
 
   merged.results = allResults;
+  return merged;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function mergeChanges(existing: unknown, next: Record<string, unknown>): Record<string, unknown> {
+  if (!isPlainObject(existing)) return { ...next };
+
+  const merged: Record<string, unknown> = { ...existing };
+  for (const [key, value] of Object.entries(next)) {
+    if (key === 'count' && typeof value === 'number') {
+      merged.count = ((merged.count as number) ?? 0) + value;
+    } else if (key === 'items' && Array.isArray(value)) {
+      merged.items = Array.isArray(merged.items) ? [...merged.items, ...value] : [...value];
+    } else if (!(key in merged)) {
+      merged[key] = value;
+    }
+  }
   return merged;
 }
 
@@ -629,6 +660,10 @@ export function registerTools(server: McpServer): void {
         profile: z.string().optional().describe('Use a named profile from config'),
         stripMetadata: z.boolean().optional(),
         apply: z.boolean().optional().describe('Opt out of dry-run for bulk ops'),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe('Force a dry-run preview, even for explicit IDs (which execute by default)'),
         concurrency: z
           .number()
           .int()
@@ -652,10 +687,14 @@ export function registerTools(server: McpServer): void {
       if (a.stripMetadata === true) argv.push('--strip-metadata');
       else if (a.stripMetadata === false) argv.push('--no-strip-metadata');
       flag(argv, '--apply', a.apply);
+      flag(argv, '--dry-run', a.dryRun);
 
       // Use batched processing for explicit IDs to avoid timeouts on large sets.
+      // Dry-runs do no per-image processing, so the timeout batching guards
+      // against can't happen here — run them as a single call so the
+      // `changes` block covers every ID instead of just the first chunk.
       const idArray = Array.isArray(a.ids) ? (a.ids as number[]) : [];
-      if (idArray.length > BATCH_CHUNK_SIZE) {
+      if (idArray.length > BATCH_CHUNK_SIZE && a.dryRun !== true) {
         return runCliBatched(
           (batchIds) => {
             const bArgv = ['optimize', ...batchIds.map(String)];
@@ -690,6 +729,7 @@ export function registerTools(server: McpServer): void {
         to: z.enum(['webp', 'avif', 'jpeg', 'png']).describe('Target format'),
         quality: z.number().int().min(1).max(100).optional(),
         apply: z.boolean().optional(),
+        dryRun: z.boolean().optional().describe('Preview without executing'),
         concurrency: z.number().int().positive().optional().describe('Parallel workers'),
       },
     },
@@ -700,6 +740,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--to', a.to);
       opt(argv, '--quality', a.quality);
       flag(argv, '--apply', a.apply);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
@@ -716,6 +757,7 @@ export function registerTools(server: McpServer): void {
         maxWidth: z.number().int().positive().optional(),
         maxHeight: z.number().int().positive().optional(),
         apply: z.boolean().optional(),
+        dryRun: z.boolean().optional().describe('Preview without executing'),
         concurrency: z.number().int().positive().optional().describe('Parallel workers'),
       },
     },
@@ -726,6 +768,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--max-width', a.maxWidth);
       opt(argv, '--max-height', a.maxHeight);
       flag(argv, '--apply', a.apply);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
@@ -749,6 +792,7 @@ export function registerTools(server: McpServer): void {
         rembg: z.boolean().optional().describe('Use system Python rembg instead of built-in ONNX'),
         rembgModel: z.string().optional().describe('Model name when using --rembg'),
         apply: z.boolean().optional(),
+        dryRun: z.boolean().optional().describe('Preview without executing'),
         concurrency: z.number().int().positive().optional().describe('Parallel workers'),
       },
     },
@@ -761,6 +805,7 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--rembg', a.rembg);
       opt(argv, '--rembg-model', a.rembgModel);
       flag(argv, '--apply', a.apply);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
@@ -784,6 +829,10 @@ export function registerTools(server: McpServer): void {
         overwrite: z.boolean().optional(),
         listModels: z.boolean().optional().describe('List locally available vision models'),
         apply: z.boolean().optional(),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe('Force a dry-run preview, even for explicit IDs (which execute by default)'),
         concurrency: z
           .number()
           .int()
@@ -803,10 +852,13 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--overwrite', a.overwrite);
       flag(argv, '--list-models', a.listModels);
       flag(argv, '--apply', a.apply);
+      flag(argv, '--dry-run', a.dryRun);
 
       // Batch explicit IDs to avoid timeouts (each image takes 2-30s via Ollama).
+      // Dry-runs do no per-image Ollama work, so run them unbatched — the
+      // `changes` block then covers every ID instead of just the first chunk.
       const idArray = Array.isArray(a.ids) ? (a.ids as number[]) : [];
-      if (idArray.length > BATCH_CHUNK_SIZE) {
+      if (idArray.length > BATCH_CHUNK_SIZE && a.dryRun !== true) {
         return runCliBatched(
           (batchIds) => {
             const bArgv = ['caption', ...batchIds.map(String)];
@@ -843,6 +895,10 @@ export function registerTools(server: McpServer): void {
         language: z.string().optional(),
         overwrite: z.boolean().optional(),
         apply: z.boolean().optional(),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe('Force a dry-run preview, even for explicit IDs (which execute by default)'),
         concurrency: z.number().int().positive().optional(),
       },
     },
@@ -856,6 +912,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--language', a.language);
       flag(argv, '--overwrite', a.overwrite);
       flag(argv, '--apply', a.apply);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
@@ -878,6 +935,10 @@ export function registerTools(server: McpServer): void {
         language: z.string().optional(),
         overwrite: z.boolean().optional(),
         apply: z.boolean().optional(),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe('Force a dry-run preview, even for explicit IDs (which execute by default)'),
         concurrency: z.number().int().positive().optional(),
       },
     },
@@ -891,6 +952,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--language', a.language);
       flag(argv, '--overwrite', a.overwrite);
       flag(argv, '--apply', a.apply);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
@@ -914,6 +976,7 @@ export function registerTools(server: McpServer): void {
         language: z.string().optional(),
         overwrite: z.boolean().optional(),
         apply: z.boolean().optional().describe('Write the generated values to WordPress'),
+        dryRun: z.boolean().optional().describe('Force a dry-run preview (this is the default)'),
       },
     },
     async (args) => {
@@ -925,6 +988,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--language', a.language);
       flag(argv, '--overwrite', a.overwrite);
       flag(argv, '--apply', a.apply);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined);
     },
   );
@@ -946,6 +1010,10 @@ export function registerTools(server: McpServer): void {
         model: z.string().optional(),
         overwrite: z.boolean().optional(),
         apply: z.boolean().optional(),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe('Force a dry-run preview, even for explicit IDs (which execute by default)'),
         concurrency: z.number().int().positive().optional(),
       },
     },
@@ -958,6 +1026,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--model', a.model);
       flag(argv, '--overwrite', a.overwrite);
       flag(argv, '--apply', a.apply);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
@@ -1033,11 +1102,12 @@ export function registerTools(server: McpServer): void {
           .boolean()
           .optional()
           .describe('Required alongside `force: true` to acknowledge permanent deletion.'),
+        dryRun: z.boolean().optional().describe('Preview without executing'),
       },
     },
     async (args) => {
       const a = args as ArgMap;
-      if (a.force === true && a.confirm !== true) {
+      if (a.force === true && a.confirm !== true && a.dryRun !== true) {
         return {
           isError: true as const,
           content: [
@@ -1051,6 +1121,7 @@ export function registerTools(server: McpServer): void {
       const argv = ['delete'];
       ids(argv, a.ids);
       flag(argv, '--force', a.force);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined);
     },
   );
@@ -1077,6 +1148,7 @@ export function registerTools(server: McpServer): void {
         title: z.string().optional(),
         caption: z.string().optional(),
         description: z.string().optional(),
+        dryRun: z.boolean().optional().describe('Preview without executing'),
       },
     },
     async (args) => {
@@ -1089,6 +1161,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--title', a.title);
       opt(argv, '--caption', a.caption);
       opt(argv, '--description', a.description);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined);
     },
   );
@@ -1135,6 +1208,7 @@ export function registerTools(server: McpServer): void {
         title: z.string().optional(),
         altText: z.string().optional(),
         caption: z.string().optional(),
+        dryRun: z.boolean().optional().describe('Preview without executing'),
       },
     },
     async (args) => {
@@ -1144,6 +1218,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--title', a.title);
       opt(argv, '--alt', a.altText);
       opt(argv, '--caption', a.caption);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined);
     },
   );
@@ -1153,11 +1228,16 @@ export function registerTools(server: McpServer): void {
     {
       title: 'Regenerate thumbnails',
       description:
-        'Regenerate WordPress thumbnail sizes for one or more attachments (requires WP-CLI).',
+        'Regenerate WordPress thumbnail sizes for one or more attachments (requires WP-CLI). Bulk mode (`all: true`) is dry-run by default; pass apply=true to execute.',
       inputSchema: {
         ...commonSiteArg,
         ids: z.array(z.number().int().positive()).optional(),
         all: z.boolean().optional(),
+        apply: z.boolean().optional().describe('Opt out of dry-run for bulk (all: true) runs'),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe('Force a dry-run preview, even for explicit IDs (which execute by default)'),
       },
     },
     async (args) => {
@@ -1165,6 +1245,8 @@ export function registerTools(server: McpServer): void {
       const argv = ['regenerate'];
       ids(argv, a.ids);
       flag(argv, '--all', a.all);
+      flag(argv, '--apply', a.apply);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined);
     },
   );
@@ -1191,6 +1273,7 @@ export function registerTools(server: McpServer): void {
           .boolean()
           .optional()
           .describe('Export all files into a single flat directory (no subdirectories)'),
+        dryRun: z.boolean().optional().describe('Preview which items would be exported'),
         concurrency: z.number().int().positive().optional().describe('Parallel workers'),
       },
     },
@@ -1206,6 +1289,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--larger-than', a.largerThan);
       flag(argv, '--include-sizes', a.includeSizes);
       flag(argv, '--flat', a.flat);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
     },
   );
@@ -1359,6 +1443,12 @@ export function registerTools(server: McpServer): void {
           .optional()
           .describe('Restore the most recent un-restored snapshot for this attachment'),
         apply: z.boolean().optional().describe('Required for bulk (session-targeted) undos'),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe(
+            'Force a dry-run preview, even for --snapshot / --attachment targets (which execute by default)',
+          ),
       },
     },
     async (args) => {
@@ -1368,6 +1458,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--snapshot', a.snapshot);
       opt(argv, '--attachment', a.attachment);
       flag(argv, '--apply', a.apply);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined);
     },
   );
@@ -1572,6 +1663,7 @@ export function registerTools(server: McpServer): void {
           .describe('Featured image attachment ID'),
         categories: z.string().optional().describe('Comma-separated category IDs'),
         tags: z.string().optional().describe('Comma-separated tag IDs'),
+        dryRun: z.boolean().optional().describe('Preview without executing'),
       },
     },
     async (args) => {
@@ -1585,6 +1677,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--featured-image', a.featuredImage);
       opt(argv, '--category', a.categories);
       opt(argv, '--tag', a.tags);
+      flag(argv, '--dry-run', a.dryRun);
       return runCliWithContent(argv, a.content, a.site as string | undefined);
     },
   );
@@ -1614,6 +1707,7 @@ export function registerTools(server: McpServer): void {
           .describe('Featured image attachment ID'),
         categories: z.string().optional().describe('Comma-separated category IDs'),
         tags: z.string().optional().describe('Comma-separated tag IDs'),
+        dryRun: z.boolean().optional().describe('Preview without executing'),
       },
     },
     async (args) => {
@@ -1627,6 +1721,7 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--featured-image', a.featuredImage);
       opt(argv, '--category', a.categories);
       opt(argv, '--tag', a.tags);
+      flag(argv, '--dry-run', a.dryRun);
       return runCliWithContent(argv, a.content, a.site as string | undefined);
     },
   );
@@ -1649,11 +1744,12 @@ export function registerTools(server: McpServer): void {
           .boolean()
           .optional()
           .describe('Required alongside `force: true` to acknowledge permanent deletion.'),
+        dryRun: z.boolean().optional().describe('Preview without executing'),
       },
     },
     async (args) => {
       const a = args as ArgMap;
-      if (a.force === true && a.confirm !== true) {
+      if (a.force === true && a.confirm !== true && a.dryRun !== true) {
         return {
           isError: true as const,
           content: [
@@ -1667,6 +1763,7 @@ export function registerTools(server: McpServer): void {
       const argv = ['posts', 'delete', String(a.id)];
       opt(argv, '--type', a.type);
       flag(argv, '--force', a.force);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined);
     },
   );

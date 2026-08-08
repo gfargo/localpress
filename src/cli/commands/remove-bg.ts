@@ -34,7 +34,7 @@ import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
 export function registerRemoveBgCommand(program: Command): void {
   program
@@ -352,7 +352,12 @@ export function registerRemoveBgCommand(program: Command): void {
           `Dry-run: would remove background from ${ids.length} attachment(s). Omit --dry-run to execute.`,
         );
         if (parentOpts.json) {
-          printJson({ dryRun: true, count: ids.length, ids });
+          printJson(
+            dryRunPayload(
+              { operation: 'remove-bg', count: ids.length, items: ids.map((id) => ({ id })) },
+              { count: ids.length, ids },
+            ),
+          );
         }
         return;
       }

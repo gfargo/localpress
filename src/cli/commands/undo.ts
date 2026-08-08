@@ -29,7 +29,7 @@ import { SiteDb } from '../../engine/state/db.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
-import { resolveDryRun } from '../utils/run-mode.ts';
+import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 import {
   MIN_SESSION_PREFIX_LEN,
   formatAmbiguousCandidates,
@@ -187,17 +187,19 @@ export function registerUndoCommand(program: Command): void {
         }
         if (snapshots.length > 20) info(`    ... and ${snapshots.length - 20} more`);
         if (parentOpts.json) {
-          printJson({
-            dryRun: true,
-            count: snapshots.length,
-            snapshots: snapshots.map((s) => ({
-              id: s.id,
-              attachmentId: s.wpId,
-              operation: s.operation,
-              kind: s.kind,
-              filename: s.beforeMeta.filename,
-            })),
-          });
+          const snapshotItems = snapshots.map((s) => ({
+            id: s.id,
+            attachmentId: s.wpId,
+            operation: s.operation,
+            kind: s.kind,
+            filename: s.beforeMeta.filename,
+          }));
+          printJson(
+            dryRunPayload(
+              { operation: 'undo', count: snapshots.length, items: snapshotItems },
+              { count: snapshots.length, snapshots: snapshotItems },
+            ),
+          );
         }
         db.close();
         return;
