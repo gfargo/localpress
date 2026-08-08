@@ -167,11 +167,12 @@ across every configured site at once.
 | **Content** | `posts list/show/create/update/delete` |
 | **Accessibility** | `a11y` |
 | **Migration** | `export`, `import` |
-| **Automation** | `watch` |
+| **Automation** | `watch`, `watch-status` |
 | **Server-side** | `regenerate` |
 | **Round-trip** | `edit` |
 | **Low-level** | `pull`, `push`, `delete` |
 | **Time-machine** | `history`, `undo` |
+| **Verification** | `verify` |
 | **Maintenance** | `update`, `completions` |
 
 All commands accept `--json` for machine-readable output and `--help` for usage details.
@@ -180,7 +181,7 @@ All commands accept `--json` for machine-readable output and `--help` for usage 
 
 ## AI agent integration (MCP)
 
-localpress ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server with 47+ typed tools. Add it to any MCP host:
+localpress ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server with 47 typed tools. Add it to any MCP host:
 
 ```jsonc
 // Claude Desktop, Cursor, VS Code, Kiro, etc.
@@ -238,7 +239,7 @@ Built for Kiro's birthday-week "Custom MCP Integration" challenge: `site_briefin
 
 ```text
 ┌──────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  MCP Server (47+ │───▶│  localpress CLI  │───▶│  Remote WP site │
+│  MCP Server (47  │───▶│  localpress CLI  │───▶│  Remote WP site │
 │  tools) / Skill  │    │  (TS + Bun)      │    │  (REST / SSH)   │
 └──────────────────┘    └──────────────────┘    └─────────────────┘
                                 │

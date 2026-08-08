@@ -974,7 +974,7 @@ If replace-in-place is unavailable when restoring a binary snapshot, `undo` fall
 localpress mcp
 ```
 
-The MCP server exposes the same functionality as the CLI (47+ tools + 4 resources, one MCP tool per CLI command family, plus composite tools like `health_check` and `site_briefing`) by shelling out to the CLI's own `--json` output internally. If the user already has localpress configured as an MCP server in their host, prefer calling its tools directly over shelling out to the `localpress` binary yourself — see .wiki/MCP-Setup.md in the repo for host configuration.
+The MCP server exposes the same functionality as the CLI (47 tools + 4 resources, one MCP tool per CLI command family, plus composite tools like `health_check` and `site_briefing`) by shelling out to the CLI's own `--json` output internally. If the user already has localpress configured as an MCP server in their host, prefer calling its tools directly over shelling out to the `localpress` binary yourself — see .wiki/MCP-Setup.md in the repo for host configuration.
 
 ## Global flags
 
