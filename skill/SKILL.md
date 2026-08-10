@@ -991,6 +991,7 @@ localpress verify 123 --hash --json    # also downloads the remote file to compa
   "ok": 1,
   "drift": 1,
   "missing": 0,
+  "unreachable": 0,
   "unverified": 0,
   "results": [
     { "id": 123, "filename": "hero.webp", "status": "ok", "findings": [] },
@@ -1006,9 +1007,9 @@ localpress verify 123 --hash --json    # also downloads the remote file to compa
 }
 ```
 
-`status` is one of `ok` / `drift` / `missing-local` / `missing-remote`. With `--hash`, each result also carries a `hashVerified` boolean, and a mismatch adds a `sha256` finding — `hashVerified: false` means the check couldn't be performed (no local hash on record, or the download failed), not that it passed.
+`status` is one of `ok` / `drift` / `missing-local` / `missing-remote` / `unreachable`. `missing-remote` is reported **only** when WordPress confirms the attachment is gone (HTTP 404) — bad credentials, network failures, and 401/403/5xx responses are reported as `unreachable` (with `reason` and, when available, `httpStatus` on the result) and are **not** counted toward `missing`, so a misconfigured site never looks like mass-deleted media. With `--hash`, each result also carries a `hashVerified` boolean, and a mismatch adds a `sha256` finding — `hashVerified: false` means the check couldn't be performed (no local hash on record, or the download failed), not that it passed.
 
-**Exit code:** `verify` exits `1` whenever it finds any drift, missing attachment, or unverified hash — this is expected, not a crash. Read the JSON payload (`drift`/`missing`/`unverified` counts and per-result `findings`) rather than relying on the exit code alone. The `verify` MCP tool absorbs this and always returns a normal (non-error) result with the parsed JSON as `structuredContent`, so agents calling it through MCP see drift as data.
+**Exit code:** `verify` exits `1` whenever it finds any drift, missing attachment, unreachable attachment, or unverified hash — this is expected, not a crash. Read the JSON payload (`drift`/`missing`/`unreachable`/`unverified` counts and per-result `findings`/`reason`) rather than relying on the exit code alone. The `verify` MCP tool absorbs this and always returns a normal (non-error) result with the parsed JSON as `structuredContent`, so agents calling it through MCP see drift as data.
 
 ### MCP server
 

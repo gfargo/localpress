@@ -14,7 +14,12 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { Command } from 'commander';
-import { registerVerifyCommand, verifyRemoteHash } from '../../src/cli/commands/verify.ts';
+import { WpApiError } from '../../src/adapters/types.ts';
+import {
+  classifyRemoteFetchError,
+  registerVerifyCommand,
+  verifyRemoteHash,
+} from '../../src/cli/commands/verify.ts';
 
 const AUTH_HEADER = 'Basic dXNlcjpwYXNz';
 
@@ -123,5 +128,51 @@ describe('verifyRemoteHash', () => {
     });
 
     expect(capturedHeaders?.get('Authorization')).toBe(AUTH_HEADER);
+  });
+});
+
+describe('classifyRemoteFetchError', () => {
+  test('HTTP 404 classifies as missing-remote', () => {
+    const result = classifyRemoteFetchError(new WpApiError('not found', 404));
+    expect(result.status).toBe('missing-remote');
+    expect(result.httpStatus).toBe(404);
+  });
+
+  test('HTTP 401 classifies as unreachable, not missing-remote', () => {
+    const result = classifyRemoteFetchError(new WpApiError('unauthorized', 401));
+    expect(result.status).toBe('unreachable');
+    expect(result.httpStatus).toBe(401);
+    expect(result.reason).toContain('unauthorized');
+  });
+
+  test('HTTP 403 classifies as unreachable', () => {
+    const result = classifyRemoteFetchError(new WpApiError('forbidden', 403));
+    expect(result.status).toBe('unreachable');
+    expect(result.httpStatus).toBe(403);
+  });
+
+  test('HTTP 500 classifies as unreachable', () => {
+    const result = classifyRemoteFetchError(new WpApiError('server error', 500));
+    expect(result.status).toBe('unreachable');
+    expect(result.httpStatus).toBe(500);
+  });
+
+  test('WpApiError with no status classifies as unreachable', () => {
+    const result = classifyRemoteFetchError(new WpApiError('malformed response'));
+    expect(result.status).toBe('unreachable');
+    expect(result.httpStatus).toBeUndefined();
+  });
+
+  test('plain network error (no status) classifies as unreachable', () => {
+    const result = classifyRemoteFetchError(new Error('ECONNREFUSED'));
+    expect(result.status).toBe('unreachable');
+    expect(result.httpStatus).toBeUndefined();
+    expect(result.reason).toContain('ECONNREFUSED');
+  });
+
+  test('non-Error thrown value classifies as unreachable', () => {
+    const result = classifyRemoteFetchError('boom');
+    expect(result.status).toBe('unreachable');
+    expect(result.reason).toContain('boom');
   });
 });
