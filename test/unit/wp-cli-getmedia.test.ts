@@ -27,6 +27,7 @@ afterAll(() => {
 });
 
 const { WpCliAdapter } = await import('../../src/adapters/wp-cli.ts');
+import { WpCliError } from '../../src/adapters/types.ts';
 import type { SiteConfig } from '../../src/types.ts';
 
 const site: SiteConfig = {
@@ -143,5 +144,51 @@ describe('WpCliAdapter.getMedia()', () => {
     const adapter = new WpCliAdapter(site);
 
     await expect(adapter.getMedia(4)).rejects.toThrow(/transient database error/);
+  });
+
+  test('throws a WpCliError carrying exitCode and stderr, distinguishing a genuinely-deleted post from other failures', async () => {
+    sshExecMock.mockImplementation(async (_ssh: unknown, command: string) => {
+      if (command.includes('post get')) {
+        return result('', 1, 'Error: Could not find the post with ID 5.');
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+
+    const adapter = new WpCliAdapter(site);
+
+    let caught: unknown;
+    try {
+      await adapter.getMedia(5);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(WpCliError);
+    const cliError = caught as WpCliError;
+    expect(cliError.exitCode).toBe(1);
+    expect(cliError.stderr).toBe('Error: Could not find the post with ID 5.');
+  });
+
+  test('throws a WpCliError for an SSH/connectivity failure (distinct exit code from a not-found post)', async () => {
+    sshExecMock.mockImplementation(async (_ssh: unknown, command: string) => {
+      if (command.includes('post get')) {
+        return result('', 255, 'ssh: connect to host example.test port 22: Connection refused');
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+
+    const adapter = new WpCliAdapter(site);
+
+    let caught: unknown;
+    try {
+      await adapter.getMedia(6);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(WpCliError);
+    const cliError = caught as WpCliError;
+    expect(cliError.exitCode).toBe(255);
+    expect(cliError.stderr).toContain('Connection refused');
   });
 });

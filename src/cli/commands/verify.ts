@@ -19,7 +19,7 @@
 import { createHash } from 'node:crypto';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
-import type { MediaItem } from '../../adapters/types.ts';
+import { type MediaItem, WpApiError, WpCliError } from '../../adapters/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
@@ -29,15 +29,60 @@ interface VerifyFinding {
   field: string;
   local: string | number | null;
   remote: string | number | null;
-  severity: 'mismatch' | 'drift' | 'missing';
+  severity: 'mismatch' | 'drift' | 'missing' | 'unreachable';
 }
 
 interface VerifyResult {
   id: number;
   filename: string;
-  status: 'ok' | 'drift' | 'missing-local' | 'missing-remote';
+  status: 'ok' | 'drift' | 'missing-local' | 'missing-remote' | 'unreachable';
   findings: VerifyFinding[];
   hashVerified?: boolean;
+  reason?: string;
+  httpStatus?: number;
+}
+
+export interface RemoteFetchErrorClassification {
+  status: 'missing-remote' | 'unreachable';
+  reason: string;
+  httpStatus?: number;
+}
+
+/**
+ * WP-CLI's own "the entity doesn't exist" message (from `wp-cli/entity-command`,
+ * shared by every `wp post get` / `wp <type> get` failure), e.g.
+ * "Error: Could not find the post with ID 123." Any other WP-CLI failure
+ * (SSH/auth failure, transient DB error, etc.) is a different exit path and
+ * must not be read as "the attachment is gone".
+ */
+const WP_CLI_NOT_FOUND_PATTERN = /could not find the post with id/i;
+
+/**
+ * Classifies a failure from `adapter.getMedia()` so `verify` can tell an
+ * actually-deleted attachment (HTTP 404, or WP-CLI's own not-found message)
+ * apart from a merely-unreachable site (bad credentials, network failure,
+ * 5xx, SSH failure) — the latter must never be reported as "missing
+ * remotely".
+ */
+export function classifyRemoteFetchError(err: unknown): RemoteFetchErrorClassification {
+  if (err instanceof WpApiError) {
+    if (err.status === 404) {
+      return { status: 'missing-remote', reason: err.message, httpStatus: err.status };
+    }
+    return { status: 'unreachable', reason: err.message, httpStatus: err.status };
+  }
+
+  if (err instanceof WpCliError) {
+    if (WP_CLI_NOT_FOUND_PATTERN.test(err.stderr)) {
+      return { status: 'missing-remote', reason: err.message };
+    }
+    return { status: 'unreachable', reason: err.message };
+  }
+
+  return {
+    status: 'unreachable',
+    reason: err instanceof Error ? err.message : String(err),
+  };
 }
 
 export interface HashCheckResult {
@@ -137,6 +182,7 @@ export function registerVerifyCommand(program: Command): void {
       let driftCount = 0;
       let missingCount = 0;
       let unverifiedCount = 0;
+      let unreachableCount = 0;
 
       for (const id of targetIds) {
         const localRecord = db.getAttachment(site.name, id);
@@ -160,22 +206,32 @@ export function registerVerifyCommand(program: Command): void {
             });
             warn(`  #${id} (${remote.filename}): not in local DB (never processed by localpress)`);
             missingCount++;
-          } catch {
+          } catch (err) {
+            const classification = classifyRemoteFetchError(err);
             results.push({
               id,
               filename: `attachment-${id}`,
-              status: 'missing-remote',
+              status: classification.status,
               findings: [
                 {
                   field: 'remote-record',
                   local: null,
                   remote: null,
-                  severity: 'missing',
+                  severity: classification.status === 'missing-remote' ? 'missing' : 'unreachable',
                 },
               ],
+              reason: classification.reason,
+              ...(classification.httpStatus !== undefined
+                ? { httpStatus: classification.httpStatus }
+                : {}),
             });
-            warn(`  #${id}: not found locally or remotely`);
-            missingCount++;
+            if (classification.status === 'missing-remote') {
+              warn(`  #${id}: not found locally or remotely`);
+              missingCount++;
+            } else {
+              error(`  #${id}: unreachable — ${classification.reason}`);
+              unreachableCount++;
+            }
           }
           continue;
         }
@@ -185,23 +241,31 @@ export function registerVerifyCommand(program: Command): void {
         try {
           remote = await adapter.getMedia(id);
         } catch (err) {
+          const classification = classifyRemoteFetchError(err);
           results.push({
             id,
             filename: localRecord.sourceUrl,
-            status: 'missing-remote',
+            status: classification.status,
             findings: [
               {
                 field: 'remote-record',
                 local: localRecord.sourceUrl,
                 remote: null,
-                severity: 'missing',
+                severity: classification.status === 'missing-remote' ? 'missing' : 'unreachable',
               },
             ],
+            reason: classification.reason,
+            ...(classification.httpStatus !== undefined
+              ? { httpStatus: classification.httpStatus }
+              : {}),
           });
-          error(
-            `  #${id}: exists locally but not remotely (${err instanceof Error ? err.message : String(err)})`,
-          );
-          missingCount++;
+          if (classification.status === 'missing-remote') {
+            error(`  #${id}: exists locally but not remotely (${classification.reason})`);
+            missingCount++;
+          } else {
+            error(`  #${id}: unreachable — ${classification.reason}`);
+            unreachableCount++;
+          }
           continue;
         }
 
@@ -321,7 +385,7 @@ export function registerVerifyCommand(program: Command): void {
 
       // Summary.
       info(
-        `\n  Summary: ${okCount} ok, ${driftCount} drifted, ${missingCount} missing, ${unverifiedCount} unverified`,
+        `\n  Summary: ${okCount} ok, ${driftCount} drifted, ${missingCount} missing, ${unreachableCount} unreachable, ${unverifiedCount} unverified`,
       );
 
       if (parentOpts.json) {
@@ -331,12 +395,13 @@ export function registerVerifyCommand(program: Command): void {
           ok: okCount,
           drift: driftCount,
           missing: missingCount,
+          unreachable: unreachableCount,
           unverified: unverifiedCount,
           results,
         });
       }
 
-      if (driftCount > 0 || missingCount > 0 || unverifiedCount > 0) {
+      if (driftCount > 0 || missingCount > 0 || unreachableCount > 0 || unverifiedCount > 0) {
         process.exit(1);
       }
     });

@@ -14,7 +14,12 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { Command } from 'commander';
-import { registerVerifyCommand, verifyRemoteHash } from '../../src/cli/commands/verify.ts';
+import { WpApiError, WpCliError } from '../../src/adapters/types.ts';
+import {
+  classifyRemoteFetchError,
+  registerVerifyCommand,
+  verifyRemoteHash,
+} from '../../src/cli/commands/verify.ts';
 
 const AUTH_HEADER = 'Basic dXNlcjpwYXNz';
 
@@ -123,5 +128,86 @@ describe('verifyRemoteHash', () => {
     });
 
     expect(capturedHeaders?.get('Authorization')).toBe(AUTH_HEADER);
+  });
+});
+
+describe('classifyRemoteFetchError', () => {
+  test('HTTP 404 classifies as missing-remote', () => {
+    const result = classifyRemoteFetchError(new WpApiError('not found', 404));
+    expect(result.status).toBe('missing-remote');
+    expect(result.httpStatus).toBe(404);
+  });
+
+  test('HTTP 401 classifies as unreachable, not missing-remote', () => {
+    const result = classifyRemoteFetchError(new WpApiError('unauthorized', 401));
+    expect(result.status).toBe('unreachable');
+    expect(result.httpStatus).toBe(401);
+    expect(result.reason).toContain('unauthorized');
+  });
+
+  test('HTTP 403 classifies as unreachable', () => {
+    const result = classifyRemoteFetchError(new WpApiError('forbidden', 403));
+    expect(result.status).toBe('unreachable');
+    expect(result.httpStatus).toBe(403);
+  });
+
+  test('HTTP 500 classifies as unreachable', () => {
+    const result = classifyRemoteFetchError(new WpApiError('server error', 500));
+    expect(result.status).toBe('unreachable');
+    expect(result.httpStatus).toBe(500);
+  });
+
+  test('WpApiError with no status classifies as unreachable', () => {
+    const result = classifyRemoteFetchError(new WpApiError('malformed response'));
+    expect(result.status).toBe('unreachable');
+    expect(result.httpStatus).toBeUndefined();
+  });
+
+  test('plain network error (no status) classifies as unreachable', () => {
+    const result = classifyRemoteFetchError(new Error('ECONNREFUSED'));
+    expect(result.status).toBe('unreachable');
+    expect(result.httpStatus).toBeUndefined();
+    expect(result.reason).toContain('ECONNREFUSED');
+  });
+
+  test('non-Error thrown value classifies as unreachable', () => {
+    const result = classifyRemoteFetchError('boom');
+    expect(result.status).toBe('unreachable');
+    expect(result.reason).toContain('boom');
+  });
+
+  test('WpCliError with WP-CLI "could not find the post" message classifies as missing-remote', () => {
+    const result = classifyRemoteFetchError(
+      new WpCliError(
+        'WP-CLI error (exit 1): Error: Could not find the post with ID 123.',
+        1,
+        'Error: Could not find the post with ID 123.',
+      ),
+    );
+    expect(result.status).toBe('missing-remote');
+    expect(result.httpStatus).toBeUndefined();
+  });
+
+  test('WpCliError from an SSH/connectivity failure classifies as unreachable, not missing-remote', () => {
+    const result = classifyRemoteFetchError(
+      new WpCliError(
+        'WP-CLI error (exit 255): ssh: connect to host example.test port 22: Connection refused',
+        255,
+        'ssh: connect to host example.test port 22: Connection refused',
+      ),
+    );
+    expect(result.status).toBe('unreachable');
+    expect(result.reason).toContain('Connection refused');
+  });
+
+  test('WpCliError from an unrelated WP-CLI failure (e.g. transient DB error) classifies as unreachable', () => {
+    const result = classifyRemoteFetchError(
+      new WpCliError(
+        'WP-CLI error (exit 1): wp-cli: transient database error',
+        1,
+        'wp-cli: transient database error',
+      ),
+    );
+    expect(result.status).toBe('unreachable');
   });
 });
