@@ -26,6 +26,12 @@
  * removal. If the same path reappears within the window, the pending delete
  * is cancelled and the recreate is applied via replace-in-place instead of
  * uploading a brand-new attachment, preserving the WordPress attachment ID.
+ *
+ * The grace window only cancels a delete that hasn't fired yet. Once it
+ * fires, `handleDelete` and `processFile` for the same path are routed
+ * through the same per-file rerun guard, so a delete request in flight can
+ * never race a replace-in-place for the same attachment — one always fully
+ * completes before the other starts.
  */
 
 import { createHash } from 'node:crypto';
@@ -149,18 +155,28 @@ export function registerWatchCommand(program: Command): void {
       const debounceMs = options.debounce ?? DEBOUNCE_MS;
       const deleteGraceMs = options.deleteGrace ?? DELETE_GRACE_MS;
 
-      // Per-file rerun guards: a save that arrives while a sync for the same
-      // file is in flight is queued and rerun once the in-flight sync
-      // finishes, rather than dropped. State is kept per-file so concurrent
-      // uploads for different files never block each other. Entries are
-      // never evicted, which is fine for a long-running watch process since
-      // the set of distinct paths in a watched directory is bounded.
-      const rerunGuards = new Map<string, () => Promise<void>>();
+      // Per-file rerun guards: a save or delete that arrives while a sync for
+      // the same file is in flight is queued and rerun once the in-flight
+      // sync finishes, rather than dropped or run concurrently. Routing both
+      // `processFile` (upload/replace) and `handleDelete` through the same
+      // guard per path is what prevents a delete's WordPress request from
+      // racing an in-flight replace-in-place for the same attachment — the
+      // grace window in delete-grace.ts only cancels a delete that hasn't
+      // fired yet, so once the grace timer fires the delete must still be
+      // serialized against any recreate that lands while it's in flight.
+      // State is kept per-file so concurrent uploads for different files
+      // never block each other. Entries are never evicted, which is fine for
+      // a long-running watch process since the set of distinct paths in a
+      // watched directory is bounded.
+      type FileTask = { kind: 'process' } | { kind: 'delete' };
+      const rerunGuards = new Map<string, (task: FileTask) => Promise<void>>();
 
-      function getGuard(filePath: string): () => Promise<void> {
+      function getGuard(filePath: string): (task: FileTask) => Promise<void> {
         let guard = rerunGuards.get(filePath);
         if (!guard) {
-          guard = createRerunGuard<void>(() => processFile(filePath));
+          guard = createRerunGuard<FileTask>((task) =>
+            task.kind === 'delete' ? handleDelete(filePath) : processFile(filePath),
+          );
           rerunGuards.set(filePath, guard);
         }
         return guard;
@@ -432,7 +448,7 @@ export function registerWatchCommand(program: Command): void {
       // look like a real removal — see the module docblock.
       const deleteScheduler = createDeleteScheduler({
         graceMs: deleteGraceMs,
-        onDelete: (filePath) => handleDelete(filePath),
+        onDelete: (filePath) => getGuard(filePath)({ kind: 'delete' }),
       });
 
       /**
@@ -452,7 +468,7 @@ export function registerWatchCommand(program: Command): void {
           filePath,
           setTimeout(() => {
             debounceTimers.delete(filePath);
-            void getGuard(filePath)();
+            void getGuard(filePath)({ kind: 'process' });
           }, debounceMs),
         );
       }
