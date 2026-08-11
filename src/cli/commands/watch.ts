@@ -19,6 +19,19 @@
  * WordPress needs MEDIA_TRASH defined, which most sites don't set — see
  * `localpress delete --help`). A local undo snapshot is captured first via
  * the time-machine, so `localpress undo --apply` can restore the file.
+ *
+ * `unlink` events are held behind a grace window (`--delete-grace`, default
+ * 3s) rather than acted on immediately: editors that save atomically delete
+ * the old file and recreate it, which otherwise looks identical to a real
+ * removal. If the same path reappears within the window, the pending delete
+ * is cancelled and the recreate is applied via replace-in-place instead of
+ * uploading a brand-new attachment, preserving the WordPress attachment ID.
+ *
+ * The grace window only cancels a delete that hasn't fired yet. Once it
+ * fires, `handleDelete` and `processFile` for the same path are routed
+ * through the same per-file rerun guard, so a delete request in flight can
+ * never race a replace-in-place for the same attachment — one always fully
+ * completes before the other starts.
  */
 
 import { createHash } from 'node:crypto';
@@ -45,6 +58,7 @@ import type { ImageFormat } from '../../engine/image/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { parseIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { createDeleteScheduler } from '../utils/delete-grace.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { createRerunGuard } from '../utils/rerun-guard.ts';
 import { isOptimizableMime } from './optimize.ts';
@@ -54,6 +68,9 @@ const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.avif', '.g
 
 /** Debounce interval for file changes (ms). */
 const DEBOUNCE_MS = 800;
+
+/** Grace window before an unlink triggers a WordPress delete (ms). */
+const DELETE_GRACE_MS = 3000;
 
 function isImageFile(filePath: string): boolean {
   const ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase();
@@ -103,6 +120,11 @@ export function registerWatchCommand(program: Command): void {
       'debounce interval in ms (default: 800)',
       parseIntOption('--debounce'),
     )
+    .option(
+      '--delete-grace <ms>',
+      'grace window before a removed file triggers a WordPress delete, to survive atomic editor saves (default: 3000)',
+      parseIntOption('--delete-grace'),
+    )
     .action(async (directory: string, options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
@@ -131,19 +153,30 @@ export function registerWatchCommand(program: Command): void {
           : null;
 
       const debounceMs = options.debounce ?? DEBOUNCE_MS;
+      const deleteGraceMs = options.deleteGrace ?? DELETE_GRACE_MS;
 
-      // Per-file rerun guards: a save that arrives while a sync for the same
-      // file is in flight is queued and rerun once the in-flight sync
-      // finishes, rather than dropped. State is kept per-file so concurrent
-      // uploads for different files never block each other. Entries are
-      // never evicted, which is fine for a long-running watch process since
-      // the set of distinct paths in a watched directory is bounded.
-      const rerunGuards = new Map<string, (isNew: boolean) => Promise<void>>();
+      // Per-file rerun guards: a save or delete that arrives while a sync for
+      // the same file is in flight is queued and rerun once the in-flight
+      // sync finishes, rather than dropped or run concurrently. Routing both
+      // `processFile` (upload/replace) and `handleDelete` through the same
+      // guard per path is what prevents a delete's WordPress request from
+      // racing an in-flight replace-in-place for the same attachment — the
+      // grace window in delete-grace.ts only cancels a delete that hasn't
+      // fired yet, so once the grace timer fires the delete must still be
+      // serialized against any recreate that lands while it's in flight.
+      // State is kept per-file so concurrent uploads for different files
+      // never block each other. Entries are never evicted, which is fine for
+      // a long-running watch process since the set of distinct paths in a
+      // watched directory is bounded.
+      type FileTask = { kind: 'process' } | { kind: 'delete' };
+      const rerunGuards = new Map<string, (task: FileTask) => Promise<void>>();
 
-      function getGuard(filePath: string): (isNew: boolean) => Promise<void> {
+      function getGuard(filePath: string): (task: FileTask) => Promise<void> {
         let guard = rerunGuards.get(filePath);
         if (!guard) {
-          guard = createRerunGuard<boolean>((isNew) => processFile(filePath, isNew));
+          guard = createRerunGuard<FileTask>((task) =>
+            task.kind === 'delete' ? handleDelete(filePath) : processFile(filePath),
+          );
           rerunGuards.set(filePath, guard);
         }
         return guard;
@@ -161,7 +194,7 @@ export function registerWatchCommand(program: Command): void {
       /**
        * Process a file: optimize (if requested), then upload to WordPress.
        */
-      async function processFile(filePath: string, isNew: boolean): Promise<void> {
+      async function processFile(filePath: string): Promise<void> {
         const relPath = relative(watchDir, filePath);
 
         try {
@@ -222,8 +255,12 @@ export function registerWatchCommand(program: Command): void {
             }
           }
 
-          // Determine if this is a replace or a new upload.
-          if (!isNew && existingMapping?.wpId) {
+          // Determine if this is a replace or a new upload. A path with an
+          // existing mapping replaces in place even when it arrives as `add`
+          // (e.g. an atomic editor save deletes then recreates the file) —
+          // the recreate should preserve the WordPress attachment ID rather
+          // than upload a duplicate.
+          if (existingMapping?.wpId) {
             // Try replace-in-place.
             const replaceAdapter = resolver.tryResolve('replace-in-place');
 
@@ -406,11 +443,23 @@ export function registerWatchCommand(program: Command): void {
         }
       }
 
+      // Deletes are held behind a grace window rather than acted on
+      // immediately, so an atomic editor save (unlink + recreate) doesn't
+      // look like a real removal — see the module docblock.
+      const deleteScheduler = createDeleteScheduler({
+        graceMs: deleteGraceMs,
+        onDelete: (filePath) => getGuard(filePath)({ kind: 'delete' }),
+      });
+
       /**
        * Debounced file event handler.
        */
-      function scheduleProcess(filePath: string, isNew: boolean): void {
+      function scheduleProcess(filePath: string): void {
         if (!isImageFile(filePath)) return;
+
+        // A file reappearing cancels any pending delete for the same path —
+        // this is the atomic-save case, not a real removal.
+        deleteScheduler.cancelDelete(filePath);
 
         const existing = debounceTimers.get(filePath);
         if (existing) clearTimeout(existing);
@@ -419,7 +468,7 @@ export function registerWatchCommand(program: Command): void {
           filePath,
           setTimeout(() => {
             debounceTimers.delete(filePath);
-            void getGuard(filePath)(isNew);
+            void getGuard(filePath)({ kind: 'process' });
           }, debounceMs),
         );
       }
@@ -440,11 +489,11 @@ export function registerWatchCommand(program: Command): void {
         ],
       });
 
-      watcher.on('add', (filePath) => scheduleProcess(filePath, true));
-      watcher.on('change', (filePath) => scheduleProcess(filePath, false));
+      watcher.on('add', (filePath) => scheduleProcess(filePath));
+      watcher.on('change', (filePath) => scheduleProcess(filePath));
       watcher.on('unlink', (filePath) => {
         if (!isImageFile(filePath)) return;
-        void handleDelete(filePath);
+        deleteScheduler.scheduleDelete(filePath);
       });
       watcher.on('error', (err) => {
         error(`Watcher error: ${err.message}`);
@@ -456,6 +505,7 @@ export function registerWatchCommand(program: Command): void {
         for (const timer of debounceTimers.values()) {
           clearTimeout(timer);
         }
+        deleteScheduler.clearAll();
         await watcher.close();
         if (historySession) {
           closeHistorySession(snapshotStore, historySession, {
