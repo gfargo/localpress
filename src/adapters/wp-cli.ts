@@ -23,6 +23,7 @@ import type {
   UploadMetadata,
   WpBackend,
 } from './types.ts';
+import { WpCliError } from './types.ts';
 
 const WP_CLI_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   'list',
@@ -60,7 +61,11 @@ export class WpCliAdapter implements WpBackend {
     const result = await sshExec(this.ssh, fullCommand);
 
     if (result.exitCode !== 0) {
-      throw new Error(`WP-CLI error (exit ${result.exitCode}): ${result.stderr || result.stdout}`);
+      throw new WpCliError(
+        `WP-CLI error (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+        result.exitCode,
+        result.stderr || result.stdout,
+      );
     }
 
     return result.stdout;

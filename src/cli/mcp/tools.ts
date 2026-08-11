@@ -664,7 +664,7 @@ export function registerTools(server: McpServer): void {
         "Cross-check localpress's local SQLite state against live WordPress for one or more attachments: mime type, size, dimensions, and (with hash=true) a SHA-256 of the remote file. " +
         'Answers "did my writes actually land / did another plugin re-process my image?". Read-only. ' +
         'Reports drift as data — a drift/missing/unreachable/unverified result is a normal successful response, not an error. ' +
-        'An attachment is only reported missing-remote on a genuine HTTP 404; connectivity failures, bad credentials, and 401/403/5xx are reported as unreachable instead.',
+        'An attachment is only reported missing-remote when WordPress confirms it is gone (HTTP 404, or a WP-CLI not-found error on SSH-backed sites); connectivity failures, bad credentials, 401/403/5xx, and other WP-CLI/SSH errors are reported as unreachable instead.',
       inputSchema: {
         ...commonSiteArg,
         ids: z

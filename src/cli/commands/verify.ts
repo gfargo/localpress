@@ -19,7 +19,7 @@
 import { createHash } from 'node:crypto';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
-import { type MediaItem, WpApiError } from '../../adapters/types.ts';
+import { type MediaItem, WpApiError, WpCliError } from '../../adapters/types.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
@@ -29,7 +29,7 @@ interface VerifyFinding {
   field: string;
   local: string | number | null;
   remote: string | number | null;
-  severity: 'mismatch' | 'drift' | 'missing';
+  severity: 'mismatch' | 'drift' | 'missing' | 'unreachable';
 }
 
 interface VerifyResult {
@@ -49,10 +49,20 @@ export interface RemoteFetchErrorClassification {
 }
 
 /**
+ * WP-CLI's own "the entity doesn't exist" message (from `wp-cli/entity-command`,
+ * shared by every `wp post get` / `wp <type> get` failure), e.g.
+ * "Error: Could not find the post with ID 123." Any other WP-CLI failure
+ * (SSH/auth failure, transient DB error, etc.) is a different exit path and
+ * must not be read as "the attachment is gone".
+ */
+const WP_CLI_NOT_FOUND_PATTERN = /could not find the post with id/i;
+
+/**
  * Classifies a failure from `adapter.getMedia()` so `verify` can tell an
- * actually-deleted attachment (HTTP 404) apart from a merely-unreachable
- * site (bad credentials, network failure, 5xx) — the latter must never be
- * reported as "missing remotely".
+ * actually-deleted attachment (HTTP 404, or WP-CLI's own not-found message)
+ * apart from a merely-unreachable site (bad credentials, network failure,
+ * 5xx, SSH failure) — the latter must never be reported as "missing
+ * remotely".
  */
 export function classifyRemoteFetchError(err: unknown): RemoteFetchErrorClassification {
   if (err instanceof WpApiError) {
@@ -60,6 +70,13 @@ export function classifyRemoteFetchError(err: unknown): RemoteFetchErrorClassifi
       return { status: 'missing-remote', reason: err.message, httpStatus: err.status };
     }
     return { status: 'unreachable', reason: err.message, httpStatus: err.status };
+  }
+
+  if (err instanceof WpCliError) {
+    if (WP_CLI_NOT_FOUND_PATTERN.test(err.stderr)) {
+      return { status: 'missing-remote', reason: err.message };
+    }
+    return { status: 'unreachable', reason: err.message };
   }
 
   return {
@@ -200,7 +217,7 @@ export function registerVerifyCommand(program: Command): void {
                   field: 'remote-record',
                   local: null,
                   remote: null,
-                  severity: 'missing',
+                  severity: classification.status === 'missing-remote' ? 'missing' : 'unreachable',
                 },
               ],
               reason: classification.reason,
@@ -234,7 +251,7 @@ export function registerVerifyCommand(program: Command): void {
                 field: 'remote-record',
                 local: localRecord.sourceUrl,
                 remote: null,
-                severity: 'missing',
+                severity: classification.status === 'missing-remote' ? 'missing' : 'unreachable',
               },
             ],
             reason: classification.reason,
