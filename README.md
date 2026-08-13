@@ -181,7 +181,7 @@ All commands accept `--json` for machine-readable output and `--help` for usage 
 
 ## AI agent integration (MCP)
 
-localpress ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server with 47 typed tools. Add it to any MCP host:
+localpress ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server with 52 typed tools. Add it to any MCP host:
 
 ```jsonc
 // Claude Desktop, Cursor, VS Code, Kiro, etc.
@@ -239,7 +239,7 @@ Built for Kiro's birthday-week "Custom MCP Integration" challenge: `site_briefin
 
 ```text
 ┌──────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  MCP Server (47  │───▶│  localpress CLI  │───▶│  Remote WP site │
+│  MCP Server (52  │───▶│  localpress CLI  │───▶│  Remote WP site │
 │  tools) / Skill  │    │  (TS + Bun)      │    │  (REST / SSH)   │
 └──────────────────┘    └──────────────────┘    └─────────────────┘
                                 │

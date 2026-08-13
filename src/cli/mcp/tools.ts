@@ -359,9 +359,45 @@ export function registerTools(server: McpServer): void {
         'Remove a configured site and its local SQLite database. Does not touch WordPress.',
       inputSchema: {
         name: z.string().describe('Site name to remove'),
+        keepDb: z.boolean().optional().describe('Preserve the local SQLite database file'),
       },
     },
-    async ({ name }) => runCli(['sites', 'remove', name as string]),
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['sites', 'remove', a.name as string];
+      flag(argv, '--keep-db', a.keepDb);
+      return runCli(argv);
+    },
+  );
+
+  server.registerTool(
+    'sites_run',
+    {
+      title: 'Run a localpress command across multiple sites',
+      description:
+        'Run an arbitrary localpress subcommand (e.g. "audit --missing-alt") against every configured site or a chosen subset, and return each site\'s result. This is a passthrough meta-tool — it widens the agent\'s reachable surface to any CLI subcommand, not just the ones exposed as MCP tools. Cannot nest another `sites run` call.',
+      inputSchema: {
+        command: z
+          .string()
+          .describe('The localpress command string to run, e.g. "audit --missing-alt"'),
+        allSites: z.boolean().optional().describe('Run against every configured site'),
+        sites: z.string().optional().describe('Comma-separated list of site names'),
+        timeout: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Per-site timeout in milliseconds'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['sites', 'run', a.command as string];
+      flag(argv, '--all-sites', a.allSites);
+      opt(argv, '--sites', a.sites);
+      opt(argv, '--timeout', a.timeout);
+      return runCli(argv);
+    },
   );
 
   server.registerTool(
@@ -465,6 +501,28 @@ export function registerTools(server: McpServer): void {
     },
   );
 
+  server.registerTool(
+    'config_list',
+    {
+      title: 'Print the full config',
+      description: 'Print the full config (app passwords are redacted).',
+      inputSchema: {},
+    },
+    async () => runCli(['config', 'list']),
+  );
+
+  server.registerTool(
+    'config_remove_profile',
+    {
+      title: 'Delete a named profile',
+      description: 'Delete a named optimization profile.',
+      inputSchema: {
+        name: z.string().describe('Profile name'),
+      },
+    },
+    async ({ name }) => runCli(['config', 'remove-profile', name as string]),
+  );
+
   // ---------------------------------------------------------------------------
   // Discovery
   // ---------------------------------------------------------------------------
@@ -560,6 +618,10 @@ export function registerTools(server: McpServer): void {
         ...commonSiteArg,
         unoptimized: z.boolean().optional(),
         large: z.boolean().optional(),
+        unattached: z
+          .boolean()
+          .optional()
+          .describe('Flag attachments not associated with any post'),
         missingAlt: z.boolean().optional(),
         displaySize: z.boolean().optional(),
         duplicates: z.boolean().optional(),
@@ -588,6 +650,7 @@ export function registerTools(server: McpServer): void {
       const argv = ['audit'];
       flag(argv, '--unoptimized', a.unoptimized);
       flag(argv, '--large', a.large);
+      flag(argv, '--unattached', a.unattached);
       flag(argv, '--missing-alt', a.missingAlt);
       flag(argv, '--display-size', a.displaySize);
       flag(argv, '--duplicates', a.duplicates);
@@ -750,6 +813,38 @@ export function registerTools(server: McpServer): void {
         encoder: z.enum(['sharp', 'jsquash']).optional(),
         profile: z.string().optional().describe('Use a named profile from config'),
         stripMetadata: z.boolean().optional(),
+        force: z
+          .boolean()
+          .optional()
+          .describe('Bypass the idempotency skip and re-process even if already up to date'),
+        targetSize: z
+          .string()
+          .optional()
+          .describe('Binary-search quality to hit this output size (e.g. "100kb", "1mb")'),
+        mode: z
+          .enum(['lossy', 'lossless'])
+          .optional()
+          .describe('Compression mode (default: lossy for jpeg/webp/avif, lossless for png)'),
+        largerThan: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Only attachments larger than this many bytes (works with --all)'),
+        keepOriginal: z
+          .boolean()
+          .optional()
+          .describe('Do not replace; save the optimized copy as a separate attachment'),
+        replaceInPlace: z
+          .boolean()
+          .optional()
+          .describe(
+            'Set false to always upload as a new attachment, never attempt true replacement (--no-replace-in-place)',
+          ),
+        regenerateThumbnails: z
+          .boolean()
+          .optional()
+          .describe('Regenerate WordPress thumbnails after replace-in-place (slower)'),
         apply: z.boolean().optional().describe('Opt out of dry-run for bulk ops'),
         dryRun: z
           .boolean()
@@ -777,6 +872,13 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--profile', a.profile);
       if (a.stripMetadata === true) argv.push('--strip-metadata');
       else if (a.stripMetadata === false) argv.push('--no-strip-metadata');
+      flag(argv, '--force', a.force);
+      opt(argv, '--target-size', a.targetSize);
+      opt(argv, '--mode', a.mode);
+      opt(argv, '--larger-than', a.largerThan);
+      flag(argv, '--keep-original', a.keepOriginal);
+      if (a.replaceInPlace === false) argv.push('--no-replace-in-place');
+      flag(argv, '--regenerate-thumbnails', a.regenerateThumbnails);
       flag(argv, '--apply', a.apply);
       flag(argv, '--dry-run', a.dryRun);
 
@@ -797,6 +899,13 @@ export function registerTools(server: McpServer): void {
             opt(bArgv, '--profile', a.profile);
             if (a.stripMetadata === true) bArgv.push('--strip-metadata');
             else if (a.stripMetadata === false) bArgv.push('--no-strip-metadata');
+            flag(bArgv, '--force', a.force);
+            opt(bArgv, '--target-size', a.targetSize);
+            opt(bArgv, '--mode', a.mode);
+            opt(bArgv, '--larger-than', a.largerThan);
+            flag(bArgv, '--keep-original', a.keepOriginal);
+            if (a.replaceInPlace === false) bArgv.push('--no-replace-in-place');
+            flag(bArgv, '--regenerate-thumbnails', a.regenerateThumbnails);
             return bArgv;
           },
           idArray,
@@ -819,6 +928,10 @@ export function registerTools(server: McpServer): void {
         ids: z.array(z.number().int().positive()).optional(),
         to: z.enum(['webp', 'avif', 'jpeg', 'png']).describe('Target format'),
         quality: z.number().int().min(1).max(100).optional(),
+        keepOriginal: z
+          .boolean()
+          .optional()
+          .describe('Upload as a new attachment instead of replacing'),
         apply: z.boolean().optional(),
         dryRun: z.boolean().optional().describe('Preview without executing'),
         concurrency: z.number().int().positive().optional().describe('Parallel workers'),
@@ -830,6 +943,7 @@ export function registerTools(server: McpServer): void {
       ids(argv, a.ids);
       opt(argv, '--to', a.to);
       opt(argv, '--quality', a.quality);
+      flag(argv, '--keep-original', a.keepOriginal);
       flag(argv, '--apply', a.apply);
       flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
@@ -847,6 +961,11 @@ export function registerTools(server: McpServer): void {
         ids: z.array(z.number().int().positive()).optional(),
         maxWidth: z.number().int().positive().optional(),
         maxHeight: z.number().int().positive().optional(),
+        quality: z.number().int().min(1).max(100).optional(),
+        keepOriginal: z
+          .boolean()
+          .optional()
+          .describe('Upload as a new attachment instead of replacing'),
         apply: z.boolean().optional(),
         dryRun: z.boolean().optional().describe('Preview without executing'),
         concurrency: z.number().int().positive().optional().describe('Parallel workers'),
@@ -858,6 +977,8 @@ export function registerTools(server: McpServer): void {
       ids(argv, a.ids);
       opt(argv, '--max-width', a.maxWidth);
       opt(argv, '--max-height', a.maxHeight);
+      opt(argv, '--quality', a.quality);
+      flag(argv, '--keep-original', a.keepOriginal);
       flag(argv, '--apply', a.apply);
       flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined, a.concurrency as number | undefined);
@@ -880,6 +1001,12 @@ export function registerTools(server: McpServer): void {
           .string()
           .optional()
           .describe('Background fill color (e.g. "#ffffff") instead of transparency'),
+        trim: z.boolean().optional().describe('Trim transparent borders from the output'),
+        keepOriginal: z
+          .boolean()
+          .optional()
+          .describe('Upload as a new attachment instead of replacing'),
+        listModels: z.boolean().optional().describe('Show available models and exit'),
         rembg: z.boolean().optional().describe('Use system Python rembg instead of built-in ONNX'),
         rembgModel: z.string().optional().describe('Model name when using --rembg'),
         apply: z.boolean().optional(),
@@ -893,6 +1020,9 @@ export function registerTools(server: McpServer): void {
       ids(argv, a.ids);
       opt(argv, '--model', a.model);
       opt(argv, '--bg', a.bg);
+      flag(argv, '--trim', a.trim);
+      flag(argv, '--keep-original', a.keepOriginal);
+      flag(argv, '--list-models', a.listModels);
       flag(argv, '--rembg', a.rembg);
       opt(argv, '--rembg-model', a.rembgModel);
       flag(argv, '--apply', a.apply);
@@ -916,6 +1046,15 @@ export function registerTools(server: McpServer): void {
           .describe('Caption everything currently missing alt text'),
         all: z.boolean().optional(),
         model: z.string().optional().describe('Ollama model name (default: moondream)'),
+        fallbackModel: z
+          .string()
+          .optional()
+          .describe('Retry with this model if the primary model returns garbage output'),
+        prompt: z.string().optional().describe('Custom captioning prompt'),
+        ollamaUrl: z
+          .string()
+          .optional()
+          .describe('Ollama base URL (default: http://localhost:11434)'),
         language: z.string().optional().describe('Output language (e.g. "Spanish")'),
         overwrite: z.boolean().optional(),
         listModels: z.boolean().optional().describe('List locally available vision models'),
@@ -939,6 +1078,9 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--missing-alt', a.missingAlt);
       flag(argv, '--all', a.all);
       opt(argv, '--model', a.model);
+      opt(argv, '--fallback-model', a.fallbackModel);
+      opt(argv, '--prompt', a.prompt);
+      opt(argv, '--ollama-url', a.ollamaUrl);
       opt(argv, '--language', a.language);
       flag(argv, '--overwrite', a.overwrite);
       flag(argv, '--list-models', a.listModels);
@@ -954,6 +1096,9 @@ export function registerTools(server: McpServer): void {
           (batchIds) => {
             const bArgv = ['caption', ...batchIds.map(String)];
             opt(bArgv, '--model', a.model);
+            opt(bArgv, '--fallback-model', a.fallbackModel);
+            opt(bArgv, '--prompt', a.prompt);
+            opt(bArgv, '--ollama-url', a.ollamaUrl);
             opt(bArgv, '--language', a.language);
             flag(bArgv, '--overwrite', a.overwrite);
             return bArgv;
@@ -983,6 +1128,10 @@ export function registerTools(server: McpServer): void {
           .describe('Only items whose title looks auto-generated (Screenshot-…, IMG_…, etc.)'),
         all: z.boolean().optional(),
         model: z.string().optional(),
+        fallbackModel: z
+          .string()
+          .optional()
+          .describe('Retry with this model if the primary model returns garbage output'),
         language: z.string().optional(),
         overwrite: z.boolean().optional(),
         apply: z.boolean().optional(),
@@ -1000,6 +1149,7 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--missing-title', a.missingTitle);
       flag(argv, '--all', a.all);
       opt(argv, '--model', a.model);
+      opt(argv, '--fallback-model', a.fallbackModel);
       opt(argv, '--language', a.language);
       flag(argv, '--overwrite', a.overwrite);
       flag(argv, '--apply', a.apply);
@@ -1023,6 +1173,10 @@ export function registerTools(server: McpServer): void {
           .describe('Only items currently lacking a description'),
         all: z.boolean().optional(),
         model: z.string().optional(),
+        fallbackModel: z
+          .string()
+          .optional()
+          .describe('Retry with this model if the primary model returns garbage output'),
         language: z.string().optional(),
         overwrite: z.boolean().optional(),
         apply: z.boolean().optional(),
@@ -1040,6 +1194,7 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--missing-description', a.missingDescription);
       flag(argv, '--all', a.all);
       opt(argv, '--model', a.model);
+      opt(argv, '--fallback-model', a.fallbackModel);
       opt(argv, '--language', a.language);
       flag(argv, '--overwrite', a.overwrite);
       flag(argv, '--apply', a.apply);
@@ -1064,6 +1219,10 @@ export function registerTools(server: McpServer): void {
             'Comma-separated subset of: alt, title, description, tags, classify. Defaults to all five.',
           ),
         model: z.string().optional(),
+        fallbackModel: z
+          .string()
+          .optional()
+          .describe('Retry with this model if the primary model returns garbage output'),
         language: z.string().optional(),
         overwrite: z.boolean().optional(),
         apply: z.boolean().optional().describe('Write the generated values to WordPress'),
@@ -1076,6 +1235,7 @@ export function registerTools(server: McpServer): void {
       ids(argv, a.ids);
       opt(argv, '--fields', a.fields);
       opt(argv, '--model', a.model);
+      opt(argv, '--fallback-model', a.fallbackModel);
       opt(argv, '--language', a.language);
       flag(argv, '--overwrite', a.overwrite);
       flag(argv, '--apply', a.apply);
@@ -1099,6 +1259,10 @@ export function registerTools(server: McpServer): void {
           .describe('Only items without an existing [tags: …] block in their caption'),
         all: z.boolean().optional(),
         model: z.string().optional(),
+        fallbackModel: z
+          .string()
+          .optional()
+          .describe('Retry with this model if the primary model returns garbage output'),
         overwrite: z.boolean().optional(),
         apply: z.boolean().optional(),
         dryRun: z
@@ -1115,6 +1279,7 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--missing-tags', a.missingTags);
       flag(argv, '--all', a.all);
       opt(argv, '--model', a.model);
+      opt(argv, '--fallback-model', a.fallbackModel);
       flag(argv, '--overwrite', a.overwrite);
       flag(argv, '--apply', a.apply);
       flag(argv, '--dry-run', a.dryRun);
@@ -1270,6 +1435,11 @@ export function registerTools(server: McpServer): void {
         ...commonSiteArg,
         ids: z.array(z.number().int().positive()),
         to: z.string().optional().describe('Destination directory (default: current dir)'),
+        includeSizes: z
+          .boolean()
+          .optional()
+          .describe('Also download all generated thumbnail/medium/large variants'),
+        force: z.boolean().optional().describe('Overwrite local files that already exist'),
       },
     },
     async (args) => {
@@ -1277,6 +1447,8 @@ export function registerTools(server: McpServer): void {
       const argv = ['pull'];
       ids(argv, a.ids);
       opt(argv, '--to', a.to);
+      flag(argv, '--include-sizes', a.includeSizes);
+      flag(argv, '--force', a.force);
       return runCli(argv, a.site as string | undefined);
     },
   );
@@ -1299,6 +1471,8 @@ export function registerTools(server: McpServer): void {
         title: z.string().optional(),
         altText: z.string().optional(),
         caption: z.string().optional(),
+        description: z.string().optional(),
+        post: z.number().int().positive().optional().describe('Attach to this post'),
         dryRun: z.boolean().optional().describe('Preview without executing'),
       },
     },
@@ -1309,6 +1483,8 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--title', a.title);
       opt(argv, '--alt', a.altText);
       opt(argv, '--caption', a.caption);
+      opt(argv, '--description', a.description);
+      opt(argv, '--post', a.post);
       flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined);
     },
@@ -1588,6 +1764,28 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--max-size', a.maxSize);
       opt(argv, '--older-than', a.olderThan);
       opt(argv, '--max-sessions', a.maxSessions);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
+    'history_clear',
+    {
+      title: 'Clear all history',
+      description:
+        'DESTRUCTIVE: wipes every session and snapshot in the local time-machine archive for the active site. This cannot be undone. Requires `yes: true` — without it the CLI refuses and exits with an error.',
+      inputSchema: {
+        ...commonSiteArg,
+        yes: z
+          .boolean()
+          .optional()
+          .describe('Required to skip the confirmation prompt and proceed'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['history', 'clear'];
+      flag(argv, '--yes', a.yes);
       return runCli(argv, a.site as string | undefined);
     },
   );

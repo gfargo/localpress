@@ -69,7 +69,7 @@ You're picking up `localpress` at **v2.5.0**. All 39 CLI commands are implemente
 - Full config listing with password redaction
 
 **MCP server (`localpress mcp`):**
-- First-party Model Context Protocol server exposing 47 typed tools + resources — the CLI's full capability surface (media CRUD, posts CRUD, a11y audit, history/undo, export/import, health_check, search_by_url) available directly to any MCP-speaking agent host
+- First-party Model Context Protocol server exposing 52 typed tools + resources — the CLI's full capability surface (media CRUD, posts CRUD, a11y audit, history/undo, export/import, health_check, search_by_url) available directly to any MCP-speaking agent host
 - See `src/cli/mcp/{server,tools,invoke,resources}.ts` and the README's MCP section for setup
 
 **Distribution:**
@@ -206,7 +206,7 @@ localpress/
 │   │   │   └── HistoryBrowser.tsx    ← Ink TUI for history/undo browsing
 │   │   ├── mcp/
 │   │   │   ├── server.ts             ← MCP server entry (localpress mcp)
-│   │   │   ├── tools.ts              ← tool definitions (47 typed tools)
+│   │   │   ├── tools.ts              ← tool definitions (52 typed tools)
 │   │   │   ├── invoke.ts             ← tool → CLI invocation bridge
 │   │   │   └── resources.ts          ← MCP resources
 │   │   └── utils/
