@@ -5,6 +5,15 @@ All notable changes to localpress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1](https://github.com/gfargo/localpress/compare/v2.6.0...v2.6.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* **mcp:** close CLI flag/tool gaps in MCP schema surface ([#320](https://github.com/gfargo/localpress/issues/320)) ([e3b76c3](https://github.com/gfargo/localpress/commit/e3b76c312f4948d6cc399830e6a9d06c36a711d9))
+* **verify:** distinguish unreachable remote from actually-deleted attachment ([#317](https://github.com/gfargo/localpress/issues/317)) ([be9c2a6](https://github.com/gfargo/localpress/commit/be9c2a6fc707df0db801e96a26b1c42e8924c668))
+* **watch:** debounce delete on unlink to survive atomic editor saves ([#318](https://github.com/gfargo/localpress/issues/318)) ([96fce33](https://github.com/gfargo/localpress/commit/96fce3331c45347e0db1ac0b521b0ff4a64102ec))
+
 ## [2.6.0](https://github.com/gfargo/localpress/compare/v2.5.0...v2.6.0) (2026-08-08)
 
 
