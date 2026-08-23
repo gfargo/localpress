@@ -120,6 +120,9 @@ localpress doctor --json
   "url": "https://example.com",
   "connectionOk": true,
   "sharpAvailable": true,
+  "encoders": {
+    "jsquash": { "available": true, "formats": [{ "format": "webp", "ok": true }] }
+  },
   "adapters": { "rest": true, "wpCli": false, "mcp": false },
   "capabilities": [
     { "capability": "list", "preferredAdapter": "rest", "availableOn": ["rest"] },
@@ -131,6 +134,16 @@ localpress doctor --json
   ]
 }
 ```
+
+Each `issues[]` entry has the shape:
+
+```json
+{ "severity": "error", "message": "Cannot reach the WordPress REST API at https://example.com — check the URL and that the REST API is enabled", "fix": "Verify the site URL with `localpress sites` and update if needed", "code": "network" }
+```
+
+- `severity` — `"error"` | `"warning"` | `"info"`.
+- `fix` — optional; a human-readable remediation hint. Only `severity: "error"` issues with a `fix` are echoed by `--fix`.
+- `code` — optional structured classification for error-severity issues (`"auth"` | `"network"` | `"generic"`), used to pick the process exit code (`AuthError`/`NetworkError`/`GenericError`).
 
 ### Configuration
 

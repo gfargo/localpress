@@ -90,12 +90,13 @@ function runUnreachable(
   doctorArgs: string[],
   sites: Record<string, { url: string }> = { [SITE_NAME]: { url: 'https://example.test' } },
   activeSite = SITE_NAME,
+  extraEnv: Record<string, string> = {},
 ): { stdout: string; stderr: string; exitCode: number } {
   const configDir = mkdtempSync(join(tmpdir(), 'localpress-doctor-unreachable-'));
   try {
     seedConfig(configDir, sites, activeSite);
     const result = Bun.spawnSync(['bun', 'run', UNREACHABLE_FIXTURE, ...doctorArgs], {
-      env: { ...process.env, XDG_CONFIG_HOME: configDir },
+      env: { ...process.env, XDG_CONFIG_HOME: configDir, ...extraEnv },
       timeout: 30_000,
     });
     return {
@@ -165,5 +166,41 @@ describe('doctor exit codes — unreachable site', () => {
       'another-site',
     );
     expect(exitCode).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression coverage for #268 (OSS-1353): Bun's real fetch() rejection
+// message ("Unable to connect. Is the computer able to access the url?")
+// never matched the old ENOTFOUND/ECONNREFUSED substring check, so the issue
+// landed with no `fix` field and `--fix` had nothing to echo.
+// ---------------------------------------------------------------------------
+
+describe('doctor exit codes — unreachable site (Bun-style rejection message)', () => {
+  const BUN_FETCH_ERROR = 'Unable to connect. Is the computer able to access the url?';
+
+  test('doctor --json emits a network issue with a non-empty fix', () => {
+    const { stdout, exitCode } = runUnreachable(['doctor', '--json'], undefined, undefined, {
+      LOCALPRESS_TEST_FETCH_ERROR: BUN_FETCH_ERROR,
+    });
+    expect(exitCode).toBe(4);
+
+    const lines = stdout.trim().split('\n').filter(Boolean);
+    const parsed = JSON.parse(lines[0]);
+    const errorIssues = (
+      parsed.issues as Array<{ severity: string; code?: string; fix?: string }>
+    ).filter((i) => i.severity === 'error');
+
+    expect(errorIssues.length).toBeGreaterThan(0);
+    expect(errorIssues.every((i) => i.code === 'network')).toBe(true);
+    expect(errorIssues.every((i) => typeof i.fix === 'string' && i.fix.length > 0)).toBe(true);
+  });
+
+  test('doctor --fix prints the remediation hint (the "→ fix" line)', () => {
+    const { stdout, exitCode } = runUnreachable(['doctor', '--fix'], undefined, undefined, {
+      LOCALPRESS_TEST_FETCH_ERROR: BUN_FETCH_ERROR,
+    });
+    expect(exitCode).toBe(4);
+    expect(stdout).toContain('→ Verify the site URL');
   });
 });

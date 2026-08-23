@@ -6,6 +6,11 @@
  * exit-code path without real network I/O and without setting process.exitCode
  * in the test runner's own process (which would poison bun's test exit code).
  *
+ * The rejection message is configurable via LOCALPRESS_TEST_FETCH_ERROR (default:
+ * the Node/undici-style "fetch failed") so callers can also exercise Bun's real
+ * rejection message ("Unable to connect. Is the computer able to access the
+ * url?"), which never matched the old ENOTFOUND/ECONNREFUSED substring check.
+ *
  * Usage (via Bun.spawnSync):
  *   bun run test/fixtures/doctor-unreachable.ts [doctor args...]
  *
@@ -18,8 +23,9 @@ import { registerDoctorCommand } from '../../src/cli/commands/doctor.ts';
 import { setOutputOptions } from '../../src/cli/utils/output.ts';
 
 // Mock fetch before any module that calls it is initialized.
+const fetchErrorMessage = process.env.LOCALPRESS_TEST_FETCH_ERROR ?? 'fetch failed';
 globalThis.fetch = (async () => {
-  throw new TypeError('fetch failed');
+  throw new TypeError(fetchErrorMessage);
 }) as unknown as typeof fetch;
 
 const program = new Command();

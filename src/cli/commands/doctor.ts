@@ -86,6 +86,72 @@ interface DoctorIssue {
   code?: 'auth' | 'network' | 'generic';
 }
 
+/**
+ * Classify a REST connection-check failure into a single DoctorIssue.
+ *
+ * WpApiError means the server responded (with a structured HTTP status) — so
+ * this is an application-level error, not a connectivity failure. Anything
+ * else means fetch() itself never got a response (DNS failure, connection
+ * refused, timeout, etc.) — and the exact rejection varies by runtime (e.g.
+ * Bun's fetch() doesn't include Node-style codes like ECONNREFUSED/ENOTFOUND
+ * in its error messages), so we key off the WpApiError type rather than
+ * pattern-matching message text, which would be runtime-specific and brittle.
+ */
+export function classifyConnectionError(err: unknown, siteUrl: string): DoctorIssue {
+  if (err instanceof WpApiError) {
+    if (err.status === 401) {
+      return {
+        severity: 'error',
+        message: 'Authentication failed — Application Password rejected',
+        fix: 'Run `localpress sites remove <name>` then `localpress init` to re-enter credentials',
+        code: 'auth',
+      };
+    }
+
+    if (err.status === 403) {
+      // A 403 can mean the Application Password user lacks the required
+      // capability, or that a firewall/WAF is blocking the request — either
+      // way it isn't necessarily bad credentials, so don't route it through
+      // the auth exit code (that would send users to re-enter credentials
+      // that were fine).
+      return {
+        severity: 'error',
+        message: `REST API error: ${err.message}`,
+        fix: 'Confirm the Application Password user has administrator privileges, and check for a firewall/WAF blocking API requests',
+        code: 'generic',
+      };
+    }
+
+    if (err.status === 404 || err.status === undefined) {
+      // A 404 (or a response with no structured status, which the type
+      // allows) most often means the REST API isn't reachable at that URL —
+      // wrong site URL, REST API disabled, or a proxy swallowing the
+      // request. Treat this like unreachable rather than a generic app
+      // error, since "verify the URL" is the right next step either way.
+      return {
+        severity: 'error',
+        message: `Cannot reach the WordPress REST API at ${siteUrl} — check the URL and that the REST API is enabled`,
+        fix: 'Verify the site URL with `localpress sites` and update if needed',
+        code: 'network',
+      };
+    }
+
+    return {
+      severity: 'error',
+      message: `REST API error: ${err.message}`,
+      fix: 'Check that the site is up and try again — if this persists, verify the REST API is enabled and not blocked by a security plugin',
+      code: 'generic',
+    };
+  }
+
+  return {
+    severity: 'error',
+    message: `Cannot reach ${siteUrl} — check the URL and your network connection`,
+    fix: 'Verify the site URL with `localpress sites` and update if needed',
+    code: 'network',
+  };
+}
+
 export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
@@ -131,35 +197,7 @@ export function registerDoctorCommand(program: Command): void {
             connectionOk = true;
           }
         } catch (err) {
-          // WpApiError means the server responded (with a structured HTTP
-          // status) — so this is an application-level error, not a
-          // connectivity failure. Anything else means fetch() itself never
-          // got a response (DNS failure, connection refused, timeout, etc.).
-          // We key off that distinction — and the exact HTTP status for auth
-          // — rather than pattern-matching error message text, which varies
-          // by runtime (e.g. Bun's fetch() doesn't include Node-style codes
-          // like ECONNREFUSED/ENOTFOUND in its error messages).
-          if (err instanceof WpApiError && err.status === 401) {
-            issues.push({
-              severity: 'error',
-              message: 'Authentication failed — Application Password rejected',
-              fix: 'Run `localpress sites remove <name>` then `localpress init` to re-enter credentials',
-              code: 'auth',
-            });
-          } else if (err instanceof WpApiError) {
-            issues.push({
-              severity: 'error',
-              message: `REST API error: ${err.message}`,
-              code: 'generic',
-            });
-          } else {
-            issues.push({
-              severity: 'error',
-              message: `Cannot reach ${site.url} — check the URL and your network connection`,
-              fix: 'Verify the site URL with `localpress sites` and update if needed',
-              code: 'network',
-            });
-          }
+          issues.push(classifyConnectionError(err, site.url));
         }
 
         if (!availability.wpCli) {
