@@ -18,7 +18,7 @@ import {
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
-import { parseIntOption } from '../utils/args.ts';
+import { parsePositiveIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import {
@@ -35,13 +35,17 @@ export function registerHistoryCommand(program: Command): void {
     .option(
       '--attachment <id>',
       'filter to a specific attachment ID',
-      parseIntOption('--attachment'),
+      parsePositiveIntOption('--attachment'),
     )
     .option(
       '--operation <op>',
       'filter by operation (optimize, convert, resize, remove-bg, caption, classify, rename, delete, title, tag, metadata, edit, vision, describe)',
     )
-    .option('--limit <n>', 'max sessions/snapshots to show (default 50)', parseIntOption('--limit'))
+    .option(
+      '--limit <n>',
+      'max sessions/snapshots to show (default 50)',
+      parsePositiveIntOption('--limit'),
+    )
     .option('-i, --interactive', 'browse with keyboard navigation')
     .action(async (options) => {
       const parentOpts = program.opts();
@@ -169,8 +173,8 @@ export function registerHistoryCommand(program: Command): void {
       const store = openSnapshotStore(db, getConfigDir());
 
       // Numeric → snapshot ID; otherwise session prefix.
-      const asInt = Number.parseInt(id, 10);
-      if (!Number.isNaN(asInt) && String(asInt) === id) {
+      const asInt = /^[1-9]\d*$/.test(id) ? Number(id) : Number.NaN;
+      if (Number.isSafeInteger(asInt)) {
         const snap = store.getSnapshot(asInt);
         if (!snap) {
           error(`No snapshot #${asInt}.`);
@@ -258,17 +262,17 @@ export function registerHistoryCommand(program: Command): void {
     .option(
       '--max-size <bytes>',
       'override config: drop until total size ≤ this many bytes',
-      parseIntOption('--max-size'),
+      parsePositiveIntOption('--max-size'),
     )
     .option(
       '--older-than <days>',
       'drop snapshots older than N days',
-      parseIntOption('--older-than'),
+      parsePositiveIntOption('--older-than'),
     )
     .option(
       '--max-sessions <n>',
       'keep only the N most recent sessions',
-      parseIntOption('--max-sessions'),
+      parsePositiveIntOption('--max-sessions'),
     )
     .action(async (options) => {
       const parentOpts = program.opts();

@@ -20,44 +20,14 @@ async function sharpLib() {
 
 /** Build a tiny 2-frame animated GIF. */
 async function makeAnimatedGif(): Promise<Buffer> {
-  const sharp = await sharpLib();
-  const width = 8;
-  const height = 8;
-  const channels = 4;
-  const frame = (v: number) => {
-    const buf = Buffer.alloc(width * height * channels);
-    for (let i = 0; i < buf.length; i += channels) {
-      buf[i] = v;
-      buf[i + 1] = v;
-      buf[i + 2] = v;
-      buf[i + 3] = 255;
-    }
-    return buf;
-  };
-  const two = Buffer.concat([frame(0), frame(255)]);
-  return sharp(two, {
-    raw: { width, height: height * 2, channels },
-    animated: true,
-    pageHeight: height,
-    // biome-ignore lint/suspicious/noExplicitAny: pageHeight isn't in sharp's raw types
-  } as any)
-    .gif()
-    .toBuffer();
+  // A deterministic 8×8, two-frame GIF fixture. Constructing vertically
+  // stacked raw pixels through sharp produced a single-page GIF on some
+  // libvips builds, which made the actual animation guards go untested.
+  return Buffer.from(
+    'R0lGODlhCAAIAIEAAAAAAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQICgAAACwAAAAACAAIAAAIDwABCBxIsKDBgwgTKkwYEAAh+QQICgAAACwAAAAACAAIAIH///8AAAAAAAAAAAAIDwABCBxIsKDBgwgTKkwYEAA7',
+    'base64',
+  );
 }
-
-// Some libvips builds ship without GIF/WebP animation (no cgif). The animation
-// guards only matter — and are only testable — where multi-frame is supported,
-// so probe once and skip those cases gracefully elsewhere.
-async function detectAnimationSupport(): Promise<boolean> {
-  try {
-    const sharp = await sharpLib();
-    const gif = await makeAnimatedGif();
-    return ((await sharp(gif).metadata()).pages ?? 1) > 1;
-  } catch {
-    return false;
-  }
-}
-const ANIMATION_SUPPORTED = await detectAnimationSupport();
 
 describe('optimizeImage — format guards', () => {
   test('SVG source throws UnsupportedFormatError instead of rasterizing', async () => {
@@ -89,39 +59,30 @@ describe('OPTIMIZABLE_MIME_TYPES — bulk-path whitelist', () => {
 });
 
 describe('optimizeImage — animation handling', () => {
-  test.skipIf(!ANIMATION_SUPPORTED)(
-    'animated GIF stays animated through same-format optimize',
-    async () => {
-      const sharp = await sharpLib();
-      const gif = await makeAnimatedGif();
-      expect((await sharp(gif).metadata()).pages).toBeGreaterThan(1);
+  test('animated GIF stays animated through same-format optimize', async () => {
+    const sharp = await sharpLib();
+    const gif = await makeAnimatedGif();
+    expect((await sharp(gif).metadata()).pages).toBeGreaterThan(1);
 
-      const result = await optimizeImage(gif, 'image/gif', {});
-      const outPages = (await sharp(result.bytes).metadata()).pages ?? 1;
-      expect(outPages).toBeGreaterThan(1);
-    },
-  );
+    const result = await optimizeImage(gif, 'image/gif', {});
+    const outPages = (await sharp(result.bytes).metadata()).pages ?? 1;
+    expect(outPages).toBeGreaterThan(1);
+  });
 
-  test.skipIf(!ANIMATION_SUPPORTED)(
-    'animated GIF is preserved when converting to WebP',
-    async () => {
-      const sharp = await sharpLib();
-      const gif = await makeAnimatedGif();
-      const result = await optimizeImage(gif, 'image/gif', { toFormat: 'webp' });
-      const outPages = (await sharp(result.bytes).metadata()).pages ?? 1;
-      expect(outPages).toBeGreaterThan(1);
-    },
-  );
+  test('animated GIF is preserved when converting to WebP', async () => {
+    const sharp = await sharpLib();
+    const gif = await makeAnimatedGif();
+    const result = await optimizeImage(gif, 'image/gif', { toFormat: 'webp' });
+    const outPages = (await sharp(result.bytes).metadata()).pages ?? 1;
+    expect(outPages).toBeGreaterThan(1);
+  });
 
-  test.skipIf(!ANIMATION_SUPPORTED)(
-    'animated GIF → JPEG throws AnimatedImageError (would lose animation)',
-    async () => {
-      const gif = await makeAnimatedGif();
-      await expect(optimizeImage(gif, 'image/gif', { toFormat: 'jpeg' })).rejects.toBeInstanceOf(
-        AnimatedImageError,
-      );
-    },
-  );
+  test('animated GIF → JPEG throws AnimatedImageError (would lose animation)', async () => {
+    const gif = await makeAnimatedGif();
+    await expect(optimizeImage(gif, 'image/gif', { toFormat: 'jpeg' })).rejects.toBeInstanceOf(
+      AnimatedImageError,
+    );
+  });
 });
 
 describe('optimizeImage — fidelity', () => {

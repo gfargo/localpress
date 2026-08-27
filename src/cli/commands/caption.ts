@@ -26,7 +26,9 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
+import { downloadToBuffer, isImageContentType } from '../../engine/network/download.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { forEachConcurrent, resolveConcurrency, sortResultsById } from '../utils/concurrency.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -98,6 +100,10 @@ export function registerCaptionCommand(program: Command): void {
       //   --model flag > config.defaults.captionModel > built-in default
       const effectiveModel: string =
         options.model ?? config.defaults?.captionModel ?? DEFAULT_OLLAMA_MODEL;
+      const { effective: concurrency } = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+      );
 
       // Resolve the effective fallback model:
       //   --fallback-model flag > config.defaults.captionFallbackModel
@@ -231,7 +237,7 @@ export function registerCaptionCommand(program: Command): void {
       }> = [];
       let failures = 0;
 
-      for (const id of ids) {
+      await forEachConcurrent(ids, concurrency, async (id) => {
         const startTime = Date.now();
         try {
           const item = await getAdapter.getMedia(id);
@@ -254,7 +260,7 @@ export function registerCaptionCommand(program: Command): void {
 
           if (!item.mimeType.startsWith('image/')) {
             warn(`  ⚠ #${id} (${item.filename}) is not an image — skipping.`);
-            continue;
+            return;
           }
 
           // Skip if alt text already set and --overwrite not passed.
@@ -270,14 +276,14 @@ export function registerCaptionCommand(program: Command): void {
               skipped: true,
               durationMs: 0,
             });
-            continue;
+            return;
           }
 
           info(`  Captioning #${id} (${item.filename})…`);
 
-          const response = await fetch(item.url);
-          if (!response.ok) throw new Error(`Failed to download image: ${response.status}`);
-          const imageBuffer = Buffer.from(await response.arrayBuffer());
+          const { bytes: imageBuffer } = await downloadToBuffer(item.url, {
+            expectedContentType: isImageContentType,
+          });
 
           const result = await generateCaptionWithFallback(imageBuffer, {
             model: effectiveModel,
@@ -362,6 +368,17 @@ export function registerCaptionCommand(program: Command): void {
           // FK on processing_history would otherwise crash the whole loop.
           // We'd rather lose the failure breadcrumb than abort the bulk run.
           try {
+            db.upsertAttachment({
+              siteName: site.name,
+              wpId: id,
+              sourceUrl: '',
+              sourceHash: null,
+              sizeBytes: null,
+              width: null,
+              height: null,
+              mimeType: null,
+              lastSeenAt: Date.now(),
+            });
             db.recordProcessing({
               siteName: site.name,
               wpId: id,
@@ -381,7 +398,8 @@ export function registerCaptionCommand(program: Command): void {
             // Best-effort breadcrumb; don't let it abort the loop.
           }
         }
-      }
+      });
+      sortResultsById(results, ids);
 
       if (historySession) {
         closeHistorySession(snapshotStore, historySession, {

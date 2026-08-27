@@ -21,18 +21,25 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
+import { downloadToBuffer, isImageContentType } from '../../engine/network/download.ts';
 import type { ApplyResult, ProcessResult } from '../../engine/preview/server.ts';
 import type { ModelName } from '../../engine/rembg/models.ts';
-import { DEFAULT_MODEL, isModelCached, listAvailableModels } from '../../engine/rembg/models.ts';
-import { removeBackground } from '../../engine/rembg/remove-bg.ts';
+import {
+  DEFAULT_MODEL,
+  isModelCached,
+  isModelName,
+  listAvailableModels,
+} from '../../engine/rembg/models.ts';
+import { BackgroundRemovalSession } from '../../engine/rembg/remove-bg.ts';
 import {
   isSystemRembgAvailable,
   removeBackgroundWithSystemRembg,
 } from '../../engine/rembg/system-rembg.ts';
 import { SiteDb } from '../../engine/state/db.ts';
-import { parseIntOption } from '../utils/args.ts';
+import { parsePositiveIntOption } from '../utils/args.ts';
+import { forEachConcurrent, resolveConcurrency, sortResultsById } from '../utils/concurrency.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
-import { parseAttachmentIds } from '../utils/ids.ts';
+import { parseAttachmentId, parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
@@ -57,7 +64,7 @@ export function registerRemoveBgCommand(program: Command): void {
     .option(
       '--preview-port <port>',
       'port for the preview server (default: auto)',
-      parseIntOption('--preview-port'),
+      parsePositiveIntOption('--preview-port'),
     )
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
@@ -83,6 +90,23 @@ export function registerRemoveBgCommand(program: Command): void {
         return;
       }
 
+      if (options.preview && options.rembg) {
+        error(
+          '--preview does not support the system Python rembg engine. Omit --rembg to use the built-in preview.',
+        );
+        process.exit(2);
+      }
+      if (options.rembg && (options.bg || options.trim)) {
+        error(
+          '--bg and --trim are only supported by the built-in background-removal engine. Omit --rembg to use them.',
+        );
+        process.exit(2);
+      }
+      if (!options.rembg && options.rembgModel) {
+        error('--rembg-model requires --rembg.');
+        process.exit(2);
+      }
+
       // Preload sharp (with auto-install prompt if missing).
       // Skip for --rembg mode since that uses system Python, not sharp.
       if (!options.rembg) {
@@ -100,15 +124,14 @@ export function registerRemoveBgCommand(program: Command): void {
 
       // --preview: open a browser-based preview for a single attachment.
       if (options.preview) {
-        const ids = idStrs.map((s) => Number.parseInt(s, 10));
-        if (ids.length !== 1) {
+        if (idStrs.length !== 1) {
           error(
             '--preview requires exactly one attachment ID.\nExample: localpress remove-bg 123 --preview',
           );
           process.exit(2);
         }
-        const [id] = ids;
-        if (Number.isNaN(id)) {
+        const id = parseAttachmentId(idStrs[0]);
+        if (id === null) {
           error('Invalid attachment ID.');
           process.exit(2);
         }
@@ -122,12 +145,9 @@ export function registerRemoveBgCommand(program: Command): void {
         const item = await getAdapter.getMedia(id);
 
         // Download source image.
-        const response = await fetch(item.url);
-        if (!response.ok) {
-          error(`Failed to download image: ${response.status}`);
-          process.exit(4);
-        }
-        const sourceBytes = Buffer.from(await response.arrayBuffer());
+        const { bytes: sourceBytes } = await downloadToBuffer(item.url, {
+          expectedContentType: isImageContentType,
+        });
 
         // Lazy-load preview server and UI.
         const { startPreviewServer } = await import('../../engine/preview/server.ts');
@@ -135,200 +155,243 @@ export function registerRemoveBgCommand(program: Command): void {
 
         info(`  Starting preview for #${id} (${item.filename})...`);
 
-        const { applied, result } = await startPreviewServer({
-          port: options.previewPort ?? 0,
-          sourceBytes,
-          filename: item.filename,
-          mimeType: item.mimeType,
-          width: item.width,
-          height: item.height,
-          wpId: id,
-          mode: 'remove-bg',
-          html: buildRemoveBgHtml(),
-          onProcess: async (params): Promise<ProcessResult> => {
-            const model = (params.model as ModelName) ?? 'u2net';
-            const alphaThreshold =
-              typeof params.alphaThreshold === 'number' ? params.alphaThreshold : 10;
-            const trim = params.trim === true;
-            const backgroundColor =
-              typeof params.backgroundColor === 'string' ? params.backgroundColor : undefined;
+        let lastPreviewRun: {
+          params: {
+            model: ModelName;
+            trim: boolean;
+            backgroundColor: string | null;
+            alphaThreshold: number;
+            preview: true;
+          };
+          totalMs: number;
+        } | null = null;
+        const previewProcessorRef: { current: BackgroundRemovalSession | null } = {
+          current: null,
+        };
 
-            const bgResult = await removeBackground(sourceBytes, {
-              model,
-              trim,
-              backgroundColor,
-              alphaThreshold,
-              onProgress: (msg) => info(`    ${msg}`),
-            });
+        try {
+          const { applied, result } = await startPreviewServer({
+            port: options.previewPort ?? 0,
+            sourceBytes,
+            filename: item.filename,
+            mimeType: item.mimeType,
+            width: item.width,
+            height: item.height,
+            wpId: id,
+            mode: 'remove-bg',
+            html: buildRemoveBgHtml(),
+            onProcess: async (params): Promise<ProcessResult> => {
+              const requestedModel =
+                typeof params.model === 'string' ? params.model : DEFAULT_MODEL;
+              if (!isModelName(requestedModel)) {
+                throw new Error(
+                  `Unknown background-removal model '${requestedModel}'. Available: ${listAvailableModels()
+                    .map((availableModel) => availableModel.name)
+                    .join(', ')}`,
+                );
+              }
+              const model = requestedModel;
+              const alphaThreshold =
+                typeof params.alphaThreshold === 'number' ? params.alphaThreshold : 10;
+              const trim = params.trim === true;
+              const backgroundColor =
+                typeof params.backgroundColor === 'string' ? params.backgroundColor : undefined;
 
-            return {
-              bytes: bgResult.bytes,
-              mimeType: 'image/png',
-              stats: {
-                model: bgResult.model,
-                inferenceMs: bgResult.inferenceMs,
-                totalMs: bgResult.totalMs,
-                width: bgResult.width,
-                height: bgResult.height,
-              },
-            };
-          },
-          onApply: async (resultBytes, _resultMimeType): Promise<ApplyResult> => {
-            const db = SiteDb.init(getSiteDbPath(site.name));
-            db.ensureSite(site.name, site.url);
+              if (!previewProcessorRef.current || previewProcessorRef.current.model !== model) {
+                await previewProcessorRef.current?.release();
+                previewProcessorRef.current = null;
+                previewProcessorRef.current = await BackgroundRemovalSession.create(model, (msg) =>
+                  info(`    ${msg}`),
+                );
+              }
 
-            const sourceHash = (await import('node:crypto'))
-              .createHash('sha256')
-              .update(sourceBytes)
-              .digest('hex');
-            const resultHash = (await import('node:crypto'))
-              .createHash('sha256')
-              .update(resultBytes)
-              .digest('hex');
-
-            // Ensure attachment row exists.
-            db.upsertAttachment({
-              siteName: site.name,
-              wpId: item.id,
-              sourceUrl: item.url,
-              sourceHash,
-              sizeBytes: sourceBytes.length,
-              width: item.width ?? null,
-              height: item.height ?? null,
-              mimeType: item.mimeType,
-              lastSeenAt: Date.now(),
-            });
-
-            // Time-machine: snapshot the pre-write bytes so the one-click
-            // apply is undoable, mirroring the non-preview flow.
-            const historyConfig = resolveHistoryConfig(config.history);
-            const snapshotStore = openSnapshotStore(db, getConfigDir());
-            const historySession = historyConfig.enabled
-              ? openHistorySession(snapshotStore, site.name, 'remove-bg', {
-                  preview: true,
-                  keepOriginal: options.keepOriginal ?? false,
-                })
-              : null;
-
-            if (historySession) {
-              captureSnapshot(snapshotStore, {
-                siteName: site.name,
-                sessionId: historySession.id,
-                attachmentId: item.id,
-                operation: 'remove-bg',
-                sourceBytes,
-                beforeHash: sourceHash,
-                beforeMeta: {
-                  filename: item.filename,
-                  mimeType: item.mimeType,
-                  altText: item.altText,
-                  title: item.title,
-                  caption: item.caption,
-                  description: item.description,
-                  width: item.width,
-                  height: item.height,
-                  sizeBytes: sourceBytes.length,
-                },
+              const bgResult = await previewProcessorRef.current.remove(sourceBytes, {
+                trim,
+                backgroundColor,
+                alphaThreshold,
               });
-            }
 
-            let resultWpId: number | null = null;
-            let rewriteMessage = '';
+              lastPreviewRun = {
+                params: {
+                  model: bgResult.model,
+                  trim,
+                  backgroundColor: backgroundColor ?? null,
+                  alphaThreshold,
+                  preview: true,
+                },
+                totalMs: bgResult.totalMs,
+              };
 
-            if (!options.keepOriginal) {
-              const replaceAdapter = resolver.tryResolve('replace-in-place');
-              if (replaceAdapter) {
-                try {
-                  const formatChanged = item.mimeType !== 'image/png';
-                  const replaced = await replaceAdapter.replaceInPlace(
-                    id,
-                    resultBytes,
-                    formatChanged
-                      ? {
-                          newMimeType: 'image/png',
-                          newExtension: '.png',
-                          regenerateThumbnails: true,
-                        }
-                      : { regenerateThumbnails: true },
-                  );
-                  resultWpId = id;
+              return {
+                bytes: bgResult.bytes,
+                mimeType: 'image/png',
+                stats: {
+                  model: bgResult.model,
+                  inferenceMs: bgResult.inferenceMs,
+                  totalMs: bgResult.totalMs,
+                  width: bgResult.width,
+                  height: bgResult.height,
+                },
+              };
+            },
+            onApply: async (resultBytes, _resultMimeType): Promise<ApplyResult> => {
+              if (!lastPreviewRun) {
+                throw new Error('No successful background-removal preview is available to apply.');
+              }
+              const db = SiteDb.init(getSiteDbPath(site.name));
+              try {
+                db.ensureSite(site.name, site.url);
 
-                  const rewrite = replaced.formatChangeRewrite;
-                  if (rewrite?.warning) {
-                    warn(`    ⚠ ${rewrite.warning}`);
-                    rewriteMessage = ` (⚠ ${rewrite.warning})`;
-                  } else if (rewrite && rewrite.rewrittenUrls > 0) {
-                    info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
-                    rewriteMessage = ` (rewrote ${rewrite.rewrittenUrls} reference(s))`;
-                  }
-                } catch (err) {
-                  if (!(err instanceof CapabilityUnavailableError) || parentOpts.strict) {
-                    throw err;
+                const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+                const resultHash = createHash('sha256').update(resultBytes).digest('hex');
+
+                // Ensure attachment row exists.
+                db.upsertAttachment({
+                  siteName: site.name,
+                  wpId: item.id,
+                  sourceUrl: item.url,
+                  sourceHash,
+                  sizeBytes: sourceBytes.length,
+                  width: item.width ?? null,
+                  height: item.height ?? null,
+                  mimeType: item.mimeType,
+                  lastSeenAt: Date.now(),
+                });
+
+                let resultWpId: number | null = null;
+                let rewriteMessage = '';
+
+                const replaceAdapter = options.keepOriginal
+                  ? null
+                  : resolver.tryResolve('replace-in-place');
+                const historyConfig = resolveHistoryConfig(config.history);
+                const snapshotStore = openSnapshotStore(db, getConfigDir());
+                const historySession =
+                  historyConfig.enabled && !options.keepOriginal
+                    ? openHistorySession(
+                        snapshotStore,
+                        site.name,
+                        'remove-bg',
+                        lastPreviewRun.params,
+                      )
+                    : null;
+
+                if (historySession) {
+                  captureSnapshot(snapshotStore, {
+                    siteName: site.name,
+                    sessionId: historySession.id,
+                    attachmentId: item.id,
+                    operation: 'remove-bg',
+                    sourceBytes,
+                    beforeHash: sourceHash,
+                    beforeMeta: {
+                      filename: item.filename,
+                      mimeType: item.mimeType,
+                      altText: item.altText,
+                      title: item.title,
+                      caption: item.caption,
+                      description: item.description,
+                      width: item.width,
+                      height: item.height,
+                      sizeBytes: sourceBytes.length,
+                    },
+                  });
+                }
+
+                if (replaceAdapter) {
+                  try {
+                    const formatChanged = item.mimeType !== 'image/png';
+                    const replaced = await replaceAdapter.replaceInPlace(
+                      id,
+                      resultBytes,
+                      formatChanged
+                        ? {
+                            newMimeType: 'image/png',
+                            newExtension: '.png',
+                            regenerateThumbnails: true,
+                          }
+                        : { regenerateThumbnails: true },
+                    );
+                    resultWpId = id;
+
+                    const rewrite = replaced.formatChangeRewrite;
+                    if (rewrite?.warning) {
+                      warn(`    ⚠ ${rewrite.warning}`);
+                      rewriteMessage = ` (⚠ ${rewrite.warning})`;
+                    } else if (rewrite && rewrite.rewrittenUrls > 0) {
+                      info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
+                      rewriteMessage = ` (rewrote ${rewrite.rewrittenUrls} reference(s))`;
+                    }
+                  } catch (err) {
+                    if (!(err instanceof CapabilityUnavailableError) || parentOpts.strict) {
+                      throw err;
+                    }
                   }
                 }
+
+                if (resultWpId === null) {
+                  const uploadAdapter = resolver.resolve('upload');
+                  const newFilename = item.filename.replace(/\.[^.]+$/, '-nobg.png');
+                  const uploaded = await uploadAdapter.upload(resultBytes, {
+                    filename: newFilename,
+                    title: `${item.title} (background removed)`,
+                    altText: item.altText,
+                  });
+                  resultWpId = uploaded.id;
+                }
+
+                // Keep the cached attachment state aligned with WordPress when
+                // preview apply replaced the original attachment in place.
+                const wasReplacedInPlace = resultWpId === id;
+                db.upsertAttachment({
+                  siteName: site.name,
+                  wpId: item.id,
+                  sourceUrl: item.url,
+                  sourceHash: wasReplacedInPlace ? resultHash : sourceHash,
+                  sizeBytes: wasReplacedInPlace ? resultBytes.length : sourceBytes.length,
+                  width: item.width ?? null,
+                  height: item.height ?? null,
+                  mimeType: wasReplacedInPlace ? 'image/png' : item.mimeType,
+                  lastSeenAt: Date.now(),
+                });
+
+                // Record in SQLite.
+                db.recordProcessing({
+                  siteName: site.name,
+                  wpId: item.id,
+                  operation: 'remove-bg',
+                  paramsJson: JSON.stringify(lastPreviewRun.params),
+                  sourceHash,
+                  resultHash,
+                  bytesBefore: sourceBytes.length,
+                  bytesAfter: resultBytes.length,
+                  resultWpId: resultWpId !== item.id ? resultWpId : null,
+                  ranAt: Date.now(),
+                  durationMs: lastPreviewRun.totalMs,
+                  status: 'success',
+                  errorMessage: null,
+                });
+
+                if (historySession) {
+                  closeHistorySession(snapshotStore, historySession, {
+                    maxSizeBytes: historyConfig.maxSizeBytes,
+                  });
+                }
+
+                return { wpId: resultWpId, message: `Uploaded as #${resultWpId}${rewriteMessage}` };
+              } finally {
+                db.close();
               }
-            }
+            },
+          });
 
-            if (resultWpId === null) {
-              const uploadAdapter = resolver.resolve('upload');
-              const newFilename = item.filename.replace(/\.[^.]+$/, '-nobg.png');
-              const uploaded = await uploadAdapter.upload(resultBytes, {
-                filename: newFilename,
-                title: `${item.title} (background removed)`,
-                altText: item.altText,
-              });
-              resultWpId = uploaded.id;
-            }
-
-            // Update the attachment row to reflect the actual post-op state.
-            // `resultWpId === id` means the original was replaced in place —
-            // the live file now IS the (always-PNG) background-removed
-            // result, so the record `verify` compares against must match.
-            const wasReplacedInPlace = resultWpId === id;
-            db.upsertAttachment({
-              siteName: site.name,
-              wpId: item.id,
-              sourceUrl: item.url,
-              sourceHash: wasReplacedInPlace ? resultHash : sourceHash,
-              sizeBytes: wasReplacedInPlace ? resultBytes.length : sourceBytes.length,
-              width: item.width ?? null,
-              height: item.height ?? null,
-              mimeType: wasReplacedInPlace ? 'image/png' : item.mimeType,
-              lastSeenAt: Date.now(),
-            });
-
-            // Record in SQLite.
-            db.recordProcessing({
-              siteName: site.name,
-              wpId: item.id,
-              operation: 'remove-bg',
-              paramsJson: JSON.stringify({ model: 'u2net', preview: true }),
-              sourceHash,
-              resultHash,
-              bytesBefore: sourceBytes.length,
-              bytesAfter: resultBytes.length,
-              resultWpId: resultWpId !== item.id ? resultWpId : null,
-              ranAt: Date.now(),
-              durationMs: 0,
-              status: 'success',
-              errorMessage: null,
-            });
-
-            if (historySession) {
-              closeHistorySession(snapshotStore, historySession, {
-                maxSizeBytes: historyConfig.maxSizeBytes,
-              });
-            }
-
-            db.close();
-            return { wpId: resultWpId, message: `Uploaded as #${resultWpId}${rewriteMessage}` };
-          },
-        });
-
-        if (applied && result) {
-          info(`  ✓ Applied: uploaded to WordPress as #${result.wpId}`);
-        } else {
-          info('  Preview cancelled.');
+          if (applied && result) {
+            info(`  ✓ Applied: uploaded to WordPress as #${result.wpId}`);
+          } else {
+            info('  Preview cancelled.');
+          }
+        } finally {
+          await previewProcessorRef.current?.release();
         }
         return;
       }
@@ -377,25 +440,54 @@ export function registerRemoveBgCommand(program: Command): void {
         info('  Using system Python rembg.');
       }
 
+      const processingParams = useSystemRembg
+        ? {
+            engine: 'system-rembg',
+            model: options.rembgModel ?? 'default',
+            keepOriginal: options.keepOriginal ?? false,
+          }
+        : {
+            engine: 'builtin',
+            model: modelName,
+            trim: options.trim ?? false,
+            backgroundColor: options.bg ?? null,
+            keepOriginal: options.keepOriginal ?? false,
+          };
+
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
       const resolver = new AdapterResolver(site);
       const getAdapter = resolver.resolve('get');
+      const concurrencyResolution = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+        { fallback: 1, maximum: 2 },
+      );
+      const concurrency = concurrencyResolution.effective;
+      if (concurrencyResolution.capped) {
+        warn(
+          `  Background removal is capped at ${concurrency} parallel workers to limit model memory use.`,
+        );
+      }
+      if (ids.length > 1) {
+        info(`  Using ${Math.min(concurrency, ids.length)} background-removal worker(s).`);
+      }
 
       const db = SiteDb.init(getSiteDbPath(site.name));
       db.ensureSite(site.name, site.url);
 
-      // Time-machine: one session for this remove-bg run.
+      const replaceAdapter = options.keepOriginal ? null : resolver.tryResolve('replace-in-place');
       const historyConfig = resolveHistoryConfig(config.history);
       const snapshotStore = openSnapshotStore(db, getConfigDir());
-      const historySession = historyConfig.enabled
-        ? openHistorySession(snapshotStore, site.name, 'remove-bg', {
-            model: useSystemRembg ? (options.rembgModel ?? 'system-rembg') : modelName,
-            bg: options.bg,
-            trim: options.trim ?? false,
-            keepOriginal: options.keepOriginal ?? false,
-          })
-        : null;
+      const historySession =
+        historyConfig.enabled && !options.keepOriginal
+          ? openHistorySession(snapshotStore, site.name, 'remove-bg', {
+              model: useSystemRembg ? (options.rembgModel ?? 'system-rembg') : modelName,
+              bg: options.bg,
+              trim: options.trim ?? false,
+              keepOriginal: options.keepOriginal ?? false,
+            })
+          : null;
 
       const results: Array<{
         id: number;
@@ -407,8 +499,15 @@ export function registerRemoveBgCommand(program: Command): void {
         rewrittenUrls?: number;
       }> = [];
       let failures = 0;
+      const processorRef: { promise: Promise<BackgroundRemovalSession> | null } = { promise: null };
+      const getBuiltinProcessor = (): Promise<BackgroundRemovalSession> => {
+        processorRef.promise ??= BackgroundRemovalSession.create(modelName, (msg) =>
+          info(`    ${msg}`),
+        );
+        return processorRef.promise;
+      };
 
-      for (const id of ids) {
+      await forEachConcurrent(ids, concurrency, async (id) => {
         const startTime = Date.now();
         try {
           const item = await getAdapter.getMedia(id);
@@ -430,10 +529,9 @@ export function registerRemoveBgCommand(program: Command): void {
           });
 
           // Download source image.
-          const response = await fetch(item.url);
-          if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
-          const sourceBytes = Buffer.from(await response.arrayBuffer());
-          const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+          const { bytes: sourceBytes, sha256: sourceHash } = await downloadToBuffer(item.url, {
+            expectedContentType: isImageContentType,
+          });
 
           // Run background removal.
           let resultBytes: Buffer;
@@ -448,11 +546,10 @@ export function registerRemoveBgCommand(program: Command): void {
             inferenceMs = sysResult.durationMs;
             totalMs = sysResult.durationMs;
           } else {
-            const result = await removeBackground(sourceBytes, {
-              model: modelName,
+            const processor = await getBuiltinProcessor();
+            const result = await processor.remove(sourceBytes, {
               trim: options.trim,
               backgroundColor: options.bg,
-              onProgress: (msg) => info(`    ${msg}`),
             });
             resultBytes = result.bytes;
             inferenceMs = result.inferenceMs;
@@ -492,44 +589,41 @@ export function registerRemoveBgCommand(program: Command): void {
           let resultWpId: number | null = null;
           let rewrittenUrls: number | undefined;
 
-          if (!options.keepOriginal) {
-            const replaceAdapter = resolver.tryResolve('replace-in-place');
-            if (replaceAdapter) {
-              try {
-                // Output is always PNG (alpha channel). When the source wasn't
-                // PNG, change the file extension + MIME and regenerate thumbnails
-                // so WP serves the right type and thumbnails show the cutout.
-                const formatChanged = item.mimeType !== 'image/png';
-                const replaced = await replaceAdapter.replaceInPlace(
-                  id,
-                  resultBytes,
-                  formatChanged
-                    ? {
-                        newMimeType: 'image/png',
-                        newExtension: '.png',
-                        regenerateThumbnails: true,
-                      }
-                    : { regenerateThumbnails: true },
-                );
-                resultWpId = id;
+          if (replaceAdapter) {
+            try {
+              // Output is always PNG (alpha channel). When the source wasn't
+              // PNG, change the file extension + MIME and regenerate thumbnails
+              // so WP serves the right type and thumbnails show the cutout.
+              const formatChanged = item.mimeType !== 'image/png';
+              const replaced = await replaceAdapter.replaceInPlace(
+                id,
+                resultBytes,
+                formatChanged
+                  ? {
+                      newMimeType: 'image/png',
+                      newExtension: '.png',
+                      regenerateThumbnails: true,
+                    }
+                  : { regenerateThumbnails: true },
+              );
+              resultWpId = id;
 
-                const rewrite = replaced.formatChangeRewrite;
-                if (rewrite) {
-                  rewrittenUrls = rewrite.rewrittenUrls;
-                  if (rewrite.warning) {
-                    warn(`    ⚠ ${rewrite.warning}`);
-                  } else if (rewrite.rewrittenUrls > 0) {
-                    info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
-                  }
+              const rewrite = replaced.formatChangeRewrite;
+              if (rewrite) {
+                rewrittenUrls = rewrite.rewrittenUrls;
+                if (rewrite.warning) {
+                  warn(`    ⚠ ${rewrite.warning}`);
+                } else if (rewrite.rewrittenUrls > 0) {
+                  info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
                 }
-              } catch (err) {
-                if (err instanceof CapabilityUnavailableError && !parentOpts.strict) {
-                  // Fall through.
-                } else if (err instanceof CapabilityUnavailableError) {
-                  throw err;
-                } else {
-                  throw err;
-                }
+              }
+            } catch (err) {
+              if (err instanceof CapabilityUnavailableError && !parentOpts.strict) {
+                // Fall through.
+              } else if (err instanceof CapabilityUnavailableError) {
+                throw err;
+              } else {
+                throw err;
               }
             }
           }
@@ -571,11 +665,7 @@ export function registerRemoveBgCommand(program: Command): void {
             siteName: site.name,
             wpId: item.id,
             operation: 'remove-bg',
-            paramsJson: JSON.stringify({
-              model: modelName,
-              trim: options.trim ?? false,
-              backgroundColor: options.bg ?? null,
-            }),
+            paramsJson: JSON.stringify(processingParams),
             sourceHash,
             resultHash,
             bytesBefore: sourceBytes.length,
@@ -620,7 +710,7 @@ export function registerRemoveBgCommand(program: Command): void {
               siteName: site.name,
               wpId: id,
               operation: 'remove-bg',
-              paramsJson: JSON.stringify({ model: modelName }),
+              paramsJson: JSON.stringify(processingParams),
               sourceHash: null,
               resultHash: null,
               bytesBefore: null,
@@ -635,6 +725,13 @@ export function registerRemoveBgCommand(program: Command): void {
             // Best-effort — never let failure bookkeeping kill the remaining items.
           }
         }
+      });
+
+      sortResultsById(results, ids);
+
+      if (processorRef.promise) {
+        const processor = await processorRef.promise.catch(() => null);
+        await processor?.release();
       }
 
       if (historySession) {

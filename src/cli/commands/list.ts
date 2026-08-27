@@ -9,9 +9,10 @@
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { ListFilters, MediaItem, SortField, SortOrder } from '../../adapters/types.ts';
+import { downloadToBuffer, isImageContentType } from '../../engine/network/download.ts';
 import { OPTIMIZE_OPERATIONS, SiteDb } from '../../engine/state/db.ts';
 import type { MediaBrowserAction } from '../components/MediaBrowser.tsx';
-import { parseIntOption } from '../utils/args.ts';
+import { parsePositiveIntOption } from '../utils/args.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { buildDispatchArgs } from '../utils/dispatch.ts';
 import { error, info, printJson } from '../utils/output.ts';
@@ -40,12 +41,20 @@ export function registerListCommand(program: Command): void {
     .description("List media in the active site's library")
     .option('--unoptimized', "only items localpress hasn't processed yet")
     .option('--type <mime>', 'MIME type filter (e.g. image/jpeg)')
-    .option('--post <id>', 'attachments associated with a specific post', parseIntOption('--post'))
+    .option(
+      '--post <id>',
+      'attachments associated with a specific post',
+      parsePositiveIntOption('--post'),
+    )
     .option('--since <date>', 'only items uploaded since this ISO date')
-    .option('--larger-than <bytes>', 'minimum size in bytes', parseIntOption('--larger-than'))
+    .option(
+      '--larger-than <bytes>',
+      'minimum size in bytes',
+      parsePositiveIntOption('--larger-than'),
+    )
     .option('--search <term>', 'free-text search across filename and title')
-    .option('--limit <n>', 'items per page (max 100)', parseIntOption('--limit'))
-    .option('--page <n>', 'page number (default 1)', parseIntOption('--page'))
+    .option('--limit <n>', 'items per page (max 100)', parsePositiveIntOption('--limit'))
+    .option('--page <n>', 'page number (default 1)', parsePositiveIntOption('--page'))
     .option('--sort <field>', 'sort by: date (default), name, size, id')
     .option('--order <dir>', 'sort direction: desc (default) or asc')
     .option('-i, --interactive', 'browse with keyboard navigation')
@@ -262,19 +271,18 @@ export function registerListCommand(program: Command): void {
             try {
               const getAdapter = resolver.resolve('get');
               const item = await getAdapter.getMedia(pendingAction.id);
-              const response = await fetch(item.url);
-              if (response.ok) {
-                const imageBytes = Buffer.from(await response.arrayBuffer());
-                await quickViewInBrowser({
-                  imageBytes,
-                  mimeType: item.mimeType,
-                  filename: item.filename,
-                  width: item.width,
-                  height: item.height,
-                  sizeBytes: item.sizeBytes,
-                  wpId: item.id,
-                });
-              }
+              const { bytes: imageBytes } = await downloadToBuffer(item.url, {
+                expectedContentType: isImageContentType,
+              });
+              await quickViewInBrowser({
+                imageBytes,
+                mimeType: item.mimeType,
+                filename: item.filename,
+                width: item.width,
+                height: item.height,
+                sizeBytes: item.sizeBytes,
+                wpId: item.id,
+              });
             } catch (err) {
               error(err instanceof Error ? err.message : String(err));
             }

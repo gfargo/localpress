@@ -19,7 +19,7 @@
 
 import type { Command } from 'commander';
 import type { Config, OptimizationProfile } from '../../types.ts';
-import { parseIntOption } from '../utils/args.ts';
+import { parseIntOption, parsePositiveIntOption } from '../utils/args.ts';
 import { loadConfig, saveConfig } from '../utils/config.ts';
 import { error, info, printJson } from '../utils/output.ts';
 
@@ -100,8 +100,8 @@ export function registerConfigCommand(program: Command): void {
       parseIntOption('--quality'),
     )
     .option('--format <fmt>', 'target output format (webp|avif|jpeg|png)')
-    .option('--max-width <px>', 'max width in pixels', parseIntOption('--max-width'))
-    .option('--max-height <px>', 'max height in pixels', parseIntOption('--max-height'))
+    .option('--max-width <px>', 'max width in pixels', parsePositiveIntOption('--max-width'))
+    .option('--max-height <px>', 'max height in pixels', parsePositiveIntOption('--max-height'))
     .option('--encoder <enc>', 'encoding backend (sharp|jsquash)')
     .option('--strip-metadata', 'strip all EXIF/ICC metadata')
     .action(async (name: string, options) => {
@@ -264,8 +264,8 @@ const SETTABLE_KEYS: Record<
   'defaults.quality': {
     get: (c) => c.defaults?.quality,
     set: (c, v) => {
-      const n = Number.parseInt(v, 10);
-      if (Number.isNaN(n) || n < 1 || n > 100) throw new Error('quality must be 1–100');
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 1 || n > 100) throw new Error('quality must be 1–100');
       if (!c.defaults) c.defaults = {};
       c.defaults.quality = n;
     },
@@ -282,8 +282,10 @@ const SETTABLE_KEYS: Record<
   'defaults.concurrency': {
     get: (c) => c.defaults?.concurrency,
     set: (c, v) => {
-      const n = Number.parseInt(v, 10);
-      if (Number.isNaN(n) || n < 1) throw new Error('concurrency must be a positive integer');
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 1) {
+        throw new Error('concurrency must be a positive integer');
+      }
       if (!c.defaults) c.defaults = {};
       c.defaults.concurrency = n;
     },
@@ -321,8 +323,8 @@ const SETTABLE_KEYS: Record<
   'history.maxSizeBytes': {
     get: (c) => c.history?.maxSizeBytes,
     set: (c, v) => {
-      const n = Number.parseInt(v, 10);
-      if (Number.isNaN(n) || n < 0) {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 0) {
         throw new Error('history.maxSizeBytes must be a non-negative integer (bytes)');
       }
       if (!c.history) c.history = {};

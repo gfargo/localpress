@@ -50,7 +50,7 @@ import { registerVerifyCommand } from './commands/verify.ts';
 import { registerVisionCommand } from './commands/vision.ts';
 import { registerWatchStatusCommand } from './commands/watch-status.ts';
 import { registerWatchCommand } from './commands/watch.ts';
-import { parseIntOption } from './utils/args.ts';
+import { parsePositiveIntOption } from './utils/args.ts';
 import { ConfigError } from './utils/config.ts';
 import { error, setOutputOptions } from './utils/output.ts';
 
@@ -66,8 +66,8 @@ program
   .addOption(
     new Option(
       '--concurrency <n>',
-      'parallel workers for bulk ops (default: CPU count - 1)',
-    ).argParser(parseIntOption('--concurrency')),
+      'parallel workers for supported bulk ops (command-specific default)',
+    ).argParser(parsePositiveIntOption('--concurrency')),
   )
   .addOption(new Option('--dry-run', 'show what would happen without executing').default(false))
   .addOption(new Option('--apply', 'opt out of dry-run for bulk ops').default(false))

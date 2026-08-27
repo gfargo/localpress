@@ -24,8 +24,10 @@ import { AdapterResolver } from '../../adapters/resolver.ts';
 import { CapabilityUnavailableError } from '../../adapters/types.ts';
 import { describeEditor, openInEditor } from '../../engine/editor/detect.ts';
 import { watchFile } from '../../engine/editor/watcher.ts';
+import { downloadToBuffer } from '../../engine/network/download.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentId } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 export function registerEditCommand(program: Command): void {
@@ -38,8 +40,8 @@ export function registerEditCommand(program: Command): void {
     .option('--to <dir>', 'download to this directory instead of a temp dir')
     .action(async (idStr: string, options) => {
       const parentOpts = program.opts();
-      const id = Number.parseInt(idStr, 10);
-      if (Number.isNaN(id)) {
+      const id = parseAttachmentId(idStr);
+      if (id === null) {
         error(`Invalid attachment ID: ${idStr}`);
         process.exit(2);
       }
@@ -61,12 +63,7 @@ export function registerEditCommand(program: Command): void {
 
       // 2. Download the file.
       info(`Downloading #${id} (${item.filename})...`);
-      const response = await fetch(item.url);
-      if (!response.ok) {
-        error(`Failed to download ${item.url}: ${response.status}`);
-        process.exit(4);
-      }
-      const sourceBytes = Buffer.from(await response.arrayBuffer());
+      const { bytes: sourceBytes } = await downloadToBuffer(item.url);
 
       const destDir = options.to ?? join(tmpdir(), `localpress-edit-${id}-${Date.now()}`);
       mkdirSync(destDir, { recursive: true });

@@ -35,11 +35,13 @@ import {
   optimizeImage,
 } from '../../engine/image/optimize.ts';
 import type { ImageFormat, OptimizeOptions } from '../../engine/image/types.ts';
+import { downloadToBuffer, isImageContentType } from '../../engine/network/download.ts';
 import type { ProcessingHistoryRecord } from '../../engine/state/db.ts';
 import { OPTIMIZE_OPERATIONS, SiteDb } from '../../engine/state/db.ts';
-import { parseIntOption } from '../utils/args.ts';
+import { parseIntOption, parsePositiveIntOption } from '../utils/args.ts';
+import { forEachConcurrent, resolveConcurrency, sortResultsById } from '../utils/concurrency.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
-import { parseAttachmentIds } from '../utils/ids.ts';
+import { parseAttachmentId, parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 import { getCachedClassification } from './classify.ts';
@@ -113,11 +115,15 @@ export function registerOptimizeCommand(program: Command): void {
       'encoder: sharp (default) or jsquash (WASM codecs, better PNG via OxiPNG)',
       'sharp',
     )
-    .option('--max-width <n>', 'resize: maximum width in pixels (aspect preserved)', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--max-width <n>',
+      'resize: maximum width in pixels (aspect preserved)',
+      parsePositiveIntOption('--max-width'),
     )
-    .option('--max-height <n>', 'resize: maximum height in pixels (aspect preserved)', (v) =>
-      Number.parseInt(v, 10),
+    .option(
+      '--max-height <n>',
+      'resize: maximum height in pixels (aspect preserved)',
+      parsePositiveIntOption('--max-height'),
     )
     .option('--strip-metadata', 'strip EXIF/metadata from the output (default: true)')
     .option('--no-strip-metadata', 'keep EXIF/metadata in the output')
@@ -205,8 +211,8 @@ export function registerOptimizeCommand(program: Command): void {
           );
           process.exit(2);
         }
-        const id = Number.parseInt(idStrs[0], 10);
-        if (Number.isNaN(id)) {
+        const id = parseAttachmentId(idStrs[0]);
+        if (id === null) {
           error('Invalid attachment ID.');
           process.exit(2);
         }
@@ -215,12 +221,9 @@ export function registerOptimizeCommand(program: Command): void {
         info(`  Fetching attachment #${id}...`);
         const item = await getAdapter.getMedia(id);
 
-        const response = await fetch(item.url);
-        if (!response.ok) {
-          error(`Failed to download image: ${response.status}`);
-          process.exit(4);
-        }
-        const sourceBytes = Buffer.from(await response.arrayBuffer());
+        const { bytes: sourceBytes } = await downloadToBuffer(item.url, {
+          expectedContentType: isImageContentType,
+        });
 
         const { startPreviewServer } = await import('../../engine/preview/server.ts');
         const { buildOptimizeHtml } = await import('../../engine/preview/ui-optimize.ts');
@@ -241,6 +244,7 @@ export function registerOptimizeCommand(program: Command): void {
               description: p.description,
             }))
           : [];
+        let lastPreviewRun: { params: OptimizeOptions; durationMs: number } | null = null;
 
         const { applied, result } = await startPreviewServer({
           port: options.previewPort ?? 0,
@@ -254,6 +258,7 @@ export function registerOptimizeCommand(program: Command): void {
           html: buildOptimizeHtml(),
           extraMeta: { profiles, activeProfile: options.profile ?? null },
           onProcess: async (params): Promise<ProcessResult> => {
+            const startedAt = Date.now();
             const opts: OptimizeOptions = {
               toFormat:
                 typeof params.toFormat === 'string' ? (params.toFormat as ImageFormat) : undefined,
@@ -264,6 +269,7 @@ export function registerOptimizeCommand(program: Command): void {
               stripMetadata: true,
             };
             const optResult = await optimizeImage(sourceBytes, item.mimeType, opts);
+            lastPreviewRun = { params: opts, durationMs: Date.now() - startedAt };
             const mimeType =
               optResult.after.format === 'webp'
                 ? 'image/webp'
@@ -285,54 +291,57 @@ export function registerOptimizeCommand(program: Command): void {
             };
           },
           onApply: async (resultBytes, resultMimeType, lastStats): Promise<ApplyResult> => {
-            const db = SiteDb.init(getSiteDbPath(site.name));
-            db.ensureSite(site.name, site.url);
-
-            const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
-            const resultHash = createHash('sha256').update(resultBytes).digest('hex');
-
-            // Time-machine: snapshot the pre-write bytes so the one-click
-            // apply is undoable, mirroring the non-preview flow.
-            const historyConfig = resolveHistoryConfig(config.history);
-            const snapshotStore = openSnapshotStore(db, getConfigDir());
-            const historySession = historyConfig.enabled
-              ? openHistorySession(snapshotStore, site.name, 'optimize', {
-                  preview: true,
-                  keepOriginal: options.keepOriginal ?? false,
-                })
-              : null;
-
-            if (historySession) {
-              captureSnapshot(snapshotStore, {
-                siteName: site.name,
-                sessionId: historySession.id,
-                attachmentId: id,
-                operation: 'optimize',
-                sourceBytes,
-                beforeHash: sourceHash,
-                beforeMeta: {
-                  filename: item.filename,
-                  mimeType: item.mimeType,
-                  altText: item.altText,
-                  title: item.title,
-                  caption: item.caption,
-                  description: item.description,
-                  width: item.width,
-                  height: item.height,
-                  sizeBytes: sourceBytes.length,
-                },
-              });
+            if (!lastPreviewRun) {
+              throw new Error('No successful optimization preview is available to apply.');
             }
-
-            // Determine if the format changed.
-            const formatChanged = resultMimeType && resultMimeType !== item.mimeType;
-            const newExtension = formatChanged ? mimeToExtension(resultMimeType) : undefined;
-
+            const db = SiteDb.init(getSiteDbPath(site.name));
             let resultWpId: number | null = null;
             let rewriteMessage = '';
+            try {
+              db.ensureSite(site.name, site.url);
 
-            if (!options.keepOriginal && options.replaceInPlace !== false) {
-              const replaceAdapter = resolver.tryResolve('replace-in-place');
+              const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+              const resultHash = createHash('sha256').update(resultBytes).digest('hex');
+
+              // Determine if the format changed.
+              const formatChanged = resultMimeType && resultMimeType !== item.mimeType;
+              const newExtension = formatChanged ? mimeToExtension(resultMimeType) : undefined;
+              const replaceAdapter =
+                !options.keepOriginal && options.replaceInPlace !== false
+                  ? resolver.tryResolve('replace-in-place')
+                  : null;
+              const historyConfig = resolveHistoryConfig(config.history);
+              const snapshotStore = openSnapshotStore(db, getConfigDir());
+              const historySession =
+                historyConfig.enabled && !options.keepOriginal
+                  ? openHistorySession(snapshotStore, site.name, 'optimize', {
+                      ...lastPreviewRun.params,
+                      preview: true,
+                    })
+                  : null;
+
+              if (historySession) {
+                captureSnapshot(snapshotStore, {
+                  siteName: site.name,
+                  sessionId: historySession.id,
+                  attachmentId: item.id,
+                  operation: 'optimize',
+                  sourceBytes,
+                  beforeHash: sourceHash,
+                  beforeMeta: {
+                    filename: item.filename,
+                    mimeType: item.mimeType,
+                    altText: item.altText,
+                    title: item.title,
+                    caption: item.caption,
+                    description: item.description,
+                    width: item.width,
+                    height: item.height,
+                    sizeBytes: sourceBytes.length,
+                  },
+                });
+              }
+
               if (replaceAdapter) {
                 try {
                   const replaced = await replaceAdapter.replaceInPlace(id, resultBytes, {
@@ -356,28 +365,51 @@ export function registerOptimizeCommand(program: Command): void {
                   }
                 }
               }
-            }
 
-            if (resultWpId === null) {
-              const uploadAdapter = resolver.resolve('upload');
-              const ext = mimeToExtension(resultMimeType ?? item.mimeType) ?? '.jpg';
-              const newFilename = item.filename.replace(/\.[^.]+$/, `-optimized${ext}`);
-              const uploaded = await uploadAdapter.upload(resultBytes, {
-                filename: newFilename,
-                title: item.title,
-                altText: item.altText,
-              });
-              resultWpId = uploaded.id;
-            }
+              if (resultWpId === null) {
+                const uploadAdapter = resolver.resolve('upload');
+                const ext = mimeToExtension(resultMimeType ?? item.mimeType) ?? '.jpg';
+                const newFilename = item.filename.replace(/\.[^.]+$/, `-optimized${ext}`);
+                const uploaded = await uploadAdapter.upload(resultBytes, {
+                  filename: newFilename,
+                  title: item.title,
+                  altText: item.altText,
+                });
+                resultWpId = uploaded.id;
+              }
 
-            // The engine already computed the post-processing dimensions during
-            // onProcess (mirrors the non-preview path's `result.after`) — use
-            // those directly rather than depending on a network re-fetch, which
-            // can fail independently of the replace-in-place that already
-            // committed the new dimensions to WordPress.
-            const after = (lastStats?.after ?? undefined) as
-              | { width?: number; height?: number }
-              | undefined;
+              // Use the engine's computed dimensions rather than relying on a
+              // second network read after WordPress has already been changed.
+              const after = (lastStats?.after ?? undefined) as
+                | { width?: number; height?: number }
+                | undefined;
+
+              recordSuccess(
+                db,
+                site.name,
+                item,
+                sourceHash,
+                resultHash,
+                resultMimeType ?? item.mimeType,
+                lastPreviewRun.params,
+                lastPreviewRun.durationMs,
+                {
+                  bytesBefore: sourceBytes.length,
+                  bytesAfter: resultBytes.length,
+                  resultWpId: resultWpId !== item.id ? resultWpId : null,
+                  width: after?.width,
+                  height: after?.height,
+                },
+              );
+
+              if (historySession) {
+                closeHistorySession(snapshotStore, historySession, {
+                  maxSizeBytes: historyConfig.maxSizeBytes,
+                });
+              }
+            } finally {
+              db.close();
+            }
 
             // Re-fetch the item from WordPress to get fresh metadata for the UI
             // (filename/mimeType/sizeBytes/url). Best-effort only — recordSuccess
@@ -396,32 +428,6 @@ export function registerOptimizeCommand(program: Command): void {
             } catch {
               // Best effort — UI will show basic success without fresh metadata.
             }
-
-            recordSuccess(
-              db,
-              site.name,
-              item,
-              sourceHash,
-              resultHash,
-              resultMimeType ?? item.mimeType,
-              {},
-              0,
-              {
-                bytesBefore: sourceBytes.length,
-                bytesAfter: resultBytes.length,
-                resultWpId: resultWpId !== item.id ? resultWpId : null,
-                width: after?.width,
-                height: after?.height,
-              },
-            );
-
-            if (historySession) {
-              closeHistorySession(snapshotStore, historySession, {
-                maxSizeBytes: historyConfig.maxSizeBytes,
-              });
-            }
-
-            db.close();
 
             return {
               wpId: resultWpId,
@@ -550,6 +556,10 @@ export function registerOptimizeCommand(program: Command): void {
         encoder: options.encoder === 'jsquash' ? 'jsquash' : (profileEncoder ?? 'sharp'),
         targetSizeBytes: options.targetSize,
       };
+      const { effective: concurrency } = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+      );
 
       // Encoder pre-flight: confirm the jSquash WASM codec(s) this run would
       // need actually load and encode, once, before touching the DB or
@@ -586,30 +596,32 @@ export function registerOptimizeCommand(program: Command): void {
       // is grouped under one undoable unit.
       const historyConfig = resolveHistoryConfig(config.history);
       const snapshotStore = openSnapshotStore(db, getConfigDir());
-      const historySession = historyConfig.enabled
-        ? openHistorySession(snapshotStore, site.name, 'optimize', {
-            profile: options.profile,
-            optimizeOpts,
-            keepOriginal: options.keepOriginal ?? false,
-          })
-        : null;
+      const replaceAdapter =
+        !options.keepOriginal && options.replaceInPlace !== false
+          ? resolver.tryResolve('replace-in-place')
+          : null;
+      const historySession =
+        historyConfig.enabled && !options.keepOriginal
+          ? openHistorySession(snapshotStore, site.name, 'optimize', {
+              profile: options.profile,
+              optimizeOpts,
+              keepOriginal: options.keepOriginal ?? false,
+            })
+          : null;
 
       const results: OptimizeResultRecord[] = [];
       let failures = 0;
 
-      for (const item of items) {
+      await forEachConcurrent(items, concurrency, async (item) => {
         const startTime = Date.now();
         try {
           info(`  Processing #${item.id} (${item.filename})...`);
 
           // 1. Download the source image.
           info('    ↳ Downloading...');
-          const response = await fetch(item.url);
-          if (!response.ok) {
-            throw new Error(`Failed to download ${item.url}: ${response.status}`);
-          }
-          const sourceBytes = Buffer.from(await response.arrayBuffer());
-          const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+          const { bytes: sourceBytes, sha256: sourceHash } = await downloadToBuffer(item.url, {
+            expectedContentType: isImageContentType,
+          });
 
           // Smart format default: if the user didn't pick a format (no --to,
           // no --profile format) and we have a cached `classify` result for
@@ -638,7 +650,7 @@ export function registerOptimizeCommand(program: Command): void {
           const lastProcessing = db.getLastProcessing(site.name, item.id, 'optimize');
           if (shouldSkipOptimize(lastProcessing, sourceHash, perItemOpts, Boolean(options.force))) {
             info('    ↳ Skipped (already optimized with these settings).');
-            continue;
+            return;
           }
 
           if (smartDefaultClassification) {
@@ -682,7 +694,7 @@ export function registerOptimizeCommand(program: Command): void {
               },
               'skipped',
             );
-            continue;
+            return;
           }
 
           // 2.5. Capture pre-write snapshot for undo.
@@ -713,39 +725,35 @@ export function registerOptimizeCommand(program: Command): void {
           let rewrittenUrls: number | undefined;
           const outputMime = formatToMime(result.after.format);
 
-          if (!options.keepOriginal && options.replaceInPlace !== false) {
-            // Try replace-in-place.
-            const replaceAdapter = resolver.tryResolve('replace-in-place');
-            if (replaceAdapter) {
-              info('    ↳ Replacing in-place...');
-              // Detect format change for metadata update.
-              const formatChanged = outputMime !== item.mimeType;
-              const newExt = formatChanged ? mimeToExtension(outputMime) : undefined;
+          if (replaceAdapter) {
+            info('    ↳ Replacing in-place...');
+            // Detect format change for metadata update.
+            const formatChanged = outputMime !== item.mimeType;
+            const newExt = formatChanged ? mimeToExtension(outputMime) : undefined;
 
-              try {
-                const replaced = await replaceAdapter.replaceInPlace(item.id, result.bytes, {
-                  regenerateThumbnails: Boolean(options.regenerateThumbnails),
-                  newMimeType: formatChanged ? outputMime : undefined,
-                  newExtension: newExt,
-                });
-                resultWpId = item.id;
+            try {
+              const replaced = await replaceAdapter.replaceInPlace(item.id, result.bytes, {
+                regenerateThumbnails: Boolean(options.regenerateThumbnails),
+                newMimeType: formatChanged ? outputMime : undefined,
+                newExtension: newExt,
+              });
+              resultWpId = item.id;
 
-                const rewrite = replaced.formatChangeRewrite;
-                if (rewrite) {
-                  rewrittenUrls = rewrite.rewrittenUrls;
-                  if (rewrite.warning) {
-                    warn(`    ⚠ ${rewrite.warning}`);
-                  } else if (rewrite.rewrittenUrls > 0) {
-                    info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
-                  }
+              const rewrite = replaced.formatChangeRewrite;
+              if (rewrite) {
+                rewrittenUrls = rewrite.rewrittenUrls;
+                if (rewrite.warning) {
+                  warn(`    ⚠ ${rewrite.warning}`);
+                } else if (rewrite.rewrittenUrls > 0) {
+                  info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
                 }
-              } catch (err) {
-                if (err instanceof CapabilityUnavailableError) {
-                  if (parentOpts.strict) throw err;
-                  // Fall through to new-attachment upload.
-                } else {
-                  throw err;
-                }
+              }
+            } catch (err) {
+              if (err instanceof CapabilityUnavailableError) {
+                if (parentOpts.strict) throw err;
+                // Fall through to new-attachment upload.
+              } else {
+                throw err;
               }
             }
           }
@@ -845,7 +853,7 @@ export function registerOptimizeCommand(program: Command): void {
           // not failures — never flatten an animation or rasterize a vector.
           if (err instanceof AnimatedImageError || err instanceof UnsupportedFormatError) {
             warn(`    ↳ Skipped #${item.id} (${item.filename}): ${err.message}`);
-            continue;
+            return;
           }
           const message = err instanceof Error ? err.message : String(err);
           error(`    ✗ #${item.id}: ${message}`);
@@ -879,7 +887,11 @@ export function registerOptimizeCommand(program: Command): void {
             errorMessage: message,
           });
         }
-      }
+      });
+      sortResultsById(
+        results,
+        items.map((item) => item.id),
+      );
 
       // Close the history session and auto-prune to the retention cap.
       if (historySession) {

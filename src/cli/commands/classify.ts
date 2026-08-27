@@ -19,7 +19,9 @@ import {
   generateCaption,
 } from '../../engine/caption/ollama.ts';
 import { preflightOllama } from '../../engine/caption/run-bulk.ts';
+import { downloadToBuffer, isImageContentType } from '../../engine/network/download.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { forEachConcurrent, resolveConcurrency, sortResultsById } from '../utils/concurrency.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson } from '../utils/output.ts';
@@ -59,6 +61,10 @@ export function registerClassifyCommand(program: Command): void {
 
       const effectiveModel: string =
         options.model ?? config.defaults?.captionModel ?? DEFAULT_OLLAMA_MODEL;
+      const { effective: concurrency } = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+      );
 
       const preflightError = await preflightOllama(effectiveModel, options.ollamaUrl);
       if (preflightError) {
@@ -72,7 +78,7 @@ export function registerClassifyCommand(program: Command): void {
       const results: ClassifyResult[] = [];
       let failures = 0;
 
-      for (const id of ids) {
+      await forEachConcurrent(ids, concurrency, async (id) => {
         const startTime = Date.now();
         try {
           const item = await getAdapter.getMedia(id);
@@ -90,9 +96,9 @@ export function registerClassifyCommand(program: Command): void {
             lastSeenAt: Date.now(),
           });
 
-          const response = await fetch(item.url);
-          if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
-          const buf = Buffer.from(await response.arrayBuffer());
+          const { bytes: buf } = await downloadToBuffer(item.url, {
+            expectedContentType: isImageContentType,
+          });
 
           const result = await generateCaption(buf, {
             kind: 'classify',
@@ -135,7 +141,8 @@ export function registerClassifyCommand(program: Command): void {
           error(`    ✗ #${id}: ${message}`);
           failures++;
         }
-      }
+      });
+      sortResultsById(results, ids);
 
       db.close();
 

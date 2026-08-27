@@ -8,6 +8,9 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
+import type { MediaItem } from '../../adapters/types.ts';
+import { downloadToBuffer } from '../../engine/network/download.ts';
+import { forEachConcurrent, resolveConcurrency, sortResultsById } from '../utils/concurrency.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -27,6 +30,10 @@ export function registerPullCommand(program: Command): void {
       const site = resolveActiveSite(config, parentOpts.site);
       const resolver = new AdapterResolver(site);
       const adapter = resolver.resolve('get');
+      const { effective: concurrency } = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+      );
 
       const destDir = options.to ?? process.cwd();
       mkdirSync(destDir, { recursive: true });
@@ -42,21 +49,37 @@ export function registerPullCommand(program: Command): void {
       }> = [];
       let failures = 0;
 
-      for (const id of ids) {
+      const items: MediaItem[] = [];
+      await forEachConcurrent(ids, concurrency, async (id) => {
         try {
-          const item = await adapter.getMedia(id);
+          items.push(await adapter.getMedia(id));
+        } catch (err) {
+          error(`  ✗ #${id}: ${err instanceof Error ? err.message : String(err)}`);
+          failures++;
+        }
+      });
 
+      // Reserve every destination path before parallel downloads begin. This
+      // keeps duplicate-name handling deterministic regardless of network order.
+      sortResultsById(items, ids);
+      const plans = items.map((item) => ({
+        item,
+        destination: resolveDestPath(destDir, item.filename, item.id, usedNames, force),
+        variants:
+          options.includeSizes && item.sizes
+            ? Object.entries(item.sizes).map(([sizeName, size]) => ({
+                sizeName,
+                size,
+                destination: resolveDestPath(destDir, size.filename, item.id, usedNames, force),
+              }))
+            : [],
+      }));
+
+      await forEachConcurrent(plans, concurrency, async ({ item, destination, variants }) => {
+        try {
           // Download the source file.
-          const response = await fetch(item.url);
-          if (!response.ok) {
-            throw new Error(`Failed to download ${item.url}: ${response.status}`);
-          }
-          const bytes = await response.arrayBuffer();
-          const {
-            path: destPath,
-            name,
-            skipped,
-          } = resolveDestPath(destDir, item.filename, id, usedNames, force);
+          const { bytes } = await downloadToBuffer(item.url);
+          const { path: destPath, name, skipped } = destination;
 
           if (skipped) {
             warn(
@@ -76,17 +99,15 @@ export function registerPullCommand(program: Command): void {
           });
 
           // Download variant sizes if requested.
-          if (options.includeSizes && item.sizes) {
-            for (const [sizeName, size] of Object.entries(item.sizes)) {
+          if (variants.length > 0) {
+            for (const { sizeName, size, destination: sizeDestination } of variants) {
               try {
-                const sizeResponse = await fetch(size.url);
-                if (!sizeResponse.ok) continue;
-                const sizeBytes = await sizeResponse.arrayBuffer();
+                const { bytes: sizeBytes } = await downloadToBuffer(size.url);
                 const {
                   path: sizePath,
                   name: sizeFilename,
                   skipped: sizeSkipped,
-                } = resolveDestPath(destDir, size.filename, id, usedNames, force);
+                } = sizeDestination;
 
                 if (sizeSkipped) {
                   warn(`    ↳ ${sizeName}: ${sizeFilename}  already exists locally — skipping`);
@@ -101,10 +122,12 @@ export function registerPullCommand(program: Command): void {
             }
           }
         } catch (err) {
-          error(`  ✗ #${id}: ${err instanceof Error ? err.message : String(err)}`);
+          error(`  ✗ #${item.id}: ${err instanceof Error ? err.message : String(err)}`);
           failures++;
         }
-      }
+      });
+
+      sortResultsById(results, ids);
 
       if (parentOpts.json) {
         printJson({ downloaded: results, failures });

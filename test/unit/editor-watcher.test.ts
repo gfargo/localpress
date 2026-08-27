@@ -61,11 +61,7 @@ describe('watchFile', () => {
     expect(saveCount).toBe(1);
   });
 
-  // NOTE: skipped in CI/sandbox — chokidar's single-file watch does not reliably
-  // re-emit `add` after an unlink+recreate on containerized filesystems. The
-  // production code path IS wired (watcher.on('add', scheduleRun)); this asserts
-  // real inotify delete+recreate delivery, which the sandbox doesn't provide.
-  test.skip('fires onSave on delete+recreate (atomic-save editors)', async () => {
+  test('fires onSave on delete+recreate (atomic-save editors)', async () => {
     let saveCount = 0;
     let ready = false;
 

@@ -31,7 +31,9 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
+import { downloadToBuffer, isImageContentType } from '../../engine/network/download.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { forEachConcurrent, resolveConcurrency, sortResultsById } from '../utils/concurrency.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson } from '../utils/output.ts';
@@ -87,6 +89,10 @@ export function registerRenameCommand(program: Command): void {
 
       const effectiveModel: string =
         options.model ?? config.defaults?.captionModel ?? DEFAULT_OLLAMA_MODEL;
+      const { effective: concurrency } = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+      );
 
       if (options.smart) {
         const preflightError = await preflightOllama(effectiveModel, options.ollamaUrl);
@@ -112,7 +118,7 @@ export function registerRenameCommand(program: Command): void {
       const results: RenameResult[] = [];
       let failures = 0;
 
-      for (const id of ids) {
+      await forEachConcurrent(ids, concurrency, async (id) => {
         try {
           const item = await getAdapter.getMedia(id);
           info(`  Renaming #${id} (${item.filename})…`);
@@ -125,9 +131,9 @@ export function registerRenameCommand(program: Command): void {
             source = 'explicit';
           } else {
             // --smart: download + generate a title via vision.
-            const response = await fetch(item.url);
-            if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
-            const buf = Buffer.from(await response.arrayBuffer());
+            const { bytes: buf } = await downloadToBuffer(item.url, {
+              expectedContentType: isImageContentType,
+            });
             const result = await generateCaption(buf, {
               kind: 'title',
               model: effectiveModel,
@@ -154,7 +160,7 @@ export function registerRenameCommand(program: Command): void {
               source,
               skipped: true,
             });
-            continue;
+            return;
           }
 
           if (!dryRun) {
@@ -207,7 +213,8 @@ export function registerRenameCommand(program: Command): void {
           error(`    ✗ #${id}: ${message}`);
           failures++;
         }
-      }
+      });
+      sortResultsById(results, ids);
 
       if (session) {
         closeHistorySession(snapshotStore, session, {
