@@ -7,6 +7,7 @@ import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentId } from '../utils/ids.ts';
 import { error, info, printJson } from '../utils/output.ts';
 
 export function registerShowCommand(program: Command): void {
@@ -15,8 +16,8 @@ export function registerShowCommand(program: Command): void {
     .description('Show metadata and optimization history for an attachment')
     .action(async (idStr: string) => {
       const parentOpts = program.opts();
-      const id = Number.parseInt(idStr, 10);
-      if (Number.isNaN(id)) {
+      const id = parseAttachmentId(idStr);
+      if (id === null) {
         error(`Invalid attachment ID: ${idStr}`);
         process.exit(2);
       }

@@ -16,10 +16,10 @@
  *   - Confirm the local state DB is in sync with WordPress
  */
 
-import { createHash } from 'node:crypto';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import { type MediaItem, WpApiError, WpCliError } from '../../adapters/types.ts';
+import { downloadToBuffer } from '../../engine/network/download.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
@@ -106,11 +106,12 @@ export async function verifyRemoteHash(options: {
   localHash: string;
   fetchImpl?: typeof fetch;
 }): Promise<HashCheckResult> {
-  const fetchFn = options.fetchImpl ?? fetch;
-
-  let response: Response;
   try {
-    response = await fetchFn(options.url, { headers: { Authorization: options.authHeader } });
+    const { sha256: remoteHash } = await downloadToBuffer(options.url, {
+      fetchImpl: options.fetchImpl,
+      headers: { Authorization: options.authHeader },
+    });
+    return { verified: true, mismatch: remoteHash !== options.localHash, remoteHash };
   } catch (err) {
     return {
       verified: false,
@@ -118,19 +119,6 @@ export async function verifyRemoteHash(options: {
       reason: `download failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
-
-  if (!response.ok) {
-    return {
-      verified: false,
-      mismatch: false,
-      reason: `could not download remote file for hash check (HTTP ${response.status})`,
-    };
-  }
-
-  const bytes = Buffer.from(await response.arrayBuffer());
-  const remoteHash = createHash('sha256').update(bytes).digest('hex');
-
-  return { verified: true, mismatch: remoteHash !== options.localHash, remoteHash };
 }
 
 export function registerVerifyCommand(program: Command): void {

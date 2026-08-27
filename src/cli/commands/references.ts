@@ -10,8 +10,9 @@ import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import { shellQuote, sshExec } from '../../adapters/ssh.ts';
 import type { ReferenceScope } from '../../adapters/types.ts';
-import { parseIntOption } from '../utils/args.ts';
+import { parsePositiveIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentId } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
@@ -23,12 +24,12 @@ export function registerReferencesCommand(program: Command): void {
     .option(
       '--update-to <newId>',
       'rewrite all references to point at this new attachment ID (requires WP-CLI)',
-      parseIntOption('--update-to'),
+      parsePositiveIntOption('--update-to'),
     )
     .action(async (idStr: string, options) => {
       const parentOpts = program.opts();
-      const id = Number.parseInt(idStr, 10);
-      if (Number.isNaN(id)) {
+      const id = parseAttachmentId(idStr);
+      if (id === null) {
         error(`Invalid attachment ID: ${idStr}`);
         process.exit(2);
       }
@@ -40,11 +41,6 @@ export function registerReferencesCommand(program: Command): void {
       // Handle --update-to: requires WP-CLI.
       if (options.updateTo !== undefined) {
         const newId = options.updateTo as number;
-        if (Number.isNaN(newId)) {
-          error('--update-to must be a valid attachment ID.');
-          process.exit(2);
-        }
-
         if (!site.ssh) {
           error('--update-to requires WP-CLI over SSH. Configure SSH access for this site.');
           process.exit(6);

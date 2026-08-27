@@ -239,7 +239,7 @@ describe('tarball size', () => {
     expect(sizeMB).toBeLessThan(100);
   });
 
-  test.skipIf(!TARBALL_AVAILABLE)('node_modules is under 80MB', () => {
+  test.skipIf(!TARBALL_AVAILABLE)('node_modules is under 150MB', () => {
     // Use du to check node_modules size
     const result = spawnSync('du', ['-sm', join(TARBALL_DIR, 'node_modules')], {
       encoding: 'utf-8',

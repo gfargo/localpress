@@ -18,6 +18,7 @@ import { DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL } from '../../engine/caption/o
 import { preflightOllama, runBulkVision } from '../../engine/caption/run-bulk.ts';
 import { resolveHistoryConfig } from '../../engine/history/index.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { resolveConcurrency } from '../utils/concurrency.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -61,6 +62,10 @@ export function registerTitleCommand(program: Command): void {
 
       const effectiveModel: string =
         options.model ?? config.defaults?.captionModel ?? DEFAULT_OLLAMA_MODEL;
+      const { effective: concurrency } = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+      );
 
       const effectiveFallbackModel: string | undefined =
         options.fallbackModel ?? config.defaults?.captionFallbackModel;
@@ -131,6 +136,7 @@ export function registerTitleCommand(program: Command): void {
         configDir: getConfigDir(),
         historyEnabled: historyConfig.enabled,
         historyMaxSizeBytes: historyConfig.maxSizeBytes ?? 0,
+        concurrency,
         options: {
           kind: 'title',
           operation: 'title',

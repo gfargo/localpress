@@ -6,6 +6,7 @@
  * editors that write files in multiple steps (temp file → rename).
  */
 
+import { basename, dirname, resolve } from 'node:path';
 import { watch } from 'chokidar';
 import { createRerunGuard } from '../../cli/utils/rerun-guard.ts';
 
@@ -33,6 +34,8 @@ export interface FileWatcher {
  * uploads for a single save.
  */
 export function watchFile(filePath: string, options: WatcherOptions): FileWatcher {
+  const targetPath = resolve(filePath);
+  const targetName = basename(targetPath);
   const debounceMs = options.debounceMs ?? 500;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -54,7 +57,10 @@ export function watchFile(filePath: string, options: WatcherOptions): FileWatche
     }, debounceMs);
   };
 
-  const watcher = watch(filePath, {
+  // Watch the parent directory and filter to the target filename. Watching a
+  // single inode can lose the replacement `add` event when editors implement
+  // saves as temp-file + rename or delete + recreate.
+  const watcher = watch(dirname(targetPath), {
     // Don't fire on the initial add — we only care about changes.
     ignoreInitial: true,
     // Use polling as a fallback for network filesystems and some editors.
@@ -66,10 +72,17 @@ export function watchFile(filePath: string, options: WatcherOptions): FileWatche
     },
   });
 
+  const isTarget = (changedPath: string) =>
+    basename(changedPath) === targetName && resolve(changedPath) === targetPath;
+
   // Some editors save via delete+recreate (atomic save) rather than an
   // in-place write, which chokidar reports as `add`, not `change`.
-  watcher.on('change', scheduleRun);
-  watcher.on('add', scheduleRun);
+  watcher.on('change', (changedPath) => {
+    if (isTarget(changedPath)) scheduleRun();
+  });
+  watcher.on('add', (changedPath) => {
+    if (isTarget(changedPath)) scheduleRun();
+  });
 
   watcher.on('error', (err) => {
     options.onError?.(err);

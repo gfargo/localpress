@@ -15,7 +15,6 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { cpus } from 'node:os';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import type { Command } from 'commander';
@@ -23,7 +22,8 @@ import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { UploadMetadata } from '../../adapters/types.ts';
 import { optimizeImage } from '../../engine/image/optimize.ts';
 import type { ImageFormat } from '../../engine/image/types.ts';
-import { parseIntOption } from '../utils/args.ts';
+import { parseIntOption, parsePositiveIntOption } from '../utils/args.ts';
+import { forEachConcurrent, resolveConcurrency } from '../utils/concurrency.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
@@ -195,11 +195,11 @@ export function registerImportCommand(program: Command): void {
     .option('--optimize', 'run the optimization pipeline before uploading')
     .option('--quality <n>', 'optimization quality (1-100)', parseIntOption('--quality'))
     .option('--to <format>', 'convert to format before uploading (webp, avif, jpeg, png)')
-    .option('--max-width <n>', 'max width in pixels', parseIntOption('--max-width'))
-    .option('--max-height <n>', 'max height in pixels', parseIntOption('--max-height'))
+    .option('--max-width <n>', 'max width in pixels', parsePositiveIntOption('--max-width'))
+    .option('--max-height <n>', 'max height in pixels', parsePositiveIntOption('--max-height'))
     .option('--title <title>', 'default title for imported items (overridden by manifest)')
     .option('--alt <text>', 'default alt text for imported items')
-    .option('--post <id>', 'attach all imports to this post', parseIntOption('--post'))
+    .option('--post <id>', 'attach all imports to this post', parsePositiveIntOption('--post'))
     .option(
       '--preserve-metadata',
       'use manifest metadata (alt, title, caption) from a previous export',
@@ -213,7 +213,10 @@ export function registerImportCommand(program: Command): void {
       const resolver = new AdapterResolver(site);
       const uploadAdapter = resolver.resolve('upload');
 
-      const concurrency = parentOpts.concurrency ?? Math.max(1, cpus().length - 1);
+      const { effective: concurrency } = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+      );
 
       if (options.preserveIds && !options.preserveMetadata) {
         warn('--preserve-ids is deprecated; use --preserve-metadata instead.');
@@ -311,16 +314,12 @@ export function registerImportCommand(program: Command): void {
       if (options.to) info(`  Convert to: ${options.to}`);
       info('');
 
-      const results: ImportResult[] = [];
+      const resultSlots: Array<ImportResult | undefined> = new Array(filesToImport.length);
       let failures = 0;
       let totalOriginalBytes = 0;
       let totalUploadedBytes = 0;
 
-      // Process files with concurrency control.
-      const queue = [...filesToImport];
-      const inFlight: Promise<void>[] = [];
-
-      async function processFile(entry: ImportFile): Promise<void> {
+      async function processFile(entry: ImportFile, inputIndex: number): Promise<void> {
         const filePath = entry.path;
         const filename = basename(filePath);
 
@@ -388,7 +387,7 @@ export function registerImportCommand(program: Command): void {
           // Upload.
           const result = await uploadAdapter.upload(fileBuffer, meta);
 
-          results.push({
+          resultSlots[inputIndex] = {
             file: filename,
             attachmentId: result.id,
             filename: result.filename,
@@ -396,7 +395,7 @@ export function registerImportCommand(program: Command): void {
             optimized,
             originalSize: optimized ? originalSize : undefined,
             oldId,
-          });
+          };
 
           const optimizeInfo = optimized
             ? ` (${formatBytes(originalSize)} → ${formatBytes(fileBuffer.length)})`
@@ -408,23 +407,10 @@ export function registerImportCommand(program: Command): void {
         }
       }
 
-      // Process with concurrency limit.
-      for (const entry of queue) {
-        if (inFlight.length >= concurrency) {
-          await Promise.race(inFlight);
-        }
-
-        const promise = processFile(entry).then(() => {
-          const idx = inFlight.indexOf(promise);
-          if (idx >= 0) inFlight.splice(idx, 1);
-        });
-        inFlight.push(promise);
-      }
-
-      // Wait for remaining in-flight operations.
-      await Promise.all(inFlight);
+      await forEachConcurrent(filesToImport, concurrency, processFile);
 
       // Summary.
+      const results = resultSlots.filter((result): result is ImportResult => result !== undefined);
       const imported = results.length;
       const idMappings = results
         .filter((r): r is ImportResult & { oldId: number } => r.oldId !== undefined)

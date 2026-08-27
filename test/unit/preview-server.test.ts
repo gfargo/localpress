@@ -13,7 +13,6 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 
 const capturedUrlBox: { value: string | null } = { value: null };
-
 // bun:test's mock.module() replaces the module for the whole test process
 // (there is no per-file un-mock), so other files importing 'node:child_process'
 // — e.g. update.test.ts's spawnSync usage — would otherwise see this fake and
@@ -128,6 +127,32 @@ describe('preview server auth', () => {
 
     const correct = await fetch(`http://127.0.0.1:${port}/api/source?token=${token}`);
     expect(correct.status).toBe(200);
+  });
+
+  test('/api/result uses the MIME type returned by the processor', async () => {
+    const { port, token, donePromise } = await startServer(async () => ({
+      wpId: 1,
+      message: 'ok',
+    }));
+    cleanups.push(async () => {
+      await fetch(`http://127.0.0.1:${port}/api/cancel`, {
+        method: 'POST',
+        headers: { 'X-Preview-Token': token },
+      }).catch(() => {});
+      await donePromise;
+    });
+
+    await fetch(`http://127.0.0.1:${port}/api/process`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Preview-Token': token },
+      body: JSON.stringify({}),
+    });
+    const result = await fetch(
+      `http://127.0.0.1:${port}/api/result?token=${encodeURIComponent(token)}`,
+    );
+
+    expect(result.status).toBe(200);
+    expect(result.headers.get('content-type')).toBe('image/webp');
   });
 
   test('POST /api/apply without a token never reaches the onApply callback', async () => {

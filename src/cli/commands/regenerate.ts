@@ -10,11 +10,12 @@
  * Requires WP-CLI (SSH) — the `regenerate-thumbnails` capability.
  */
 
-import { cpus } from 'node:os';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { MediaItem } from '../../adapters/types.ts';
+import { forEachConcurrent, resolveConcurrency, sortResultsById } from '../utils/concurrency.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
@@ -57,13 +58,7 @@ export function registerRegenerateCommand(program: Command): void {
       let ids: number[];
 
       if (hasExplicitIds) {
-        ids = [
-          ...new Set(idStrs.map((s) => Number.parseInt(s, 10)).filter((n) => !Number.isNaN(n))),
-        ];
-        if (ids.length === 0) {
-          error('No valid attachment IDs provided.');
-          process.exit(2);
-        }
+        ids = parseAttachmentIds(idStrs);
       } else {
         // --all: list all attachments (read-only, safe to do before the dry-run gate).
         const listAdapter = resolver.resolve('list');
@@ -101,7 +96,10 @@ export function registerRegenerateCommand(program: Command): void {
       }
 
       // Execute regeneration.
-      const concurrency = parentOpts.concurrency ?? Math.max(1, cpus().length - 1);
+      const { effective: concurrency } = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+      );
       const results: Array<{ id: number; status: 'success' | 'failure'; error?: string }> = [];
       let succeeded = 0;
       let failed = 0;
@@ -110,37 +108,24 @@ export function registerRegenerateCommand(program: Command): void {
         info(`Regenerating thumbnails for ${ids.length} attachment(s)...\n`);
       }
 
-      // Process in batches for concurrency.
-      for (let i = 0; i < ids.length; i += concurrency) {
-        const batch = ids.slice(i, i + concurrency);
-        const batchResults = await Promise.allSettled(
-          batch.map(async (id) => {
-            await adapter.regenerateThumbnails(id);
-            return id;
-          }),
-        );
-
-        for (let j = 0; j < batchResults.length; j++) {
-          const result = batchResults[j];
-          const id = batch[j];
-
-          if (result.status === 'fulfilled') {
-            succeeded++;
-            results.push({ id, status: 'success' });
-            if (!parentOpts.json) {
-              info(`  ✓ #${id} regenerated`);
-            }
-          } else {
-            failed++;
-            const errMsg =
-              result.reason instanceof Error ? result.reason.message : String(result.reason);
-            results.push({ id, status: 'failure', error: errMsg });
-            if (!parentOpts.json) {
-              warn(`  ✗ #${id} failed: ${errMsg}`);
-            }
+      await forEachConcurrent(ids, concurrency, async (id) => {
+        try {
+          await adapter.regenerateThumbnails(id);
+          succeeded++;
+          results.push({ id, status: 'success' });
+          if (!parentOpts.json) {
+            info(`  ✓ #${id} regenerated`);
+          }
+        } catch (err) {
+          failed++;
+          const errMsg = err instanceof Error ? err.message : String(err);
+          results.push({ id, status: 'failure', error: errMsg });
+          if (!parentOpts.json) {
+            warn(`  ✗ #${id} failed: ${errMsg}`);
           }
         }
-      }
+      });
+      sortResultsById(results, ids);
 
       // Summary.
       if (parentOpts.json) {

@@ -17,6 +17,7 @@
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { MediaItem, WpBackend } from '../../adapters/types.ts';
+import { downloadToBuffer, isImageContentType } from '../../engine/network/download.ts';
 import { OPTIMIZE_OPERATIONS, SiteDb } from '../../engine/state/db.ts';
 import { ExitCode } from '../../types.ts';
 import type { Config, SiteConfig } from '../../types.ts';
@@ -25,6 +26,7 @@ import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts
 import { error, info, printJson, warn } from '../utils/output.ts';
 
 const DEFAULT_THRESHOLD = 1024 * 1024; // 1 MB
+const BROKEN_REF_TIMEOUT_MS = 15_000;
 /** Flag an image as oversized if it's this many times larger than its largest WP size. */
 const DISPLAY_SIZE_RATIO = 2.0;
 
@@ -767,9 +769,9 @@ async function detectDuplicates(items: MediaItem[]): Promise<AuditFinding[]> {
 
   for (const item of imageItems) {
     try {
-      const response = await fetch(item.url);
-      if (!response.ok) continue;
-      const buffer = Buffer.from(await response.arrayBuffer());
+      const { bytes: buffer } = await downloadToBuffer(item.url, {
+        expectedContentType: isImageContentType,
+      });
 
       // Resize to 9×8 grayscale for dHash computation.
       const pixels = await sharp(buffer).resize(9, 8, { fit: 'fill' }).grayscale().raw().toBuffer();
@@ -861,7 +863,11 @@ export async function detectBrokenRefs(
 
         const referencedIn = references.map((r) => r.postId);
         try {
-          const response = await fetch(item.url, { method: 'HEAD' });
+          const response = await fetch(item.url, {
+            method: 'HEAD',
+            redirect: 'follow',
+            signal: AbortSignal.timeout(BROKEN_REF_TIMEOUT_MS),
+          });
           if (response.status === 404 || response.status === 410) {
             findings.push({
               type: 'broken-ref',
@@ -899,9 +905,9 @@ async function detectQualityIssues(images: MediaItem[], model: string): Promise<
   const findings: AuditFinding[] = [];
   for (const item of images) {
     try {
-      const response = await fetch(item.url);
-      if (!response.ok) continue;
-      const buf = Buffer.from(await response.arrayBuffer());
+      const { bytes: buf } = await downloadToBuffer(item.url, {
+        expectedContentType: isImageContentType,
+      });
 
       // Ask the model for a yes/no quality assessment with a one-line reason.
       const result = await generateCaption(buf, {
@@ -945,9 +951,9 @@ async function detectOcrMatches(
 
   for (const item of images) {
     try {
-      const response = await fetch(item.url);
-      if (!response.ok) continue;
-      const buf = Buffer.from(await response.arrayBuffer());
+      const { bytes: buf } = await downloadToBuffer(item.url, {
+        expectedContentType: isImageContentType,
+      });
 
       const result = await generateCaption(buf, {
         kind: 'alt',

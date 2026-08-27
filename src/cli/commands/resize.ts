@@ -22,8 +22,10 @@ import {
   UnsupportedFormatError,
   optimizeImage,
 } from '../../engine/image/optimize.ts';
+import { downloadToBuffer, isImageContentType } from '../../engine/network/download.ts';
 import { SiteDb } from '../../engine/state/db.ts';
-import { parseIntOption } from '../utils/args.ts';
+import { parseIntOption, parsePositiveIntOption } from '../utils/args.ts';
+import { forEachConcurrent, resolveConcurrency, sortResultsById } from '../utils/concurrency.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -33,8 +35,8 @@ export function registerResizeCommand(program: Command): void {
   program
     .command('resize <ids...>')
     .description('Resize attachments, preserving aspect ratio')
-    .option('--max-width <n>', 'maximum width in pixels', parseIntOption('--max-width'))
-    .option('--max-height <n>', 'maximum height in pixels', parseIntOption('--max-height'))
+    .option('--max-width <n>', 'maximum width in pixels', parsePositiveIntOption('--max-width'))
+    .option('--max-height <n>', 'maximum height in pixels', parsePositiveIntOption('--max-height'))
     .option('--quality <n>', 'quality value 0-100', parseIntOption('--quality'))
     .option('--keep-original', 'upload as a new attachment instead of replacing')
     .action(async (idStrs: string[], options) => {
@@ -65,6 +67,11 @@ export function registerResizeCommand(program: Command): void {
       const site = resolveActiveSite(config, parentOpts.site);
       const resolver = new AdapterResolver(site);
       const getAdapter = resolver.resolve('get');
+      const replaceAdapter = options.keepOriginal ? null : resolver.tryResolve('replace-in-place');
+      const { effective: concurrency } = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+      );
 
       // Preload sharp (with auto-install prompt if missing).
       try {
@@ -81,17 +88,19 @@ export function registerResizeCommand(program: Command): void {
       const db = SiteDb.init(getSiteDbPath(site.name));
       db.ensureSite(site.name, site.url);
 
-      // Time-machine: one session for this resize run.
+      // An explicit --keep-original run needs no undo snapshot. Automatic
+      // REST fallback still records one so `undo` can offer partial recovery.
       const historyConfig = resolveHistoryConfig(config.history);
       const snapshotStore = openSnapshotStore(db, getConfigDir());
-      const historySession = historyConfig.enabled
-        ? openHistorySession(snapshotStore, site.name, 'resize', {
-            maxWidth: options.maxWidth,
-            maxHeight: options.maxHeight,
-            quality: options.quality,
-            keepOriginal: options.keepOriginal ?? false,
-          })
-        : null;
+      const historySession =
+        historyConfig.enabled && !options.keepOriginal
+          ? openHistorySession(snapshotStore, site.name, 'resize', {
+              maxWidth: options.maxWidth,
+              maxHeight: options.maxHeight,
+              quality: options.quality,
+              keepOriginal: options.keepOriginal ?? false,
+            })
+          : null;
 
       const results: Array<{
         id: number;
@@ -103,7 +112,7 @@ export function registerResizeCommand(program: Command): void {
       let failures = 0;
       let skipped = 0;
 
-      for (const id of ids) {
+      await forEachConcurrent(ids, concurrency, async (id) => {
         const startTime = Date.now();
         try {
           const item = await getAdapter.getMedia(id);
@@ -111,10 +120,9 @@ export function registerResizeCommand(program: Command): void {
           info(`  Resizing #${id} (${item.filename}, ${dims})...`);
 
           // Download source.
-          const response = await fetch(item.url);
-          if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
-          const sourceBytes = Buffer.from(await response.arrayBuffer());
-          const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+          const { bytes: sourceBytes, sha256: sourceHash } = await downloadToBuffer(item.url, {
+            expectedContentType: isImageContentType,
+          });
 
           // Resize.
           const result = await optimizeImage(sourceBytes, item.mimeType, {
@@ -154,31 +162,26 @@ export function registerResizeCommand(program: Command): void {
           // Upload.
           let resultWpId: number | null = null;
 
-          if (!options.keepOriginal) {
-            const replaceAdapter = resolver.tryResolve('replace-in-place');
-            if (replaceAdapter) {
-              try {
-                await replaceAdapter.replaceInPlace(id, result.bytes);
-                resultWpId = id;
+          if (replaceAdapter) {
+            try {
+              await replaceAdapter.replaceInPlace(id, result.bytes);
+              resultWpId = id;
 
-                // Regenerate thumbnails if WP-CLI is available.
-                const regenAdapter = resolver.tryResolve('regenerate-thumbnails');
-                if (regenAdapter) {
-                  try {
-                    await regenAdapter.regenerateThumbnails(id);
-                    info('      ↳ Thumbnails regenerated.');
-                  } catch {
-                    warn('      ↳ Could not regenerate thumbnails.');
-                  }
+              // Regenerate thumbnails if WP-CLI is available.
+              const regenAdapter = resolver.tryResolve('regenerate-thumbnails');
+              if (regenAdapter) {
+                try {
+                  await regenAdapter.regenerateThumbnails(id);
+                  info('      ↳ Thumbnails regenerated.');
+                } catch {
+                  warn('      ↳ Could not regenerate thumbnails.');
                 }
-              } catch (err) {
-                if (err instanceof CapabilityUnavailableError && !parentOpts.strict) {
-                  // Fall through.
-                } else if (err instanceof CapabilityUnavailableError) {
-                  throw err;
-                } else {
-                  throw err;
-                }
+              }
+            } catch (err) {
+              if (err instanceof CapabilityUnavailableError && !parentOpts.strict) {
+                // Fall through.
+              } else {
+                throw err;
               }
             }
           }
@@ -257,12 +260,13 @@ export function registerResizeCommand(program: Command): void {
           if (err instanceof AnimatedImageError || err instanceof UnsupportedFormatError) {
             warn(`    ↳ Skipped #${id}: ${err.message}`);
             skipped++;
-            continue;
+            return;
           }
           error(`    ✗ #${id}: ${err instanceof Error ? err.message : String(err)}`);
           failures++;
         }
-      }
+      });
+      sortResultsById(results, ids);
 
       if (historySession) {
         closeHistorySession(snapshotStore, historySession, {

@@ -1,5 +1,3 @@
-version: "3.8"
-
 # Spins up a fresh WordPress instance with Application Passwords enabled
 # for localpress integration testing.
 #

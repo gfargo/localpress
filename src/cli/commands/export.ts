@@ -6,15 +6,16 @@
  * and includes a manifest.json with metadata for each exported item.
  */
 
-import { createHash } from 'node:crypto';
 import { createWriteStream, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import type { ListFilters, MediaItem } from '../../adapters/types.ts';
+import { downloadToBuffer } from '../../engine/network/download.ts';
 import { OPTIMIZE_OPERATIONS, SiteDb } from '../../engine/state/db.ts';
 import { ExitCode } from '../../types.ts';
-import { parseIntOption } from '../utils/args.ts';
+import { parsePositiveIntOption } from '../utils/args.ts';
+import { forEachConcurrent, resolveConcurrency, sortResultsById } from '../utils/concurrency.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -72,7 +73,11 @@ export function registerExportCommand(program: Command): void {
     .option('--unoptimized', "only items localpress hasn't processed yet")
     .option('--type <mime>', 'MIME type filter (e.g. image/jpeg)')
     .option('--since <date>', 'only items uploaded since this ISO date')
-    .option('--larger-than <bytes>', 'minimum size in bytes', parseIntOption('--larger-than'))
+    .option(
+      '--larger-than <bytes>',
+      'minimum size in bytes',
+      parsePositiveIntOption('--larger-than'),
+    )
     .option('--include-sizes', 'also export generated thumbnail/medium/large variants')
     .option('--flat', 'export all files into a single flat directory (no subdirectories)')
     .action(async (idStrs: string[], options) => {
@@ -80,6 +85,10 @@ export function registerExportCommand(program: Command): void {
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
       const resolver = new AdapterResolver(site);
+      const { effective: concurrency } = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+      );
 
       // Determine which items to export.
       let items: MediaItem[] = [];
@@ -89,14 +98,15 @@ export function registerExportCommand(program: Command): void {
         const ids = parseAttachmentIds(idStrs);
 
         const adapter = resolver.resolve('get');
-        for (const id of ids) {
+        await forEachConcurrent(ids, concurrency, async (id) => {
           try {
             const item = await adapter.getMedia(id);
             items.push(item);
           } catch (err) {
             error(`  ✗ #${id}: ${err instanceof Error ? err.message : String(err)}`);
           }
-        }
+        });
+        sortResultsById(items, ids);
       } else if (
         options.all ||
         options.unoptimized ||
@@ -149,6 +159,9 @@ export function registerExportCommand(program: Command): void {
       // Determine output destination.
       const destPath = options.to ?? `localpress-export-${Date.now()}`;
       const isZip = destPath.endsWith('.zip');
+      // ZIP entries share one ordered output stream. Directory exports can
+      // download and write independently, while archive writes stay serial.
+      const exportConcurrency = isZip ? 1 : concurrency;
 
       // Fail fast, before downloading anything, if the requested ZIP would
       // exceed classic ZIP32 limits (32-bit sizes/offsets, 16-bit entry count).
@@ -213,15 +226,10 @@ export function registerExportCommand(program: Command): void {
       }
 
       try {
-        for (const item of items) {
+        await forEachConcurrent(items, exportConcurrency, async (item) => {
           try {
             // Download the source file.
-            const response = await fetch(item.url);
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status} downloading ${item.url}`);
-            }
-            const bytes = Buffer.from(await response.arrayBuffer());
-            const hash = createHash('sha256').update(bytes).digest('hex');
+            const { bytes, sha256: hash } = await downloadToBuffer(item.url);
 
             // Determine relative path — try to preserve WP uploads structure.
             const relativePath = options.flat
@@ -260,9 +268,7 @@ export function registerExportCommand(program: Command): void {
             if (options.includeSizes && item.sizes) {
               for (const [sizeName, size] of Object.entries(item.sizes)) {
                 try {
-                  const sizeResponse = await fetch(size.url);
-                  if (!sizeResponse.ok) continue;
-                  const sizeBytes = Buffer.from(await sizeResponse.arrayBuffer());
+                  const { bytes: sizeBytes } = await downloadToBuffer(size.url);
                   const sizeRelPath = options.flat
                     ? size.filename
                     : deriveRelativePath(size.url, size.filename);
@@ -288,7 +294,7 @@ export function registerExportCommand(program: Command): void {
             error(`  ✗ #${item.id}: ${err instanceof Error ? err.message : String(err)}`);
             failures++;
           }
-        }
+        });
       } catch (err) {
         if (zipWriter && err instanceof ZipLimitExceededError) {
           zipWriter.abort();
@@ -297,6 +303,10 @@ export function registerExportCommand(program: Command): void {
         }
         throw err;
       }
+      sortResultsById(
+        manifestItems,
+        items.map((item) => item.id),
+      );
 
       // Write manifest.
       const manifest: ExportManifest = {

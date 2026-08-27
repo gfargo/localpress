@@ -55,8 +55,9 @@ import {
   optimizeImage,
 } from '../../engine/image/optimize.ts';
 import type { ImageFormat } from '../../engine/image/types.ts';
+import { downloadToBuffer } from '../../engine/network/download.ts';
 import { SiteDb } from '../../engine/state/db.ts';
-import { parseIntOption } from '../utils/args.ts';
+import { parseIntOption, parsePositiveIntOption } from '../utils/args.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { createDeleteScheduler } from '../utils/delete-grace.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -109,8 +110,8 @@ export function registerWatchCommand(program: Command): void {
     .option('--optimize', 'run the optimization pipeline before uploading')
     .option('--quality <n>', 'optimization quality (1-100)', parseIntOption('--quality'))
     .option('--to <format>', 'convert to format before uploading (webp, avif, jpeg, png)')
-    .option('--max-width <n>', 'max width in pixels', parseIntOption('--max-width'))
-    .option('--max-height <n>', 'max height in pixels', parseIntOption('--max-height'))
+    .option('--max-width <n>', 'max width in pixels', parsePositiveIntOption('--max-width'))
+    .option('--max-height <n>', 'max height in pixels', parsePositiveIntOption('--max-height'))
     .option(
       '--delete',
       'permanently delete from WordPress when local file is removed (force-deletes, skips trash; captures an undo snapshot first)',
@@ -374,34 +375,26 @@ export function registerWatchCommand(program: Command): void {
               try {
                 const getAdapter = resolver.resolve('get');
                 const item = await getAdapter.getMedia(mapping.wpId);
-                const response = await fetch(item.url);
-                if (response.ok) {
-                  const sourceBytes = Buffer.from(await response.arrayBuffer());
-                  const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
-                  captureSnapshot(snapshotStore, {
-                    siteName: site.name,
-                    sessionId: historySession.id,
-                    attachmentId: item.id,
-                    operation: 'delete',
-                    sourceBytes,
-                    beforeHash: sourceHash,
-                    beforeMeta: {
-                      filename: item.filename,
-                      mimeType: item.mimeType,
-                      altText: item.altText,
-                      title: item.title,
-                      caption: item.caption,
-                      description: item.description,
-                      width: item.width,
-                      height: item.height,
-                      sizeBytes: sourceBytes.length,
-                    },
-                  });
-                } else {
-                  warn(
-                    `  ⚠ Couldn't capture file bytes for #${mapping.wpId} (HTTP ${response.status}); undo will not restore the file.`,
-                  );
-                }
+                const { bytes: sourceBytes, sha256: sourceHash } = await downloadToBuffer(item.url);
+                captureSnapshot(snapshotStore, {
+                  siteName: site.name,
+                  sessionId: historySession.id,
+                  attachmentId: item.id,
+                  operation: 'delete',
+                  sourceBytes,
+                  beforeHash: sourceHash,
+                  beforeMeta: {
+                    filename: item.filename,
+                    mimeType: item.mimeType,
+                    altText: item.altText,
+                    title: item.title,
+                    caption: item.caption,
+                    description: item.description,
+                    width: item.width,
+                    height: item.height,
+                    sizeBytes: sourceBytes.length,
+                  },
+                });
               } catch (snapshotErr) {
                 warn(
                   `  ⚠ Couldn't capture file bytes for #${mapping.wpId} (${snapshotErr instanceof Error ? snapshotErr.message : String(snapshotErr)}); undo will not restore the file.`,

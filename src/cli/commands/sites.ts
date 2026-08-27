@@ -12,6 +12,7 @@ import { rmSync } from 'node:fs';
 import type { Command } from 'commander';
 import { ExitCode } from '../../types.ts';
 import { invokeCli } from '../mcp/invoke.ts';
+import { parsePositiveIntOption } from '../utils/args.ts';
 import { getSiteDbPath, isValidSiteName, loadConfig, saveConfig } from '../utils/config.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 
@@ -280,7 +281,7 @@ export function registerSitesCommand(program: Command): void {
     .option(
       '--timeout <ms>',
       `per-site timeout in milliseconds (default: ${SITES_RUN_DEFAULT_TIMEOUT_MS})`,
-      (v) => Number.parseInt(v, 10),
+      parsePositiveIntOption('--timeout'),
     )
     .action(async (commandStr: string, options) => {
       const parentOpts = program.opts();

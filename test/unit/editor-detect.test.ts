@@ -45,8 +45,13 @@ describe('openInEditor', () => {
   test('returns an OpenResult synchronously and registers an error listener', () => {
     const result = openInEditor('/tmp/whatever.jpg', 'definitely-not-a-real-binary-xyz');
 
-    expect(result.command).toBe('definitely-not-a-real-binary-xyz');
-    expect(result.args).toEqual(['/tmp/whatever.jpg']);
+    if (process.platform === 'darwin') {
+      expect(result.command).toBe('open');
+      expect(result.args).toEqual(['-a', 'definitely-not-a-real-binary-xyz', '/tmp/whatever.jpg']);
+    } else {
+      expect(result.command).toBe('definitely-not-a-real-binary-xyz');
+      expect(result.args).toEqual(['/tmp/whatever.jpg']);
+    }
     expect(lastChild.errorListener).toBeTypeOf('function');
     expect(lastChild.unrefed).toBe(true);
   });

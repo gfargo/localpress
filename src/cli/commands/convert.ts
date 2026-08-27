@@ -22,8 +22,10 @@ import {
   optimizeImage,
 } from '../../engine/image/optimize.ts';
 import type { ImageFormat } from '../../engine/image/types.ts';
+import { downloadToBuffer, isImageContentType } from '../../engine/network/download.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { parseIntOption } from '../utils/args.ts';
+import { forEachConcurrent, resolveConcurrency, sortResultsById } from '../utils/concurrency.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -74,6 +76,11 @@ export function registerConvertCommand(program: Command): void {
       const site = resolveActiveSite(config, parentOpts.site);
       const resolver = new AdapterResolver(site);
       const getAdapter = resolver.resolve('get');
+      const replaceAdapter = options.keepOriginal ? null : resolver.tryResolve('replace-in-place');
+      const { effective: concurrency } = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+      );
 
       // Preload sharp (with auto-install prompt if missing).
       try {
@@ -90,16 +97,18 @@ export function registerConvertCommand(program: Command): void {
       const db = SiteDb.init(getSiteDbPath(site.name));
       db.ensureSite(site.name, site.url);
 
-      // Time-machine: one session for this convert run.
+      // An explicit --keep-original run needs no undo snapshot. Automatic
+      // REST fallback still records one so `undo` can offer partial recovery.
       const historyConfig = resolveHistoryConfig(config.history);
       const snapshotStore = openSnapshotStore(db, getConfigDir());
-      const historySession = historyConfig.enabled
-        ? openHistorySession(snapshotStore, site.name, 'convert', {
-            to: targetFormat,
-            quality: options.quality,
-            keepOriginal: options.keepOriginal ?? false,
-          })
-        : null;
+      const historySession =
+        historyConfig.enabled && !options.keepOriginal
+          ? openHistorySession(snapshotStore, site.name, 'convert', {
+              to: targetFormat,
+              quality: options.quality,
+              keepOriginal: options.keepOriginal ?? false,
+            })
+          : null;
 
       const results: Array<{
         id: number;
@@ -112,17 +121,16 @@ export function registerConvertCommand(program: Command): void {
       let failures = 0;
       let skipped = 0;
 
-      for (const id of ids) {
+      await forEachConcurrent(ids, concurrency, async (id) => {
         const startTime = Date.now();
         try {
           const item = await getAdapter.getMedia(id);
           info(`  Converting #${id} (${item.filename}) → ${targetFormat}...`);
 
           // Download source.
-          const response = await fetch(item.url);
-          if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
-          const sourceBytes = Buffer.from(await response.arrayBuffer());
-          const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+          const { bytes: sourceBytes, sha256: sourceHash } = await downloadToBuffer(item.url, {
+            expectedContentType: isImageContentType,
+          });
 
           // Convert.
           const result = await optimizeImage(sourceBytes, item.mimeType, {
@@ -167,33 +175,28 @@ export function registerConvertCommand(program: Command): void {
 
           let rewrittenUrls: number | undefined;
 
-          if (!options.keepOriginal) {
-            const replaceAdapter = resolver.tryResolve('replace-in-place');
-            if (replaceAdapter) {
-              try {
-                const replaced = await replaceAdapter.replaceInPlace(id, result.bytes, {
-                  newMimeType: formatChanged ? targetMime : undefined,
-                  newExtension,
-                });
-                resultWpId = id;
+          if (replaceAdapter) {
+            try {
+              const replaced = await replaceAdapter.replaceInPlace(id, result.bytes, {
+                newMimeType: formatChanged ? targetMime : undefined,
+                newExtension,
+              });
+              resultWpId = id;
 
-                const rewrite = replaced.formatChangeRewrite;
-                if (rewrite) {
-                  rewrittenUrls = rewrite.rewrittenUrls;
-                  if (rewrite.warning) {
-                    warn(`    ⚠ ${rewrite.warning}`);
-                  } else if (rewrite.rewrittenUrls > 0) {
-                    info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
-                  }
+              const rewrite = replaced.formatChangeRewrite;
+              if (rewrite) {
+                rewrittenUrls = rewrite.rewrittenUrls;
+                if (rewrite.warning) {
+                  warn(`    ⚠ ${rewrite.warning}`);
+                } else if (rewrite.rewrittenUrls > 0) {
+                  info(`    ✓ Rewrote ${rewrite.rewrittenUrls} post-content reference(s).`);
                 }
-              } catch (err) {
-                if (err instanceof CapabilityUnavailableError && !parentOpts.strict) {
-                  // Fall through.
-                } else if (err instanceof CapabilityUnavailableError) {
-                  throw err;
-                } else {
-                  throw err;
-                }
+              }
+            } catch (err) {
+              if (err instanceof CapabilityUnavailableError && !parentOpts.strict) {
+                // Fall through.
+              } else {
+                throw err;
               }
             }
           }
@@ -267,12 +270,13 @@ export function registerConvertCommand(program: Command): void {
           if (err instanceof AnimatedImageError || err instanceof UnsupportedFormatError) {
             warn(`    ↳ Skipped #${id}: ${err.message}`);
             skipped++;
-            continue;
+            return;
           }
           error(`    ✗ #${id}: ${err instanceof Error ? err.message : String(err)}`);
           failures++;
         }
-      }
+      });
+      sortResultsById(results, ids);
 
       if (historySession) {
         closeHistorySession(snapshotStore, historySession, {

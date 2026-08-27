@@ -34,7 +34,9 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
+import { downloadToBuffer, isImageContentType } from '../../engine/network/download.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { forEachConcurrent, resolveConcurrency, sortResultsById } from '../utils/concurrency.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson } from '../utils/output.ts';
@@ -114,6 +116,10 @@ export function registerVisionCommand(program: Command): void {
 
       const effectiveModel: string =
         options.model ?? config.defaults?.captionModel ?? DEFAULT_OLLAMA_MODEL;
+      const { effective: concurrency } = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+      );
 
       const effectiveFallbackModel: string | undefined =
         options.fallbackModel ?? config.defaults?.captionFallbackModel;
@@ -153,7 +159,7 @@ export function registerVisionCommand(program: Command): void {
       const results: VisionItemResult[] = [];
       let failures = 0;
 
-      for (const id of ids) {
+      await forEachConcurrent(ids, concurrency, async (id) => {
         const startTime = Date.now();
         try {
           info(`  Processing #${id}…`);
@@ -173,12 +179,12 @@ export function registerVisionCommand(program: Command): void {
 
           if (!item.mimeType.startsWith('image/')) {
             info('    ↳ not an image, skipping');
-            continue;
+            return;
           }
 
-          const response = await fetch(item.url);
-          if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
-          const buf = Buffer.from(await response.arrayBuffer());
+          const { bytes: buf } = await downloadToBuffer(item.url, {
+            expectedContentType: isImageContentType,
+          });
 
           const out: VisionItemResult = {
             id,
@@ -302,7 +308,8 @@ export function registerVisionCommand(program: Command): void {
           error(`    ✗ #${id}: ${message}`);
           failures++;
         }
-      }
+      });
+      sortResultsById(results, ids);
 
       if (session) {
         closeHistorySession(snapshotStore, session, {

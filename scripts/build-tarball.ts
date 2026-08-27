@@ -84,13 +84,30 @@ async function buildTarball(opts: BuildOptions): Promise<void> {
   const fullPkg = JSON.parse(
     await readFile(join(PROJECT_ROOT, 'package.json'), 'utf-8'),
   ) as PackageJson;
+  // Bun has already bundled the ordinary JS dependency graph. Installing the
+  // full project dependency list here duplicates packages such as MCP/Zod in
+  // node_modules and inflated the release by tens of megabytes. Keep only the
+  // native/WASM packages deliberately marked external in the bundle command.
+  const externalDependencyNames = [
+    'sharp',
+    'onnxruntime-node',
+    '@jsquash/avif',
+    '@jsquash/jpeg',
+    '@jsquash/oxipng',
+    '@jsquash/png',
+    '@jsquash/resize',
+    '@jsquash/webp',
+  ];
+  const externalDependencies = Object.fromEntries(
+    externalDependencyNames.map((name) => [name, fullPkg.dependencies[name]]),
+  );
   const prodPkg = {
     name: fullPkg.name,
     version: fullPkg.version,
     description: fullPkg.description,
     license: fullPkg.license,
     type: 'module',
-    dependencies: fullPkg.dependencies,
+    dependencies: externalDependencies,
   };
   await writeFile(join(stagingDir, 'package.json'), JSON.stringify(prodPkg, null, 2));
 
@@ -108,13 +125,17 @@ async function buildTarball(opts: BuildOptions): Promise<void> {
     // Also set libc for Linux musl detection
     ...(os === 'linux' ? { npm_config_libc: 'glibc' } : {}),
   };
+  // npm 11 removed the legacy `jobs` config. Some developer shells still
+  // export it globally, which otherwise adds a warning to every target build.
+  installEnv.npm_config_jobs = undefined;
+  installEnv.NPM_CONFIG_JOBS = undefined;
 
   // Use npm with explicit --os and --cpu flags so cross-platform builds install the right sharp binaries
   const installResult = spawnSync(
     'npm',
     [
       'install',
-      '--production',
+      '--omit=dev',
       '--no-package-lock',
       '--no-audit',
       '--no-fund',

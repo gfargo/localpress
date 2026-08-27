@@ -17,12 +17,14 @@
 
 import type { WpBackend } from '../../adapters/types.ts';
 import type { UpdateMetadata } from '../../adapters/types.ts';
+import { forEachConcurrent, sortResultsById } from '../concurrency.ts';
 import {
   captureSnapshot,
   closeHistorySession,
   openHistorySession,
   openSnapshotStore,
 } from '../history/index.ts';
+import { downloadToBuffer, isImageContentType } from '../network/download.ts';
 import type { SiteDb } from '../state/db.ts';
 import { generateCaptionWithFallback, isOllamaAvailable, listOllamaModels } from './ollama.ts';
 import type { VisionKind } from './types.ts';
@@ -127,6 +129,7 @@ export async function runBulkVision(args: {
   configDir: string;
   historyEnabled: boolean;
   historyMaxSizeBytes: number;
+  concurrency?: number;
   options: BulkRunOptions;
   /** Progress hooks; per-command logging happens in the caller. */
   onItemStart: (item: Awaited<ReturnType<WpBackend['getMedia']>>) => void;
@@ -151,7 +154,7 @@ export async function runBulkVision(args: {
   const results: BulkRunItemResult[] = [];
   let failures = 0;
 
-  for (const id of args.ids) {
+  await forEachConcurrent(args.ids, args.concurrency ?? 1, async (id) => {
     const startTime = Date.now();
     try {
       const item = await args.getAdapter.getMedia(id);
@@ -181,7 +184,7 @@ export async function runBulkVision(args: {
           skipped: true,
           durationMs: 0,
         });
-        continue;
+        return;
       }
 
       // Idempotent skip: target field already has a value and --overwrite not set.
@@ -196,14 +199,14 @@ export async function runBulkVision(args: {
           skipped: true,
           durationMs: 0,
         });
-        continue;
+        return;
       }
 
       args.onItemStart(item);
 
-      const response = await fetch(item.url);
-      if (!response.ok) throw new Error(`Failed to download image: ${response.status}`);
-      const imageBuffer = Buffer.from(await response.arrayBuffer());
+      const { bytes: imageBuffer } = await downloadToBuffer(item.url, {
+        expectedContentType: isImageContentType,
+      });
 
       const result = await generateCaptionWithFallback(imageBuffer, {
         kind: args.options.kind,
@@ -275,6 +278,17 @@ export async function runBulkVision(args: {
       failures++;
 
       try {
+        args.db.upsertAttachment({
+          siteName: args.siteName,
+          wpId: id,
+          sourceUrl: '',
+          sourceHash: null,
+          sizeBytes: null,
+          width: null,
+          height: null,
+          mimeType: null,
+          lastSeenAt: Date.now(),
+        });
         args.db.recordProcessing({
           siteName: args.siteName,
           wpId: id,
@@ -294,7 +308,8 @@ export async function runBulkVision(args: {
         // Lose the breadcrumb rather than abort the loop.
       }
     }
-  }
+  });
+  sortResultsById(results, args.ids);
 
   if (session) {
     closeHistorySession(store, session, { maxSizeBytes: args.historyMaxSizeBytes });

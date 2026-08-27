@@ -9,8 +9,9 @@ import { readFileSync } from 'node:fs';
 import type { Command } from 'commander';
 import { ExitCode } from '../../types.ts';
 import type { SiteConfig } from '../../types.ts';
-import { parseIntOption } from '../utils/args.ts';
+import { parsePositiveIntOption } from '../utils/args.ts';
 import { loadConfig, resolveActiveSite } from '../utils/config.ts';
+import { parseAttachmentId } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { dryRunPayload, resolveDryRun } from '../utils/run-mode.ts';
 
@@ -179,11 +180,11 @@ export function registerPostsCommand(program: Command): void {
       'post type slug: post, page, or any custom post type (e.g. portfolio, event)',
       'post',
     )
-    .option('--author <id>', 'filter by author ID', parseIntOption('--author'))
+    .option('--author <id>', 'filter by author ID', parsePositiveIntOption('--author'))
     .option('--search <query>', 'search posts by keyword')
-    .option('--category <id>', 'filter by category ID', parseIntOption('--category'))
-    .option('--per-page <n>', 'results per page (max 100)', parseIntOption('--per-page'))
-    .option('--page <n>', 'page number', parseIntOption('--page'))
+    .option('--category <id>', 'filter by category ID', parsePositiveIntOption('--category'))
+    .option('--per-page <n>', 'results per page (max 100)', parsePositiveIntOption('--per-page'))
+    .option('--page <n>', 'page number', parsePositiveIntOption('--page'))
     .option('--orderby <field>', 'sort by: date, title, id, modified, slug', 'date')
     .option('--order <dir>', 'sort direction: asc or desc', 'desc')
     .action(async (options) => {
@@ -257,8 +258,8 @@ export function registerPostsCommand(program: Command): void {
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
 
-      const id = Number.parseInt(idStr, 10);
-      if (Number.isNaN(id)) {
+      const id = parseAttachmentId(idStr);
+      if (id === null) {
         error('ID must be a valid integer.');
         process.exit(2);
       }
@@ -320,7 +321,7 @@ export function registerPostsCommand(program: Command): void {
     .option(
       '--featured-image <id>',
       'featured image attachment ID',
-      parseIntOption('--featured-image'),
+      parsePositiveIntOption('--featured-image'),
     )
     .option('--category <ids>', 'comma-separated category IDs')
     .option('--tag <ids>', 'comma-separated tag IDs')
@@ -414,7 +415,7 @@ export function registerPostsCommand(program: Command): void {
     .option(
       '--featured-image <id>',
       'featured image attachment ID',
-      parseIntOption('--featured-image'),
+      parsePositiveIntOption('--featured-image'),
     )
     .option('--category <ids>', 'comma-separated category IDs')
     .option('--tag <ids>', 'comma-separated tag IDs')
@@ -423,8 +424,8 @@ export function registerPostsCommand(program: Command): void {
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
 
-      const id = Number.parseInt(idStr, 10);
-      if (Number.isNaN(id)) {
+      const id = parseAttachmentId(idStr);
+      if (id === null) {
         error('ID must be a valid integer.');
         process.exit(2);
       }
@@ -516,8 +517,8 @@ export function registerPostsCommand(program: Command): void {
       const config = await loadConfig();
       const site = resolveActiveSite(config, parentOpts.site);
 
-      const id = Number.parseInt(idStr, 10);
-      if (Number.isNaN(id)) {
+      const id = parseAttachmentId(idStr);
+      if (id === null) {
         error('ID must be a valid integer.');
         process.exit(2);
       }

@@ -20,6 +20,7 @@
 import { Box, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useState } from 'react';
 import type { MediaItem, PagedResult, SortField, SortOrder } from '../../adapters/types.ts';
+import { downloadToBuffer, isImageContentType } from '../../engine/network/download.ts';
 
 export type MediaBrowserAction =
   | { type: 'quit'; page: number; cursor: number }
@@ -278,11 +279,10 @@ export function MediaBrowser({
     }
 
     setPreviewLoading(true);
-    fetch(item.url)
-      .then((r) => r.arrayBuffer())
-      .then((buf) => {
-        setPreviewB64(Buffer.from(buf).toString('base64'));
-        setPreviewBytes(buf.byteLength);
+    downloadToBuffer(item.url, { expectedContentType: isImageContentType })
+      .then(({ bytes }) => {
+        setPreviewB64(bytes.toString('base64'));
+        setPreviewBytes(bytes.byteLength);
         setPreviewLoading(false);
         setPreviewMode(true);
       })

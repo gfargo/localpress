@@ -33,7 +33,9 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
+import { downloadToBuffer, isImageContentType } from '../../engine/network/download.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import { forEachConcurrent, resolveConcurrency, sortResultsById } from '../utils/concurrency.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -87,6 +89,10 @@ export function registerTagCommand(program: Command): void {
 
       const effectiveModel: string =
         options.model ?? config.defaults?.captionModel ?? DEFAULT_OLLAMA_MODEL;
+      const { effective: concurrency } = resolveConcurrency(
+        parentOpts.concurrency,
+        config.defaults?.concurrency,
+      );
 
       const effectiveFallbackModel: string | undefined =
         options.fallbackModel ?? config.defaults?.captionFallbackModel;
@@ -147,7 +153,7 @@ export function registerTagCommand(program: Command): void {
       const results: TagResult[] = [];
       let failures = 0;
 
-      for (const id of ids) {
+      await forEachConcurrent(ids, concurrency, async (id) => {
         try {
           const item = await getAdapter.getMedia(id);
 
@@ -165,7 +171,7 @@ export function registerTagCommand(program: Command): void {
 
           if (!item.mimeType.startsWith('image/')) {
             info(`  — #${id} (${item.filename}) — not an image, skipping`);
-            continue;
+            return;
           }
 
           // Idempotent: caption already has tags and not --overwrite.
@@ -183,14 +189,14 @@ export function registerTagCommand(program: Command): void {
               skipped: true,
               durationMs: 0,
             });
-            continue;
+            return;
           }
 
           info(`  Tagging #${id} (${item.filename})…`);
 
-          const response = await fetch(item.url);
-          if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
-          const buf = Buffer.from(await response.arrayBuffer());
+          const { bytes: buf } = await downloadToBuffer(item.url, {
+            expectedContentType: isImageContentType,
+          });
 
           const result = await generateCaptionWithFallback(buf, {
             kind: 'tags',
@@ -246,7 +252,8 @@ export function registerTagCommand(program: Command): void {
           error(`    ✗ #${id}: ${message}`);
           failures++;
         }
-      }
+      });
+      sortResultsById(results, ids);
 
       if (session) {
         closeHistorySession(snapshotStore, session, {

@@ -15,7 +15,6 @@
  * upload-as-new path (with a warning about reference rewriting).
  */
 
-import { createHash } from 'node:crypto';
 import type { Command } from 'commander';
 import { AdapterResolver } from '../../adapters/resolver.ts';
 import {
@@ -25,6 +24,7 @@ import {
   openSnapshotStore,
   resolveHistoryConfig,
 } from '../../engine/history/index.ts';
+import { downloadToBuffer } from '../../engine/network/download.ts';
 import { SiteDb } from '../../engine/state/db.ts';
 import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
@@ -112,34 +112,26 @@ export function registerDeleteCommand(program: Command): void {
           // etc.), we still proceed with delete — but log a warning.
           if (historySession) {
             try {
-              const response = await fetch(item.url);
-              if (response.ok) {
-                const sourceBytes = Buffer.from(await response.arrayBuffer());
-                const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
-                captureSnapshot(snapshotStore, {
-                  siteName: site.name,
-                  sessionId: historySession.id,
-                  attachmentId: item.id,
-                  operation: 'delete',
-                  sourceBytes,
-                  beforeHash: sourceHash,
-                  beforeMeta: {
-                    filename: item.filename,
-                    mimeType: item.mimeType,
-                    altText: item.altText,
-                    title: item.title,
-                    caption: item.caption,
-                    description: item.description,
-                    width: item.width,
-                    height: item.height,
-                    sizeBytes: sourceBytes.length,
-                  },
-                });
-              } else {
-                info(
-                  `    ⚠ Couldn't capture file bytes (HTTP ${response.status}); undo will not restore the file.`,
-                );
-              }
+              const { bytes: sourceBytes, sha256: sourceHash } = await downloadToBuffer(item.url);
+              captureSnapshot(snapshotStore, {
+                siteName: site.name,
+                sessionId: historySession.id,
+                attachmentId: item.id,
+                operation: 'delete',
+                sourceBytes,
+                beforeHash: sourceHash,
+                beforeMeta: {
+                  filename: item.filename,
+                  mimeType: item.mimeType,
+                  altText: item.altText,
+                  title: item.title,
+                  caption: item.caption,
+                  description: item.description,
+                  width: item.width,
+                  height: item.height,
+                  sizeBytes: sourceBytes.length,
+                },
+              });
             } catch (snapshotErr) {
               info(
                 `    ⚠ Couldn't capture file bytes (${snapshotErr instanceof Error ? snapshotErr.message : String(snapshotErr)}); undo will not restore the file.`,
