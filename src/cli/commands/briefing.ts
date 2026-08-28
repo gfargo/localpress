@@ -111,7 +111,8 @@ export function registerBriefingCommand(program: Command): void {
       const result = await runBriefing(site, db, model);
       // Don't memoize a degraded/failed run — a transient network blip
       // shouldn't be cached and served back as the site's health forever.
-      if (result.complete) {
+      // Also skip caching when the narrative couldn't be generated (Ollama down).
+      if (result.complete && !result.narrativeUnavailable) {
         db.setPref(site.name, CACHE_KEY, JSON.stringify(result));
       }
       db.close();
@@ -185,13 +186,23 @@ function briefingExitCode(result: BriefingResult): number {
 }
 
 /**
- * A cache entry written before `complete`/`degraded` existed can't be
- * trusted to reflect completeness correctly (old entries predate the
- * distinction and would read as either falsely complete or falsely
- * incomplete). Treat it as a cache miss instead.
+ * A cache entry is usable if it has the expected shape, is not degraded,
+ * and hasn't expired. Cache TTL is 1 hour — fresh enough that re-running
+ * gives current data, short enough that transient false-cleans don't persist.
  */
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
 export function isCacheEntryUsable(parsed: BriefingResult): boolean {
-  return typeof parsed.complete === 'boolean' && typeof parsed.degraded === 'boolean';
+  if (typeof parsed.complete !== 'boolean' || typeof parsed.degraded !== 'boolean') return false;
+  // Reject degraded or narrative-failed entries (defense in depth — the write
+  // guard should already prevent these from being cached).
+  if (parsed.degraded || parsed.narrativeUnavailable) return false;
+  // TTL check.
+  if (parsed.generatedAt) {
+    const age = Date.now() - new Date(parsed.generatedAt).getTime();
+    if (age > CACHE_TTL_MS) return false;
+  }
+  return true;
 }
 
 // -- Category checks -----------------------------------------------------------
