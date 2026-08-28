@@ -12,9 +12,12 @@
 - **CLI framework:** Commander.js — command registration and option parsing
 - **Terminal UI:** Ink (React for CLIs) + React 18 — interactive wizards and progress displays
 - **Image processing:** sharp (libvips) + @jsquash/{jpeg,png,webp,avif,oxipng,resize} (WASM codecs)
-- **AI background removal:** onnxruntime-node (MIT) + U2-Net ONNX models (Apache-2.0)
+- **AI background removal:** onnxruntime-node (MIT) + U2-Net/ISNet/BiRefNet ONNX models (Apache-2.0/MIT)
+- **AI text/vision:** Ollama HTTP API (local, no cloud) — vision and text generation
+- **MCP integration:** @modelcontextprotocol/sdk — first-party MCP server with 52 typed tools
 - **HTTP client:** Bun built-in `fetch`
 - **File watching:** chokidar
+- **Validation:** zod (schema validation for MCP tool inputs)
 - **Logging:** pino
 - **Database:** bun:sqlite (built-in, no external dep)
 - **Hashing:** Node's `crypto` (built-in)
@@ -24,8 +27,8 @@
 - **Linter/Formatter:** Biome (single tool for both)
 - **Type checking:** TypeScript compiler (`tsc --noEmit`)
 - **Test runner:** `bun test` (built-in, runs .ts directly)
-- **Build:** `bun build` + `npm install --production` produces distribution tarballs per platform (~100MB each, bundled deps)
-- **CI:** GitHub Actions — lint + typecheck + test on PR; build binaries on v* tag
+- **Build:** `bun build` + scripts produce distribution tarballs per platform
+- **CI:** GitHub Actions — lint + typecheck + test on PR; release-please for automated releases
 
 ## Common Commands
 
@@ -69,7 +72,7 @@ bun run build:all        # build tarballs for darwin-arm64, darwin-x64, linux-ar
 - Never silently continue past a failure
 - Bulk ops: log error per item, continue to next, exit non-zero with summary
 - All errors logged with full context to stderr; `--json` mode emits structured error records
-- Use structured `ExitCode` enum from `src/types.ts` for known failure modes
+- Use structured `ExitCode` enum from `src/types.ts` for known failure modes (0–7)
 - Let unhandled errors bubble to `main()` in `src/cli/index.ts`
 
 ## Idempotency
@@ -84,8 +87,9 @@ Default: `os.cpus().length - 1` parallel workers for bulk ops. Override with `--
 
 - Do NOT use `console.log` directly — use `info()`, `warn()`, `error()`, `printJson()` from `src/cli/utils/output.ts`
 - Do NOT bundle `@imgly/background-removal-node` — it is AGPL-3.0 and would force the project to AGPL
-- Do NOT build a custom MCP server — ship a markdown skill instead
+- Do NOT remove the MCP server — it is a supported integration path shipped in v1.14.0
 - Do NOT ship a companion WordPress plugin — use REST API + Application Passwords + opt-in WP-CLI
+- Do NOT use a cloud vision API for caption/title/describe/classify/tag/vision — Ollama keeps processing local and free
 - Do NOT add npm distribution prematurely — Bun-bundled tarballs via Homebrew tap and GitHub Releases
 
 ## Terminal & CLI Workflow

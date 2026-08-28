@@ -159,7 +159,7 @@ across every configured site at once.
 ## 39+ commands
 
 | Category | Commands |
-|----------|----------|
+| ---------- | ---------- |
 | **Setup** | `init`, `sites`, `doctor`, `config` |
 | **Discovery** | `list`, `show`, `stats`, `audit`, `references`, `briefing` |
 | **Processing** | `optimize`, `convert`, `resize`, `remove-bg`, `caption`, `metadata` |
@@ -261,7 +261,7 @@ Built for Kiro's birthday-week "Custom MCP Integration" challenge: `site_briefin
 ## Background removal models
 
 | Model | Size | Quality | License |
-|-------|------|---------|---------|
+| ------- | ------ | --------- | --------- |
 | `birefnet-lite` | ~224 MB | State-of-the-art | MIT |
 | `isnet-general-use` | ~176 MB | Great edges | Apache-2.0 |
 | `u2net` (default) | ~176 MB | General purpose | Apache-2.0 |
@@ -292,7 +292,7 @@ bun install              # install deps
 bun run dev -- --help    # run CLI from source
 bun run typecheck        # tsc --noEmit
 bun run lint             # biome check
-bun test                 # 191+ unit tests + integration
+bun test                 # 1023+ tests (unit + integration + tarball smoke)
 bun run build:all        # build tarballs for all 5 platforms
 ```
 

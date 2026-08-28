@@ -6,24 +6,26 @@ Local-compute WordPress management CLI. Uses the user's own CPU/GPU to optimize 
 
 ## Current status
 
-**v2.0.0 — actively maintained.** 38+ CLI commands, 40+ MCP tools. Homebrew tap is live at `gfargo/homebrew-localpress`. GitHub Releases binaries are automated for darwin-arm64, darwin-x64, linux-arm64, linux-x64, and windows-x64.
+**v2.7.0 — actively maintained.** 39 CLI commands, 52 MCP tools. Homebrew tap is live at `gfargo/homebrew-tap`. GitHub Releases binaries are automated for darwin-arm64, darwin-x64, linux-arm64, linux-x64, and windows-x64. Website at [localpress.griffen.codes](https://localpress.griffen.codes).
 
-## 38+ commands
+## 39 commands
 
-**Setup:** `init`, `sites`, `doctor`, `config`
-**Discovery:** `list`, `show`, `audit`, `references`, `stats`
-**Processing:** `optimize`, `convert`, `resize`, `remove-bg`, `caption`, `metadata`
-**AI Vision:** `title`, `describe`, `classify`, `tag`, `vision`, `rename`
-**Content:** `posts` (list/show/create/update/delete — supports custom post types)
-**Accessibility:** `a11y`
-**Migration:** `export`, `import`
-**Server-side:** `regenerate` (thumbnail rebuild via WP-CLI)
-**Automation:** `watch`
-**Round-trip:** `edit`
-**Low-level:** `pull`, `push`, `delete`
-**Time-machine:** `history`, `undo`
-**Maintenance:** `update`, `completions`
-**Server:** `mcp` (Model Context Protocol server with 40+ tools)
+| Category | Commands |
+| ---------- | ---------- |
+| **Setup** | `init`, `sites`, `doctor`, `config` |
+| **Discovery** | `list`, `show`, `stats`, `audit`, `references`, `briefing`, `verify` |
+| **Processing** | `optimize`, `convert`, `resize`, `remove-bg`, `caption`, `metadata` |
+| **AI Vision** | `title`, `describe`, `classify`, `tag`, `vision`, `rename` |
+| **Content** | `posts` (list/show/create/update/delete — supports custom post types) |
+| **Accessibility** | `a11y` |
+| **Migration** | `export`, `import` |
+| **Automation** | `watch`, `watch-status` |
+| **Server-side** | `regenerate` (thumbnail rebuild via WP-CLI) |
+| **Round-trip** | `edit` |
+| **Low-level** | `pull`, `push`, `delete` |
+| **Time-machine** | `history`, `undo` |
+| **Maintenance** | `update`, `completions` |
+| **Server** | `mcp` (Model Context Protocol server with 52 tools) |
 
 ## Target audiences
 
@@ -31,18 +33,19 @@ Local-compute WordPress management CLI. Uses the user's own CPU/GPU to optimize 
 2. Privacy-conscious site owners who don't want images going to a third-party processor
 3. AI-tool users (Claude Desktop, Cursor, VS Code, Kiro) who want agents to manage WordPress without a paid service (MCP users)
 4. Accessibility-conscious teams needing automated WCAG auditing
+5. CI/CD pipelines needing media budget gates (`audit --max-unoptimized-bytes`)
 
 ## Competitive position
 
-The market gap: no existing tool combines (a) WordPress-awareness, (b) processing on the user's local machine, (c) round-trip workflows with desktop editors, and (d) agent-native MCP integration. EWWW Image Optimizer is the closest competitor but runs binaries on the WordPress server, not the user's laptop. Cloud plugins (Smush, ShortPixel, Imagify, Optimole) charge for compute that modern laptops can do for free. No competitor offers posts CRUD + media optimization + accessibility auditing in a single agent-composable tool.
+The market gap: no existing tool combines (a) WordPress-awareness, (b) processing on the user's local machine, (c) round-trip workflows with desktop editors, and (d) agent-native MCP integration. EWWW Image Optimizer is the closest competitor but runs binaries on the WordPress server, not the user's laptop. Cloud plugins (Smush, ShortPixel, Imagify, Optimole) charge for compute that modern laptops can do for free. No competitor offers posts CRUD + media optimization + accessibility auditing + SEO analysis in a single agent-composable tool.
 
 ## Five differentiator pillars
 
 1. "Bring your own GPU" — user's hardware does the work, no credits or recurring fees
 2. "No host required" — works against any standard WP install via Application Passwords, even cheapest shared hosting
 3. "Round-trip your real editor" — open in GIMP/Photoshop/Preview, save, sync back
-4. "Agent-native" — first-party MCP server with 40+ typed tools, structured JSON, capability discovery
-5. "Beyond media" — posts CRUD, accessibility audit, AI vision metadata — one tool for the whole site
+4. "Agent-native" — first-party MCP server with 52 typed tools, structured JSON, capability discovery
+5. "Beyond media" — posts CRUD, accessibility audit, SEO audit, AI vision metadata, site briefing — one tool for the whole site
 
 ## What localpress is NOT
 
@@ -53,7 +56,7 @@ The market gap: no existing tool combines (a) WordPress-awareness, (b) processin
 ## Shipped roadmap
 
 | Version | What shipped |
-|---|---|
+| --- | --- |
 | v0.1–v0.4 | Foundation, WP-CLI adapter, background removal, edit round-trip |
 | v1.0–v1.2 | Skill, Ink wizard, jSquash, advanced audit, Homebrew tap, config profiles |
 | v1.3–v1.5 | Interactive TUI, caption (Ollama), stats, browser preview |
@@ -62,16 +65,20 @@ The market gap: no existing tool combines (a) WordPress-awareness, (b) processin
 | v1.14–v1.16 | MCP server (32 tools), time-machine undo, metadata/delete/search, bulk tools |
 | v1.17–v1.18 | Vision AI expansion (title/describe/classify/tag/rename), audit --quality/--ocr |
 | v2.0.0 | Posts CRUD, accessibility audit, search_by_url, health_check, custom post types |
+| v2.1.0 | Trust & correctness hardening: dry-run/idempotency/reference-rewrite safety |
+| v2.2–v2.3 | Caption fallback model, WebP/AVIF→PNG for Ollama, MCP batch timeout fix |
+| v2.4.x | `verify` command (local-vs-remote drift detection), dry-run honesty enforcement |
+| v2.5.0 | `audit --all-sites` rolled-up report, jSquash encoder pre-flight |
+| v2.6.0 | Standardized dry-run contract across every command, `verify` MCP tool |
+| v2.7.0 | `remove-bg` bulk hardening, `doctor` connection classification, MCP schema closure |
 
 ## Next milestones
 
-- **v2.1** — SEO audit (meta titles/descriptions, sitemaps, redirects)
-- **v2.2** — Multi-site bulk ops (`sites run`, `sites compare`, `sites migrate`)
-- **v2.3** — Database maintenance (`db export/import`, `cleanup`, `plugins list/audit`)
-- **v3.0** — Full platform (sync, deploy, backup/restore, WooCommerce)
+- **v2.8** — SEO audit (`seo audit` scan + `seo generate` AI meta via Ollama), `audit --max-unoptimized-bytes` CI gate
+- **v2.9** — Content audit (broken links, thin content, orphan pages, stale drafts, missing featured images)
+- **v3.0** — Plugins list/audit, database maintenance, full platform expansion
 
 ## Key planning documents
 
-- `docs/localpress-competitive-brief.md` — market analysis and positioning
 - `docs/roadmap-ideas.md` — 450+ feature ideas across 61 domains
 - `CLAUDE.md` — implementation status, locked decisions, conventions

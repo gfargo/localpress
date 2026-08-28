@@ -1,6 +1,6 @@
 # CLAUDE.md — handoff for the next agent
 
-You're picking up `localpress` at **v2.5.0**. All 39 CLI commands are implemented and working, including a first-party MCP server. The project compiles, tests pass, and the CLI boots cleanly.
+You're picking up `localpress` at **v2.7.0**. All 39 CLI commands are implemented and working, including a first-party MCP server. The project compiles, tests pass, and the CLI boots cleanly.
 
 **Read in this order before writing any code:**
 
@@ -13,7 +13,7 @@ You're picking up `localpress` at **v2.5.0**. All 39 CLI commands are implemente
 
 ## Current status
 
-**Version:** 2.5.0
+**Version:** 2.7.0
 **Status:** All planned v1.0 features plus the full v2.0 content/AI/MCP expansion have shipped. `CHANGELOG.md` is the authoritative release history — this file gives a summary, not a substitute.
 
 ### What's implemented
@@ -21,7 +21,7 @@ You're picking up `localpress` at **v2.5.0**. All 39 CLI commands are implemente
 **39 CLI commands**, grouped by area:
 
 - **Setup:** `init` (Ink wizard), `sites` (list/add/use/remove/run), `doctor` (capability matrix + plugin detection + `--fix`), `config` (get/set/list, named optimization profiles)
-- **Discovery & audit:** `list` (filters, sort, interactive TUI `-i`), `show`, `stats` (cumulative SQLite stats, `--all-sites`), `audit` (unoptimized/large/missing-alt/orphans/display-size/duplicates/broken-refs/`--quality`/`--ocr-text`), `references` (fast + full scan, `--update-to` rewriting), `a11y` (WCAG audit for post/page content), `briefing` (aggregated site-health digest + Ollama narrative)
+- **Discovery & audit:** `list` (filters, sort, interactive TUI `-i`), `show`, `stats` (cumulative SQLite stats, `--all-sites`), `audit` (unoptimized/large/missing-alt/orphans/display-size/duplicates/broken-refs/`--quality`/`--ocr-text`/`--max-unoptimized-bytes`), `references` (fast + full scan, `--update-to` rewriting), `a11y` (WCAG audit for post/page content), `briefing` (aggregated site-health digest + Ollama narrative), `verify` (cross-check local DB state vs remote WordPress)
 - **AI enrichment (local Ollama vision, no cloud):** `caption` (alt text), `title`, `describe`, `classify` (screenshot/photo/illustration/diagram, feeds `optimize` format defaults), `tag`, `vision` (composed alt+title+description+tags+classify in one pass), `metadata` (manual alt/title/caption/description writes)
 - **Processing:** `optimize` (+ `--preview`, `--target-size`), `convert`, `resize`, `remove-bg` (ONNX + system rembg + `--preview`), `regenerate` (thumbnails), `rename` (slug rename, `--smart`)
 - **Content management:** `posts` (list/show/create/update/delete for posts, pages, and custom post types), `delete` (attachments, trash or `--force`)
@@ -36,6 +36,7 @@ You're picking up `localpress` at **v2.5.0**. All 39 CLI commands are implemente
 - `WpCliAdapter` — opt-in via SSH, adds replace-in-place, thumbnail regeneration, orphan pruning, full reference scanning + rewriting
 
 **Image processing:**
+
 - sharp (libvips) as the default encoding backend
 - jSquash WASM codecs as alternative (`--encoder jsquash`) — OxiPNG for PNG, MozJPEG, WebP, AVIF
 - AI background removal via ONNX Runtime + 5 models: u2net, u2netp, silueta, isnet-general-use, birefnet-lite (MIT, state-of-the-art)
@@ -44,6 +45,7 @@ You're picking up `localpress` at **v2.5.0**. All 39 CLI commands are implemente
 - `--target-size` binary-searches quality to hit a file-size budget
 
 **AI vision suite (local Ollama, no cloud API, no credits):**
+
 - `caption`, `title`, `describe`, `classify`, `tag`, `vision` all share the same Ollama plumbing and time-machine safety net
 - `--missing-alt` / `--missing-title` / `--missing-description` bulk-fill only what's absent
 - `--list-models` shows locally available vision models
@@ -51,6 +53,7 @@ You're picking up `localpress` at **v2.5.0**. All 39 CLI commands are implemente
 - See the Ollama setup notes in the README
 
 **State management:**
+
 - SQLite per-site databases with attachment tracking and processing history
 - Idempotent processing via SHA-256 hash comparison
 - Schema migrations — currently **schema v5** (see `src/engine/state/schema.ts`): v2 added the `preferences` table (UI state persistence), v3 added `watch_mappings` (directory-watch file→attachment tracking), v4 added `sessions` + `snapshots` (time-machine/undo), v5 added a `reverted_at` column to `processing_history` (so undo excludes reverted rows from stats/idempotency)
@@ -58,21 +61,25 @@ You're picking up `localpress` at **v2.5.0**. All 39 CLI commands are implemente
 - Interactive browser position persistence across sessions (page + cursor saved to SQLite)
 
 **Time-machine / undo:**
+
 - Every mutating command snapshots before-state (binary blobs for file-changing ops, metadata deltas otherwise) into `sessions`/`snapshots`
 - `history` lists past sessions; `undo <session-id>` restores
 - Global `--dry-run` is honored consistently across destructive commands (`delete`, `posts delete`, `posts update`, `metadata`, `references --update-to`) via a shared `resolveDryRun` helper
 
 **Config management:**
+
 - Named optimization profiles (`config set-profile hero --quality 75 --format webp --max-width 1920`)
 - Global defaults (`config set defaults.quality 80`, `config set defaults.captionModel llava-llama3:latest`)
 - Scalar config read/write (`config get/set`)
 - Full config listing with password redaction
 
 **MCP server (`localpress mcp`):**
+
 - First-party Model Context Protocol server exposing 52 typed tools + resources — the CLI's full capability surface (media CRUD, posts CRUD, a11y audit, history/undo, export/import, health_check, search_by_url) available directly to any MCP-speaking agent host
 - See `src/cli/mcp/{server,tools,invoke,resources}.ts` and the README's MCP section for setup
 
 **Distribution:**
+
 - Homebrew tap at `gfargo/homebrew-tap`
 - GitHub Releases with binaries/tarballs for 5 platforms (darwin-arm64, darwin-x64, linux-arm64, linux-x64, windows-x64)
 - `localpress update` self-update from a released tarball
@@ -81,9 +88,11 @@ You're picking up `localpress` at **v2.5.0**. All 39 CLI commands are implemente
   GitHub Release → Homebrew formula bump. See **[Releasing](#releasing)** below.
 
 **Testing:**
-- 897 test cases across 75 files (`bun test`: 861 pass, 36 skip when no Docker WordPress / built tarball is present locally): unit tests (`test/unit/`), integration tests against Dockerized WordPress (`test/integration/`, fully passing in CI — including write-auth via Application Passwords), and tarball smoke tests (`test/tarball/`, exercise the built binary end-to-end)
+
+- 1023 test cases across 84 files (`bun test`: 999 pass, 24 skip when no Docker WordPress / built tarball is present locally): unit tests (`test/unit/`), integration tests against Dockerized WordPress (`test/integration/`, fully passing in CI — including write-auth via Application Passwords), tarball smoke tests (`test/tarball/`, exercise the built binary end-to-end), and quality benchmarks (`test/quality/`, photorealistic remove-bg regression gate)
 
 **CI:**
+
 - GitHub Actions: typecheck + lint + unit tests on PR
 - Integration tests against Dockerized WordPress (with proper pretty-permalinks + Apache auth-header passthrough)
 - PR-title lint (conventional commits) so squash-merge subjects drive versioning
@@ -95,7 +104,7 @@ You're picking up `localpress` at **v2.5.0**. All 39 CLI commands are implemente
 Full details in [`CHANGELOG.md`](CHANGELOG.md) — this is a summary of major milestones, not a replacement.
 
 | Tag | What shipped |
-|---|---|
+| --- | --- |
 | v0.1.0–v0.4.0 | Foundation: SQLite, config, REST + WP-CLI adapters, image engine, AI background removal, edit round-trip, integration tests |
 | v1.0.0–v1.6.0 | Full skill, Ink init wizard, jSquash codecs, advanced audit, `config` command, Homebrew tap, interactive TUI media browser, `caption`/`stats` commands, browser-based preview for optimize/remove-bg |
 | v1.7.0–v1.11.x | SSH config hardening, `update` + `completions` + `regenerate` commands, Sharp auto-install, `watch` command, tarball distribution |
@@ -107,6 +116,11 @@ Full details in [`CHANGELOG.md`](CHANGELOG.md) — this is a summary of major mi
 | v1.18.0 | Vision-AI expansion: `title`, `describe`, `rename`, `classify`, `tag`, `vision` commands; `audit --quality`/`--ocr-text`; MCP surface → 33 tools |
 | v2.0.0 | **`posts` command** (full post/page/CPT CRUD), **`a11y` command** (WCAG audit), matching MCP tools, `health_check`/`search_by_url` MCP tools — localpress becomes a WordPress content/accessibility tool, not just a media optimizer |
 | v2.1.0 | Trust & correctness hardening: dry-run/idempotency/reference-rewrite safety fixes across `references`, `delete`, `posts`, `metadata`, `optimize`, `remove-bg` (see CHANGELOG for the full list) |
+| v2.2.0–v2.3.0 | Demo assets, caption fallback model, WebP/AVIF→PNG for Ollama, MCP batch timeout fix |
+| v2.4.0–v2.4.5 | **`verify` command** (local-vs-remote drift detection), dry-run honesty enforcement, 20+ adapter/state/undo hardening fixes |
+| v2.5.0 | **`audit --all-sites`** rolled-up report, jSquash encoder pre-flight with strict/fallback, briefing correctness fixes |
+| v2.6.0 | **Standardized dry-run contract** across every command, **`verify` MCP tool**, SKILL.md/docs drift fixes, stats shape stabilization |
+| v2.7.0 | `remove-bg` bulk hardening, `doctor` connection-error classification, `watch` debounce fix, MCP flag/tool schema gap closure |
 
 ---
 
@@ -115,7 +129,7 @@ Full details in [`CHANGELOG.md`](CHANGELOG.md) — this is a summary of major mi
 These were debated and resolved during planning. **Don't relitigate without strong cause.**
 
 | Decision | Choice | Why |
-|---|---|---|
+| --- | --- | --- |
 | Language / runtime | TypeScript on Bun | Maintainer fluency + `--compile` for single-binary distribution + native `bun:sqlite` and `fetch` |
 | Linter / formatter | Biome | Single tool, fast, modern defaults |
 | Test runner | `bun test` | Bundled, no extra dep; runs `.ts` directly |
@@ -228,9 +242,9 @@ localpress/
 │       ├── history/                  ← index.ts, store.ts, types.ts (time-machine snapshots)
 │       └── state/
 │           ├── schema.ts             ← SQL DDL, migrations (schema v5)
-│           └── db.ts                 ← SiteDb wrapper (bun:sqlite) + getStats()
+│   └── db.ts                 ← SiteDb wrapper (bun:sqlite) + getStats()
 ├── test/
-│   ├── unit/                         ← 72 files (db, config, ssh, mcp, history, export-import, profile, stats, ...)
+│   ├── unit/                         ← 80 files (db, config, ssh, mcp, history, export-import, profile, stats, verify, dry-run, ...)
 │   ├── integration/
 │   │   ├── docker-compose.yml        ← WordPress + MySQL
 │   │   ├── setup-wp.sh               ← WP-CLI setup + test data
@@ -281,7 +295,7 @@ That's it — merging one PR is the whole release.
 ### How the version is decided (semver from commit types)
 
 | Commit type on `main` | Bump | Example |
-|---|---|---|
+| --- | --- | --- |
 | `fix:` | patch | 2.1.0 → 2.1.1 |
 | `feat:` | minor | 2.1.0 → 2.2.0 |
 | `feat!:` / `BREAKING CHANGE:` footer | major | 2.1.0 → 3.0.0 |
@@ -306,7 +320,7 @@ the allowed `types` in `pr-title-lint.yml`).
 - **`release-please-config.json`** — bump rules, changelog sections, tag format
   (`vX.Y.Z`, no component prefix).
 - **`.release-please-manifest.json`** — the current released version
-  (`{ ".": "2.1.0" }`). release-please reads and updates this; it's the source of
+  (`{ ".": "2.7.0" }`). release-please reads and updates this; it's the source of
   truth for computing the next bump. **Don't hand-edit it** except to correct a
   drift.
 
