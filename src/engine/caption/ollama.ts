@@ -37,8 +37,9 @@ const MAX_CAPTION_CHARS = 240;
 const GENERATE_TIMEOUT_MS = 120_000;
 
 const DEFAULT_PROMPT =
-  'Write concise alt-text for this image. Describe only what is visually present. ' +
-  'Be factual and specific. Keep it under 125 characters. ' +
+  'Write alt-text for this image in one clear sentence. Describe the main subject, ' +
+  'any visible text or logos, and the overall scene. Be specific and factual. ' +
+  'Keep it between 50 and 150 characters. ' +
   'Respond with only the alt-text — no prefix, quotes, or explanation.';
 
 /** Per-kind prompt template; honoured when options.prompt isn't set. */
@@ -63,7 +64,7 @@ function buildPrompt(kind: VisionKind, language?: string): string {
     default:
       // alt
       return language
-        ? `Write concise alt-text for this image in ${language}. Describe only what is visually present. Be factual and specific. Keep it under 125 characters. Respond with only the alt-text — no prefix, quotes, or explanation.`
+        ? `Write alt-text for this image in ${language}. Describe the main subject, any visible text or logos, and the overall scene in one clear sentence. Be specific and factual. Keep it between 50 and 150 characters. Respond with only the alt-text — no prefix, quotes, or explanation.`
         : DEFAULT_PROMPT;
   }
 }
