@@ -192,9 +192,23 @@ export function registerDoctorCommand(program: Command): void {
         try {
           const restAdapter = resolver.getAdapter('rest');
           if (restAdapter) {
-            // Quick connectivity check — list 1 item.
-            await restAdapter.listMedia({ perPage: 1, page: 1 });
-            connectionOk = true;
+            // Quick connectivity check — list 1 item. Timeout after 10s so
+            // doctor always produces output even against slow/unreachable sites.
+            let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+            try {
+              await Promise.race([
+                restAdapter.listMedia({ perPage: 1, page: 1 }),
+                new Promise<never>((_, reject) => {
+                  timeoutHandle = setTimeout(
+                    () => reject(new Error('Connection check timed out after 10s')),
+                    10_000,
+                  );
+                }),
+              ]);
+              connectionOk = true;
+            } finally {
+              clearTimeout(timeoutHandle);
+            }
           }
         } catch (err) {
           issues.push(classifyConnectionError(err, site.url));
