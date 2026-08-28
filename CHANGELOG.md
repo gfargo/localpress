@@ -5,6 +5,19 @@ All notable changes to localpress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0](https://github.com/gfargo/localpress/compare/v2.7.0...v2.8.0) (2026-08-28)
+
+
+### Features
+
+* add SEO audit command, close MCP budget gate gap, refresh docs to v2.7.0 ([061f1fe](https://github.com/gfargo/localpress/commit/061f1feafe0dcf741eb04b713b40ce1e7cc86b82))
+
+
+### Bug Fixes
+
+* resolve MCP agent-experience bugs ([#324](https://github.com/gfargo/localpress/issues/324), [#325](https://github.com/gfargo/localpress/issues/325), [#326](https://github.com/gfargo/localpress/issues/326), [#327](https://github.com/gfargo/localpress/issues/327)) ([#330](https://github.com/gfargo/localpress/issues/330)) ([6e016c9](https://github.com/gfargo/localpress/commit/6e016c9058e7b20a22b53fed52701bbff1efa76e))
+* **watch:** anchor ignore rules to the watch root so dotted roots emit events ([#322](https://github.com/gfargo/localpress/issues/322)) ([1c82b54](https://github.com/gfargo/localpress/commit/1c82b54521b8986c033cbfff99a275a0f5ac60ce))
+
 ## [2.7.0](https://github.com/gfargo/localpress/compare/v2.6.0...v2.7.0) (2026-08-27)
 
 
