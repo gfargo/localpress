@@ -76,6 +76,9 @@ export async function runA11yScan(scanOptions: A11yScanOptions): Promise<A11ySca
   const truncatedTypes: string[] = [];
   let postsChecked = 0;
 
+  // Split the budget evenly across post types so one type can't starve the others.
+  const perTypeBudget = Math.ceil(limit / types.length);
+
   for (const postType of types) {
     if (id) {
       // Single post mode.
@@ -113,14 +116,15 @@ export async function runA11yScan(scanOptions: A11yScanOptions): Promise<A11ySca
       continue;
     }
 
-    // Paginate through posts.
+    // Paginate through posts for this type, up to its share of the budget.
     // Keep per_page fixed so the server-side offset (page-1)*per_page stays
     // stable across every iteration. A shrinking per_page would move the window
     // backwards into already-scanned records on the final page.
     const PER_PAGE = 20;
     let page = 1;
     let limitReached = false;
-    while (postsChecked < limit) {
+    let typeChecked = 0;
+    while (typeChecked < perTypeBudget) {
       const params = new URLSearchParams({
         per_page: String(PER_PAGE),
         page: String(page),
@@ -144,7 +148,8 @@ export async function runA11yScan(scanOptions: A11yScanOptions): Promise<A11ySca
         if (posts.length === 0) break;
 
         for (const post of posts) {
-          if (postsChecked >= limit) break; // cap analysis to the remaining budget
+          if (typeChecked >= perTypeBudget) break;
+          typeChecked++;
           postsChecked++;
           const title = post.title.rendered.replace(/<[^>]*>/g, '');
           analyzePost(post.id, title, post.content.rendered, findings);
@@ -152,7 +157,7 @@ export async function runA11yScan(scanOptions: A11yScanOptions): Promise<A11ySca
 
         const totalPages = Number.parseInt(res.headers.get('X-WP-TotalPages') ?? '1', 10);
         if (page >= totalPages) break;
-        if (postsChecked >= limit) {
+        if (typeChecked >= perTypeBudget) {
           limitReached = true;
           break;
         }
