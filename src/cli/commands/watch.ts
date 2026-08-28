@@ -32,6 +32,10 @@
  * through the same per-file rerun guard, so a delete request in flight can
  * never race a replace-in-place for the same attachment — one always fully
  * completes before the other starts.
+ *
+ * Ignore rules (dotfiles, `node_modules`) are anchored to paths *relative to
+ * the watch root* (see `../utils/watch-ignore.ts`) so a root that itself has
+ * a dot-prefixed path component doesn't get every event filtered out.
  */
 
 import { createHash } from 'node:crypto';
@@ -62,6 +66,7 @@ import { getConfigDir, getSiteDbPath, loadConfig, resolveActiveSite } from '../u
 import { createDeleteScheduler } from '../utils/delete-grace.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
 import { createRerunGuard } from '../utils/rerun-guard.ts';
+import { createWatchIgnoreMatcher } from '../utils/watch-ignore.ts';
 import { isOptimizableMime } from './optimize.ts';
 
 /** Image extensions we watch for. */
@@ -475,11 +480,7 @@ export function registerWatchCommand(program: Command): void {
           stabilityThreshold: debounceMs,
           pollInterval: 100,
         },
-        ignored: [
-          /(^|[/\\])\../, // dotfiles
-          '**/node_modules/**',
-          '**/.git/**',
-        ],
+        ignored: createWatchIgnoreMatcher(watchDir),
       });
 
       watcher.on('add', (filePath) => scheduleProcess(filePath));
