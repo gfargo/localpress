@@ -32,7 +32,8 @@ import type { VisionKind } from './types.ts';
 export interface BulkRunItemResult {
   id: number;
   filename: string;
-  generated: string;
+  /** The AI-generated value. `null` when the item was skipped (already has a value). */
+  generated: string | null;
   previous?: string;
   skipped: boolean;
   durationMs: number;
@@ -180,7 +181,7 @@ export async function runBulkVision(args: {
         results.push({
           id,
           filename: item.filename,
-          generated: '',
+          generated: null,
           skipped: true,
           durationMs: 0,
         });
@@ -194,7 +195,7 @@ export async function runBulkVision(args: {
         results.push({
           id,
           filename: item.filename,
-          generated: previous,
+          generated: null,
           previous,
           skipped: true,
           durationMs: 0,
