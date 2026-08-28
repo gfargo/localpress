@@ -2,112 +2,70 @@
 
 ## Overview
 
-Releases are automated via GitHub Actions. Pushing a `v*` tag triggers the `release.yml` workflow which builds binaries, creates a GitHub Release, and updates the Homebrew formula.
+Releases are **automated and conventional-commit-driven** via release-please. You don't hand-pick version numbers or write release notes — the version comes from commit types since the last release, and notes come from commit subjects.
 
-## Steps to Release
+## How a release happens (the normal path)
 
-### 1. Bump version
+1. **Land conventional commits on `main`.** Because we squash-merge, the *PR title* becomes the single commit subject — so the PR title is what matters. `pr-title-lint.yml` enforces the format on every PR.
 
-```bash
-# In package.json, update "version" field
-# e.g. "1.6.0" → "1.7.0"
+2. **release-please opens/updates a "Release vX.Y.Z" PR** (`release-please.yml` runs on each push to `main`). It computes the next version from the commits, stages the `package.json` bump + a generated `CHANGELOG.md` section. This PR sits open and keeps updating itself as more commits land — it's the human-approval gate.
+
+3. **Merge the Release PR when you want to ship.** On merge, release-please creates the `vX.Y.Z` tag + a GitHub Release (with generated notes) and sets `release_created=true`.
+
+4. **That triggers the build** (`release-please.yml` calls the reusable `release-build.yml`): typecheck + unit tests → 5-platform binaries/tarballs → `checksums.txt` → uploads them to the Release → bumps `Formula/localpress.rb` and pushes it to both `main` and `gfargo/homebrew-tap`.
+
+That's it — merging one PR is the whole release.
+
+## How the version is decided (semver from commit types)
+
+| Commit type on `main` | Bump | Example |
+| --- | --- | --- |
+| `fix:` | patch | 2.7.0 → 2.7.1 |
+| `feat:` | minor | 2.7.0 → 2.8.0 |
+| `feat!:` / `BREAKING CHANGE:` footer | major | 2.7.0 → 3.0.0 |
+| `docs:` `chore:` `refactor:` `test:` `ci:` `build:` `perf:` | none on their own | — |
+
+`perf:` shows in the changelog but doesn't force a release by itself; the type→section mapping lives in `release-please-config.json`.
+
+## The pieces
+
+- **`.github/workflows/release-please.yml`** — runs on push to `main`; maintains the Release PR and, on merge, tags + calls the build.
+- **`.github/workflows/release-build.yml`** — reusable (`workflow_call`) build + publish + Homebrew pipeline, parameterized by tag.
+- **`.github/workflows/release.yml`** — manual fallback. Push a `v*` tag by hand and it runs the same `release-build.yml`. Use only if the automated flow is wedged.
+- **`.github/workflows/pr-title-lint.yml`** — conventional-commit check on PR titles.
+- **`release-please-config.json`** — bump rules, changelog sections, tag format.
+- **`.release-please-manifest.json`** — the current released version (`{ ".": "2.7.0" }`). Don't hand-edit.
+
+## Invariants (don't break these)
+
+- **Don't manually bump `package.json` or hand-write the top `CHANGELOG.md` section** — release-please owns both.
+- **The tag → build link relies on staying in one workflow.** Don't "simplify" into a tag-listener; it will silently stop building.
+- **`HOMEBREW_TAP_TOKEN`** (repo secret, PAT with `repo` scope on `gfargo/homebrew-tap`) must be present or the tap-push step no-ops.
+- The formula commit back to `main` carries `[skip ci]` so it doesn't spin up another release-please run.
+
+## PR title conventions
+
+Since we squash-merge, the PR title IS the commit message that drives versioning:
+
+```
+feat: add SEO audit command
+fix(mcp): close audit tool schema gap
+docs: update CLAUDE.md to v2.7.0
+chore: update test fixtures
 ```
 
-Follow semver:
-- **Patch** (1.6.x): bug fixes, doc updates, test additions
-- **Minor** (1.x.0): new commands, new flags, new capabilities, non-breaking changes
-- **Major** (x.0.0): breaking changes to CLI flags, JSON output shapes, or config format
-
-### 2. Update CHANGELOG.md
-
-Move items from `[Unreleased]` into a new version section. Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format:
-
-```markdown
-## [1.7.0] - 2026-05-08
-
-### Added
-- **Feature name**: description
-
-### Changed
-- **What changed**: description
-
-### Fixed
-- **Bug name**: description
-```
-
-Update the compare links at the bottom:
-```markdown
-[Unreleased]: https://github.com/gfargo/localpress/compare/v1.7.0...HEAD
-[1.7.0]: https://github.com/gfargo/localpress/compare/v1.6.0...v1.7.0
-```
-
-### 3. Commit and tag
-
-```bash
-git add package.json CHANGELOG.md
-git commit -m "chore: bump version to 1.7.0"
-git tag v1.7.0
-git push origin main
-git push origin v1.7.0
-```
-
-### 4. Wait for the release workflow
-
-The `release.yml` workflow will:
-1. Run typecheck + unit tests
-2. Build cross-platform binaries (`bun run build:all`)
-3. Create a GitHub Release with auto-generated notes (`generate_release_notes: true`)
-4. Compute SHA256 checksums for each binary
-5. Update `Formula/localpress.rb` with new version and checksums
-6. Push the updated formula to `gfargo/homebrew-localpress` tap
-
-### 5. Polish the release notes (optional but recommended)
-
-After the release is created, edit it with a hand-written description:
-
-```bash
-gh release edit v1.7.0 --notes-file tmp/release-notes.md
-```
-
-#### Release note format
-
-Follow the tone of existing releases (see v1.6.0 as the template):
-
-- **Opening paragraph** — 1-2 sentence theme summary
-- **Sections with emoji headers** — `🖥️`, `🧠`, `🔐`, `📖` etc. for each major feature
-- Each section: brief explanation + code example showing usage
-- **"All Changes"** section — Added/Changed/Fixed bullets (mirrors CHANGELOG)
-- **Stats** — files changed, insertions/deletions, new files
-- **Install/Upgrade** — `brew upgrade localpress` + note about attached binaries
-- Keep it scannable. Lead with what users care about, not implementation details.
-
-## What the Workflow Handles Automatically
-
-- Binary builds for: darwin-arm64, darwin-x64, linux-arm64, linux-x64, windows-x64
-- GitHub Release creation with attached binaries
-- SHA256 checksum computation
-- Homebrew formula version + checksum update
-- Push to `gfargo/homebrew-localpress` tap (requires `HOMEBREW_TAP_TOKEN` secret)
+Scopes in parentheses are optional but helpful for changelog grouping.
 
 ## Secrets Required
 
-- `HOMEBREW_TAP_TOKEN`: GitHub PAT with `repo` scope on `gfargo/homebrew-localpress`
+- `HOMEBREW_TAP_TOKEN`: GitHub PAT with `repo` scope on `gfargo/homebrew-tap`
+- `VERCEL_DEPLOY_HOOK`: Vercel deploy hook URL for rebuilding localpress.griffen.codes
 
-## Hotfix Process
+## Website
 
-For urgent fixes after a release:
-1. Fix on main (or cherry-pick from a branch)
-2. Bump patch version (e.g. 1.7.0 → 1.7.1)
-3. Follow the same tag-and-push flow
+The marketing site at `localpress.griffen.codes` is a separate Vercel project. It auto-rebuilds on:
 
-## Wiki Updates
+- Wiki page edits (via `rebuild-on-wiki.yml` → Vercel deploy hook)
+- New releases (chained off `release-please.yml`)
 
-The `.wiki/` directory is a separate git repo (GitHub wiki). Push wiki changes directly:
-
-```bash
-git -C .wiki add .
-git -C .wiki commit -m "docs: description"
-git -C .wiki push
-```
-
-Wiki changes don't need a release — they're live immediately on push.
+Wiki changes don't need a release — they're live immediately on push to the wiki repo.

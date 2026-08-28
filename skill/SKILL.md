@@ -695,6 +695,72 @@ Global `--dry-run` returns `{ "dryRun": true, "force": false, "ids": [123, 124],
 
 When fetching a post's content fails partway through the scan, `errors` is non-empty and the process exits **4** (`ExitCode.NetworkError`) — but the payload above is still emitted in full, with `findings`/`summary` reflecting whatever was successfully checked. Don't treat a non-zero exit from `a11y --json` as "no output": parse the partial payload and inspect `errors` for what was skipped.
 
+### SEO audit and generation
+
+```bash
+# Scan posts/pages for SEO issues
+localpress seo audit --json
+localpress seo audit --type post --limit 50 --json
+localpress seo audit --id 123 --json
+
+# Generate missing SEO meta via Ollama (dry-run by default for bulk)
+localpress seo generate --missing-title --missing-description --json
+localpress seo generate --missing-description --apply --json
+localpress seo generate --id 123 --missing-title --json
+```
+
+The SEO audit detects whether Yoast SEO or RankMath is installed by checking for their meta keys on the first batch of posts. Finding types: `missing-meta-title`, `missing-meta-description`, `duplicate-title`, `thin-description` (< 120 chars), `missing-og-image` (no OG image field and no featured image).
+
+#### `seo audit --json` output
+
+```json
+{
+  "site": "production",
+  "totalPosts": 42,
+  "seoPlugin": "yoast",
+  "findings": [
+    { "type": "missing-meta-description", "postId": 15, "postTitle": "Getting Started Guide", "detail": "No yoast meta description set" },
+    { "type": "thin-description", "postId": 28, "postTitle": "Quick Tips", "detail": "Meta description is only 45 chars (recommended ≥120)" },
+    { "type": "duplicate-title", "postId": 31, "postTitle": "About Us", "detail": "Title duplicated across 2 posts: #31, #44" },
+    { "type": "missing-og-image", "postId": 7, "postTitle": "Welcome", "detail": "No Open Graph image and no featured image set" }
+  ],
+  "summary": {
+    "missingMetaTitle": 0,
+    "missingMetaDescription": 5,
+    "duplicateTitle": 4,
+    "thinDescription": 3,
+    "missingOgImage": 2
+  },
+  "errors": [],
+  "complete": true
+}
+```
+
+**Exit code:** `1` when findings are present (same behavior as `audit`). `4` on network errors.
+
+#### `seo generate --json` output (dry-run)
+
+```json
+{ "dryRun": true, "changes": { "operation": "seo.generate", "count": 5, "items": [{ "id": 15, "title": "Getting Started Guide", "needsTitle": false, "needsDescription": true }] } }
+```
+
+#### `seo generate --json` output (applied)
+
+```json
+{
+  "dryRun": false,
+  "generated": 4,
+  "failed": 1,
+  "results": [
+    { "id": 15, "title": "Getting Started Guide", "generatedDescription": "Learn how to set up your WordPress site..." },
+    { "id": 28, "title": "Quick Tips", "generatedDescription": "Essential WordPress tips for better performance..." },
+    { "id": 42, "title": "Problem Post", "error": "Ollama did not respond within 30s" }
+  ]
+}
+```
+
+`seo generate` requires Ollama running locally with a text model. The default model is the same as `caption` (configurable via `config set defaults.captionModel`). Generated titles are capped at 60 characters and descriptions at 160 characters, both truncated at word boundaries. Without an SEO plugin installed, `seo generate` cannot write meta — it will warn and skip.
+
 ### Site briefing
 
 ```bash
@@ -1075,6 +1141,7 @@ localpress defines stable exit codes (`src/types.ts`):
 | 4 | Network error (couldn't reach the WP site) |
 | 5 | Auth error (Application Password rejected) |
 | 6 | Capability unavailable (e.g. replace-in-place needs WP-CLI) |
+| 7 | Budget exceeded (`--max-unoptimized-bytes` threshold violated) |
 
 Most per-command failure paths honor this table and call `error()` (below) before exiting with the matching code. This includes uncaught errors that bubble to the top-level catch in `src/cli/index.ts` (exit `GenericError`, 1) and commander's own parse errors — unknown command, missing required argument (exit `InvalidUsage`, 2) — both of which now emit structured JSON with `--json` rather than plain text.
 
