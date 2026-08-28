@@ -35,7 +35,7 @@ interface VerifyFinding {
 interface VerifyResult {
   id: number;
   filename: string;
-  status: 'ok' | 'drift' | 'missing-local' | 'missing-remote' | 'unreachable';
+  status: 'ok' | 'drift' | 'missing-local' | 'missing-remote' | 'unreachable' | 'unverified';
   findings: VerifyFinding[];
   hashVerified?: boolean;
   reason?: string;
@@ -342,7 +342,8 @@ export function registerVerifyCommand(program: Command): void {
         }
 
         const hashUnverified = options.hash === true && hashVerified === false;
-        const status = findings.length === 0 ? 'ok' : 'drift';
+        const status: VerifyResult['status'] =
+          findings.length > 0 ? 'drift' : hashUnverified ? 'unverified' : 'ok';
         results.push({
           id,
           filename: remote.filename,
@@ -351,21 +352,18 @@ export function registerVerifyCommand(program: Command): void {
           ...(options.hash ? { hashVerified } : {}),
         });
 
-        if (status === 'ok' && !hashUnverified) {
+        if (status === 'ok') {
           info(`  ✓ #${id} (${remote.filename}) — in sync`);
           okCount++;
-        } else if (status === 'ok' && hashUnverified) {
-          warn(`  ⚠ #${id} (${remote.filename}) — in sync except hash could not be verified`);
+        } else if (status === 'unverified') {
+          warn(`  ⚠ #${id} (${remote.filename}) — metadata matches but hash could not be verified`);
+          unverifiedCount++;
         } else {
           warn(`  ⚠ #${id} (${remote.filename}) — ${findings.length} difference(s):`);
           for (const f of findings) {
             warn(`      ${f.field}: local=${f.local} ≠ remote=${f.remote}`);
           }
           driftCount++;
-        }
-
-        if (hashUnverified) {
-          unverifiedCount++;
         }
       }
 
