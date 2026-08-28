@@ -31,7 +31,7 @@ const A11Y_SCAN_LIMIT = 100;
  */
 const BROKEN_REFS_SCAN_LIMIT = 30;
 /** Hard cap on the WP-CLI orphan scan so a slow/hung SSH connection can't block the whole briefing. */
-const ORPHANS_TIMEOUT_MS = 20_000;
+const ORPHANS_TIMEOUT_MS = 5_000;
 
 export interface CategorySummary {
   count: number;
@@ -351,12 +351,17 @@ export async function runOrphansCheck(resolver: AdapterResolver): Promise<Catego
       available: true,
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = message.includes('timed out');
     return {
       count: 0,
       examples: [],
       available: false,
-      unavailableKind: 'error',
-      unavailableReason: err instanceof Error ? err.message : String(err),
+      // Timeouts are expected in a quick-overview context — don't degrade the briefing.
+      unavailableKind: isTimeout ? 'not-configured' : 'error',
+      unavailableReason: isTimeout
+        ? `Orphan scan skipped (did not complete within ${ORPHANS_TIMEOUT_MS / 1000}s)`
+        : message,
     };
   } finally {
     // Without this, a fast orphan scan (finishing well before the timeout)
