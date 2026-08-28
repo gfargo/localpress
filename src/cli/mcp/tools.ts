@@ -643,6 +643,14 @@ export function registerTools(server: McpServer): void {
           .positive()
           .optional()
           .describe('Size threshold in bytes for --large'),
+        maxUnoptimizedBytes: z
+          .number()
+          .int()
+          .nonnegative()
+          .optional()
+          .describe(
+            'CI gate: exit non-zero (code 7) if total unoptimized bytes exceed this budget',
+          ),
       },
     },
     async (args) => {
@@ -659,6 +667,7 @@ export function registerTools(server: McpServer): void {
       flag(argv, '--quality', a.quality);
       opt(argv, '--ocr-text', a.ocrText);
       opt(argv, '--threshold', a.threshold);
+      opt(argv, '--max-unoptimized-bytes', a.maxUnoptimizedBytes);
       return runCli(argv, a.site as string | undefined);
     },
   );
@@ -1848,6 +1857,78 @@ export function registerTools(server: McpServer): void {
       opt(argv, '--status', a.status);
       opt(argv, '--id', a.id);
       opt(argv, '--limit', a.limit);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
+    'seo_audit',
+    {
+      title: 'SEO audit',
+      description:
+        'Scan posts/pages for SEO issues: missing meta titles/descriptions, duplicate titles, thin descriptions (<120 chars), missing OG/featured images. Detects Yoast SEO and RankMath automatically.',
+      inputSchema: {
+        ...commonSiteArg,
+        type: z
+          .enum(['post', 'page', 'both'])
+          .optional()
+          .describe('Post type to check (default: both)'),
+        status: z.string().optional().describe('Post status (default: publish)'),
+        id: z.number().int().positive().optional().describe('Check a specific post only'),
+        limit: z.number().int().positive().optional().describe('Max posts to check (default: 100)'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['seo', 'audit'];
+      opt(argv, '--type', a.type);
+      opt(argv, '--status', a.status);
+      opt(argv, '--id', a.id);
+      opt(argv, '--limit', a.limit);
+      return runCli(argv, a.site as string | undefined);
+    },
+  );
+
+  server.registerTool(
+    'seo_generate',
+    {
+      title: 'Generate SEO meta via Ollama',
+      description:
+        'Generate missing SEO meta titles and/or descriptions using a local Ollama model. Dry-run by default for bulk; pass apply or use explicit --id to execute. Writes to Yoast/RankMath meta fields.',
+      inputSchema: {
+        ...commonSiteArg,
+        missingTitle: z
+          .boolean()
+          .optional()
+          .describe('Generate meta titles for posts that lack one'),
+        missingDescription: z
+          .boolean()
+          .optional()
+          .describe('Generate meta descriptions for posts that lack one'),
+        model: z.string().optional().describe('Ollama model to use'),
+        type: z.enum(['post', 'page', 'both']).optional().describe('Post type (default: both)'),
+        status: z.string().optional().describe('Post status (default: publish)'),
+        id: z.number().int().positive().optional().describe('Process a specific post only'),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Max posts to process (default: 50)'),
+        dryRun: z.boolean().optional().describe('Preview without executing'),
+      },
+    },
+    async (args) => {
+      const a = args as ArgMap;
+      const argv = ['seo', 'generate'];
+      flag(argv, '--missing-title', a.missingTitle);
+      flag(argv, '--missing-description', a.missingDescription);
+      opt(argv, '--model', a.model);
+      opt(argv, '--type', a.type);
+      opt(argv, '--status', a.status);
+      opt(argv, '--id', a.id);
+      opt(argv, '--limit', a.limit);
+      flag(argv, '--dry-run', a.dryRun);
       return runCli(argv, a.site as string | undefined);
     },
   );
