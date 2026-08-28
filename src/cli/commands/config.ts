@@ -2,13 +2,15 @@
  * `localpress config` — read and write localpress configuration.
  *
  * Subcommands:
- *   get <key>                    — print a config value
- *   set <key> <value>            — set a scalar config value
- *   list                         — print the full config (redacts app passwords)
- *   set-profile <name> [options] — create or update a named optimization profile
- *   get-profile <name>           — print a named profile
- *   list-profiles                — list all named profiles
- *   remove-profile <name>        — delete a named profile
+ *   get <key>                      — print a config value
+ *   set <key> <value>              — set a scalar config value
+ *   list                           — print the full config (redacts app passwords)
+ *   set-profile <name> [options]   — create or update a named optimization profile
+ *   get-profile <name>             — print a named profile
+ *   list-profiles                  — list all named profiles
+ *   remove-profile <name>          — delete a named profile
+ *   export-profile <name> --to <f> — serialize a named profile to a JSON file
+ *   import-profile <file> [--as n] — read a profile JSON file into config
  *
  * Supported scalar keys:
  *   active-site          — the default site name
@@ -17,11 +19,116 @@
  *   defaults.concurrency — default concurrency for bulk ops
  */
 
+import { basename, extname } from 'node:path';
 import type { Command } from 'commander';
 import type { Config, OptimizationProfile } from '../../types.ts';
 import { parseIntOption, parsePositiveIntOption } from '../utils/args.ts';
 import { loadConfig, saveConfig } from '../utils/config.ts';
 import { error, info, printJson } from '../utils/output.ts';
+
+/**
+ * Validate and parse an unknown value as an OptimizationProfile.
+ *
+ * Rejects:
+ *  - non-objects and null
+ *  - any key not in the 7-field allow-list
+ *  - invalid field types or out-of-range values
+ *  - an empty object (no fields at all)
+ *
+ * Returns a clean typed OptimizationProfile on success; throws with a
+ * descriptive message on failure.
+ */
+export function validateProfileObject(input: unknown): OptimizationProfile {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Profile must be a JSON object');
+  }
+
+  const ALLOWED_KEYS = new Set([
+    'description',
+    'quality',
+    'format',
+    'maxWidth',
+    'maxHeight',
+    'encoder',
+    'stripMetadata',
+  ]);
+
+  const raw = input as Record<string, unknown>;
+
+  for (const key of Object.keys(raw)) {
+    if (!ALLOWED_KEYS.has(key)) {
+      throw new Error(
+        `Unknown field '${key}' in profile. Allowed fields: ${[...ALLOWED_KEYS].join(', ')}`,
+      );
+    }
+  }
+
+  if (Object.keys(raw).length === 0) {
+    throw new Error('Profile object is empty. Provide at least one field.');
+  }
+
+  const profile: OptimizationProfile = {};
+
+  if (raw.description !== undefined) {
+    if (typeof raw.description !== 'string') {
+      throw new Error("Field 'description' must be a string");
+    }
+    profile.description = raw.description;
+  }
+
+  if (raw.quality !== undefined) {
+    if (typeof raw.quality !== 'number' || !Number.isInteger(raw.quality)) {
+      throw new Error("Field 'quality' must be an integer");
+    }
+    if (raw.quality < 1 || raw.quality > 100) {
+      throw new Error("Field 'quality' must be between 1 and 100");
+    }
+    profile.quality = raw.quality;
+  }
+
+  if (raw.format !== undefined) {
+    const validFormats = ['webp', 'avif', 'jpeg', 'png'];
+    if (typeof raw.format !== 'string' || !validFormats.includes(raw.format)) {
+      throw new Error(`Field 'format' must be one of: ${validFormats.join(', ')}`);
+    }
+    profile.format = raw.format as OptimizationProfile['format'];
+  }
+
+  if (raw.maxWidth !== undefined) {
+    if (typeof raw.maxWidth !== 'number' || !Number.isInteger(raw.maxWidth) || raw.maxWidth < 1) {
+      throw new Error("Field 'maxWidth' must be a positive integer");
+    }
+    profile.maxWidth = raw.maxWidth;
+  }
+
+  if (raw.maxHeight !== undefined) {
+    if (
+      typeof raw.maxHeight !== 'number' ||
+      !Number.isInteger(raw.maxHeight) ||
+      raw.maxHeight < 1
+    ) {
+      throw new Error("Field 'maxHeight' must be a positive integer");
+    }
+    profile.maxHeight = raw.maxHeight;
+  }
+
+  if (raw.encoder !== undefined) {
+    const validEncoders = ['sharp', 'jsquash'];
+    if (typeof raw.encoder !== 'string' || !validEncoders.includes(raw.encoder)) {
+      throw new Error(`Field 'encoder' must be one of: ${validEncoders.join(', ')}`);
+    }
+    profile.encoder = raw.encoder as OptimizationProfile['encoder'];
+  }
+
+  if (raw.stripMetadata !== undefined) {
+    if (typeof raw.stripMetadata !== 'boolean') {
+      throw new Error("Field 'stripMetadata' must be a boolean");
+    }
+    profile.stripMetadata = raw.stripMetadata;
+  }
+
+  return profile;
+}
 
 export function registerConfigCommand(program: Command): void {
   const configCmd = program
@@ -237,6 +344,97 @@ export function registerConfigCommand(program: Command): void {
         printJson({ removed: name });
       } else {
         info(`Removed profile '${name}'.`);
+      }
+    });
+
+  // -- config export-profile <name> --to <file> --------------------------------
+  configCmd
+    .command('export-profile <name>')
+    .description('Serialize a named optimization profile to a JSON file')
+    .requiredOption('--to <file>', 'destination file path')
+    .action(async (name: string, options) => {
+      const parentOpts = program.opts();
+      const config = await loadConfig();
+      const profile = config.profiles?.[name];
+
+      if (!profile) {
+        error(
+          `Profile '${name}' not found. Run \`localpress config list-profiles\` to see available profiles.`,
+        );
+        process.exit(2);
+      }
+
+      try {
+        await Bun.write(options.to, `${JSON.stringify(profile, null, 2)}\n`);
+      } catch (err) {
+        error(
+          `Failed to write profile file '${options.to}': ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(2);
+      }
+
+      if (parentOpts.json) {
+        printJson({ name, file: options.to, profile });
+      } else {
+        info(`Exported profile '${name}' to ${options.to}`);
+      }
+    });
+
+  // -- config import-profile <file> [--as <name>] ------------------------------
+  configCmd
+    .command('import-profile <file>')
+    .description('Read a profile JSON file and save it into config')
+    .option('--as <name>', 'store the profile under this name (default: file basename)')
+    .action(async (file: string, options) => {
+      const parentOpts = program.opts();
+
+      // Read file
+      let raw: string;
+      try {
+        raw = await Bun.file(file).text();
+      } catch (err) {
+        error(
+          `Failed to read profile file '${file}': ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(2);
+      }
+
+      // Parse JSON
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        error(
+          `Malformed JSON in profile file '${file}'. The file must contain a valid JSON object.`,
+        );
+        process.exit(2);
+      }
+
+      // Validate
+      let profile: OptimizationProfile;
+      try {
+        profile = validateProfileObject(parsed);
+      } catch (err) {
+        error(`Invalid profile in '${file}': ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(2);
+      }
+
+      // Resolve target name: --as > file basename without extension
+      const targetName: string = options.as ?? basename(file, extname(file));
+
+      const config = await loadConfig();
+      if (!config.profiles) config.profiles = {};
+      const isNew = !config.profiles[targetName];
+      config.profiles[targetName] = profile;
+      await saveConfig(config);
+
+      if (parentOpts.json) {
+        printJson({ name: targetName, file, profile });
+      } else {
+        info(`${isNew ? 'Imported' : 'Updated'} profile '${targetName}' from ${file}`);
+        info(JSON.stringify(profile, null, 2));
+        info('');
+        info(`Use it with: localpress optimize --profile ${targetName}`);
       }
     });
 }
