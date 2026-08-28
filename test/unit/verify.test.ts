@@ -16,6 +16,10 @@ import { createHash } from 'node:crypto';
 import { Command } from 'commander';
 import { WpApiError, WpCliError } from '../../src/adapters/types.ts';
 import {
+  type AllSitesVerifyReport,
+  type SiteVerifySummary,
+  aggregateVerifyResults,
+  allSitesExitCode,
   classifyRemoteFetchError,
   registerVerifyCommand,
   verifyRemoteHash,
@@ -41,6 +45,16 @@ describe('verify command registration', () => {
     expect(verify).toBeDefined();
     expect(verify?.registeredArguments).toHaveLength(1);
     expect(verify?.registeredArguments[0]?.required).toBe(false);
+  });
+
+  test('--all-sites option is registered on the verify command', () => {
+    const program = new Command();
+    registerVerifyCommand(program);
+
+    const verify = program.commands.find((cmd) => cmd.name() === 'verify');
+    expect(verify).toBeDefined();
+    const allSitesOpt = verify?.options.find((o) => o.long === '--all-sites');
+    expect(allSitesOpt).toBeDefined();
   });
 });
 
@@ -209,5 +223,131 @@ describe('classifyRemoteFetchError', () => {
       ),
     );
     expect(result.status).toBe('unreachable');
+  });
+});
+
+// Helper to build a SiteVerifySummary for testing aggregation helpers.
+function makeSummary(overrides: Partial<SiteVerifySummary> = {}): SiteVerifySummary {
+  return {
+    site: 'test-site',
+    url: 'https://example.com',
+    verified: 0,
+    ok: 0,
+    drift: 0,
+    missing: 0,
+    unreachable: 0,
+    unverified: 0,
+    results: [],
+    ...overrides,
+  };
+}
+
+describe('aggregateVerifyResults', () => {
+  test('empty input produces all-zero summary', () => {
+    const report = aggregateVerifyResults([]);
+    expect(report.sites).toHaveLength(0);
+    expect(report.summary.sites).toBe(0);
+    expect(report.summary.verified).toBe(0);
+    expect(report.summary.ok).toBe(0);
+    expect(report.summary.drift).toBe(0);
+    expect(report.summary.missing).toBe(0);
+    expect(report.summary.unreachable).toBe(0);
+    expect(report.summary.unverified).toBe(0);
+    expect(report.summary.sitesWithErrors).toBe(0);
+  });
+
+  test('sums counts across multiple site summaries', () => {
+    const summaries = [
+      makeSummary({ site: 'site-a', verified: 10, ok: 8, drift: 1, missing: 1 }),
+      makeSummary({ site: 'site-b', verified: 5, ok: 3, unreachable: 2 }),
+      makeSummary({ site: 'site-c', verified: 7, ok: 6, unverified: 1 }),
+    ];
+    const report = aggregateVerifyResults(summaries);
+    expect(report.summary.sites).toBe(3);
+    expect(report.summary.verified).toBe(22);
+    expect(report.summary.ok).toBe(17);
+    expect(report.summary.drift).toBe(1);
+    expect(report.summary.missing).toBe(1);
+    expect(report.summary.unreachable).toBe(2);
+    expect(report.summary.unverified).toBe(1);
+    expect(report.summary.sitesWithErrors).toBe(0);
+  });
+
+  test('counts sitesWithErrors when a summary has an error field set', () => {
+    const summaries = [
+      makeSummary({ site: 'site-a', ok: 5, verified: 5 }),
+      makeSummary({ site: 'site-b', error: 'DB unavailable' }),
+      makeSummary({ site: 'site-c', error: 'adapter init failed' }),
+    ];
+    const report = aggregateVerifyResults(summaries);
+    expect(report.summary.sitesWithErrors).toBe(2);
+    expect(report.summary.ok).toBe(5);
+  });
+
+  test('a site with error and zero counts is still included in sites array', () => {
+    const summaries = [makeSummary({ site: 'broken', error: 'timeout' })];
+    const report = aggregateVerifyResults(summaries);
+    expect(report.sites).toHaveLength(1);
+    expect(report.sites[0]?.error).toBe('timeout');
+  });
+
+  test('single all-ok site produces zero errors', () => {
+    const summaries = [makeSummary({ site: 'site-a', verified: 3, ok: 3 })];
+    const report = aggregateVerifyResults(summaries);
+    expect(report.summary.sitesWithErrors).toBe(0);
+    expect(report.summary.drift).toBe(0);
+  });
+});
+
+describe('allSitesExitCode', () => {
+  function makeReport(
+    overrides: Partial<AllSitesVerifyReport['summary']> = {},
+  ): AllSitesVerifyReport {
+    return aggregateVerifyResults([
+      makeSummary({
+        verified: 3,
+        ok: 3,
+        drift: overrides.drift ?? 0,
+        missing: overrides.missing ?? 0,
+        unreachable: overrides.unreachable ?? 0,
+        unverified: overrides.unverified ?? 0,
+        error: overrides.sitesWithErrors ? 'some error' : undefined,
+      }),
+    ]);
+  }
+
+  test('all-ok report returns exit code 0', () => {
+    const report = makeReport();
+    expect(allSitesExitCode(report)).toBe(0);
+  });
+
+  test('report with drift > 0 returns exit code 1', () => {
+    const report = makeReport({ drift: 1 });
+    expect(allSitesExitCode(report)).toBe(1);
+  });
+
+  test('report with missing > 0 returns exit code 1', () => {
+    const report = makeReport({ missing: 2 });
+    expect(allSitesExitCode(report)).toBe(1);
+  });
+
+  test('report with unreachable > 0 returns exit code 1', () => {
+    const report = makeReport({ unreachable: 1 });
+    expect(allSitesExitCode(report)).toBe(1);
+  });
+
+  test('report with unverified > 0 returns exit code 1', () => {
+    const report = makeReport({ unverified: 1 });
+    expect(allSitesExitCode(report)).toBe(1);
+  });
+
+  test('report with a site-level error returns exit code 1', () => {
+    const report = makeReport({ sitesWithErrors: 1 });
+    expect(allSitesExitCode(report)).toBe(1);
+  });
+
+  test('empty report (no sites) returns exit code 0', () => {
+    const report = aggregateVerifyResults([]);
+    expect(allSitesExitCode(report)).toBe(0);
   });
 });
