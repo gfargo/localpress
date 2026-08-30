@@ -201,4 +201,35 @@ async function main(): Promise<void> {
   }
 }
 
-void main();
+/**
+ * Guard against a command vanishing mid-run.
+ *
+ * If a command awaits something that never settles and holds no libuv handle
+ * (a wedged WASM codec is the known case), the event loop drains and the
+ * runtime exits 0 with no output — indistinguishable from success, and
+ * actively misleading to scripts, CI, and the MCP server. `beforeExit` fires
+ * in exactly that situation and not after a normal `process.exit()`, so a
+ * still-running command here means the process is about to disappear
+ * silently. Fail loudly instead.
+ */
+let commandInFlight = false;
+
+process.on('beforeExit', () => {
+  if (!commandInFlight) return;
+  commandInFlight = false;
+  error(
+    'Command terminated before completing — the runtime ran out of pending work while an operation was still in flight. This is a bug; please report it with the command you ran.',
+  );
+  process.exit(ExitCode.GenericError);
+});
+
+async function run(): Promise<void> {
+  commandInFlight = true;
+  try {
+    await main();
+  } finally {
+    commandInFlight = false;
+  }
+}
+
+void run();
