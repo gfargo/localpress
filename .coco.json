@@ -1,0 +1,14 @@
+{
+  "$schema": "https://coco.griffen.codes/schema.json",
+  "defaultBranch": "main",
+  "mode": "interactive",
+  "service": {
+    "provider": "openai",
+    "model": "gpt-5.4-nano",
+    "tokenLimit": 4096,
+    "temperature": 0.32,
+    "maxConcurrent": 4,
+    "minTokensForSummary": 800,
+    "maxFileTokens": 2000
+  }
+}
