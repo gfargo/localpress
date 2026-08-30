@@ -35,6 +35,8 @@ jobs:
   quality-gate:
     name: Quality gate
     uses: ./.github/workflows/quality-gate.yml
+    with:
+      ref: ${{ inputs.tag }}
 
   build:
     name: Build binaries

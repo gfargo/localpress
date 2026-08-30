@@ -24,6 +24,10 @@ on:
         description: 'Comma-separated models to test (blank = all five)'
         required: false
         type: string
+      ref:
+        description: 'Git ref to check out (blank = default branch). Release callers must pass the tag.'
+        required: false
+        type: string
 
 jobs:
   remove-bg-quality:
@@ -33,6 +37,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Release callers pass the tag so the gate measures the commit being
+          # shipped, not whatever is on the default branch at the time.
+          ref: ${{ inputs.ref }}
 
       - uses: oven-sh/setup-bun@v2
         with:
