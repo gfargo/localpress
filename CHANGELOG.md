@@ -5,6 +5,21 @@ All notable changes to localpress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0](https://github.com/gfargo/localpress/compare/v2.8.0...v2.9.0) (2026-08-30)
+
+
+### Features
+
+* **config:** add export-profile and import-profile subcommands ([#331](https://github.com/gfargo/localpress/issues/331)) ([21e274c](https://github.com/gfargo/localpress/commit/21e274c441da6906ebeffd45a37ca190ee8e0a40))
+* **remove-bg:** default to isnet-general-use and measure every model in the quality gate ([#337](https://github.com/gfargo/localpress/issues/337)) ([8513631](https://github.com/gfargo/localpress/commit/85136311d17625cdcdae5c48999384db5c2a42e3))
+* **verify:** add --all-sites rolled-up report ([#333](https://github.com/gfargo/localpress/issues/333)) ([2c1c82b](https://github.com/gfargo/localpress/commit/2c1c82b507c17a677e6b8b728c6fa59307274c02))
+
+
+### Bug Fixes
+
+* a11y limit budget, briefing cache TTL, verify unverified status ([#262](https://github.com/gfargo/localpress/issues/262), [#269](https://github.com/gfargo/localpress/issues/269), [#266](https://github.com/gfargo/localpress/issues/266)) ([d071eba](https://github.com/gfargo/localpress/commit/d071eba8cdcb829cb083020cc71c73aa1e2e86c6))
+* bound the jSquash pre-flight so a wedged codec can't silently kill the process ([#338](https://github.com/gfargo/localpress/issues/338)) ([354279c](https://github.com/gfargo/localpress/commit/354279c4ec975020eaaa3f94078422903a390251))
+
 ## [2.8.0](https://github.com/gfargo/localpress/compare/v2.7.0...v2.8.0) (2026-08-28)
 
 
