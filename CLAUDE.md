@@ -1,6 +1,6 @@
 # CLAUDE.md — handoff for the next agent
 
-You're picking up `localpress` at **v2.7.0**. All 39 CLI commands are implemented and working, including a first-party MCP server. The project compiles, tests pass, and the CLI boots cleanly.
+You're picking up `localpress` at **v2.8.0**. All 39 CLI commands are implemented and working, including a first-party MCP server. The project compiles, tests pass, and the CLI boots cleanly.
 
 **Read in this order before writing any code:**
 
@@ -13,7 +13,7 @@ You're picking up `localpress` at **v2.7.0**. All 39 CLI commands are implemente
 
 ## Current status
 
-**Version:** 2.7.0
+**Version:** 2.8.0
 **Status:** All planned v1.0 features plus the full v2.0 content/AI/MCP expansion have shipped. `CHANGELOG.md` is the authoritative release history — this file gives a summary, not a substitute.
 
 ### What's implemented
@@ -39,7 +39,7 @@ You're picking up `localpress` at **v2.7.0**. All 39 CLI commands are implemente
 
 - sharp (libvips) as the default encoding backend
 - jSquash WASM codecs as alternative (`--encoder jsquash`) — OxiPNG for PNG, MozJPEG, WebP, AVIF
-- AI background removal via ONNX Runtime + 5 models: u2net, u2netp, silueta, isnet-general-use, birefnet-lite (MIT, state-of-the-art)
+- AI background removal via ONNX Runtime + 5 models: isnet-general-use (default), birefnet-lite (MIT, best edges), u2net, silueta, u2netp. `u2net`/`silueta` discard low-contrast clothing on portraits — see `test/quality/` for the measured floors
 - Optional system Python rembg via `--rembg` flag
 - Browser-based preview for `optimize` and `remove-bg` (`--preview` flag) — local Bun HTTP server with before/after comparison, parameter adjustment, and one-click upload to WordPress
 - `--target-size` binary-searches quality to hit a file-size budget
@@ -320,7 +320,7 @@ the allowed `types` in `pr-title-lint.yml`).
 - **`release-please-config.json`** — bump rules, changelog sections, tag format
   (`vX.Y.Z`, no component prefix).
 - **`.release-please-manifest.json`** — the current released version
-  (`{ ".": "2.7.0" }`). release-please reads and updates this; it's the source of
+  (`{ ".": "2.8.0" }`). release-please reads and updates this; it's the source of
   truth for computing the next bump. **Don't hand-edit it** except to correct a
   drift.
 

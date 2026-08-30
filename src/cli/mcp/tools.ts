@@ -999,7 +999,7 @@ export function registerTools(server: McpServer): void {
     {
       title: 'Remove image background',
       description:
-        'Remove background using a local AI model. Available models: birefnet-lite (best, ~224MB), isnet-general-use, u2net (default), silueta, u2netp (fast).',
+        'Remove background using a local AI model. Available models: birefnet-lite (best edges, ~224MB), isnet-general-use (default, ~176MB), u2net, silueta, u2netp (fastest, ~4.7MB). Note: u2net and silueta can drop low-contrast clothing on portraits.',
       inputSchema: {
         ...commonSiteArg,
         ids: z.array(z.number().int().positive()),
