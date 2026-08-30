@@ -13,7 +13,7 @@ import {
   resolveEncoderAfterPreflight,
   selectPreflightFormats,
 } from '../../src/engine/image/encoder-preflight.ts';
-import { preflightJsquashEncoder } from '../../src/engine/image/jsquash.ts';
+import { preflightJsquashEncoder, withTimeout } from '../../src/engine/image/jsquash.ts';
 
 describe('preflightJsquashEncoder', () => {
   test('succeeds for the bundled jpeg/png/webp codecs', async () => {
@@ -37,6 +37,54 @@ describe('preflightJsquashEncoder', () => {
     const result = await preflightJsquashEncoder(['gif']);
     expect(result.formats).toHaveLength(0);
     expect(result.ok).toBe(true); // vacuously true — nothing to check
+  });
+
+  test('bounds every probe, so a healthy run still reports each format', async () => {
+    const result = await preflightJsquashEncoder(['jpeg', 'png'], 10_000);
+    expect(result.ok).toBe(true);
+    expect(result.formats.map((f) => f.format)).toEqual(['jpeg', 'png']);
+  });
+});
+
+/**
+ * Regression: localpress#325.
+ *
+ * A wedged WASM codec used to hang the pre-flight forever. Because a pending
+ * WASM job holds no libuv handle, the event loop drained and the process
+ * exited 0 with no output — `doctor` produced an empty report on 7 of 10 runs,
+ * and the MCP `doctor` tool returned "Tool ran without output or errors".
+ *
+ * `withTimeout` is the guard that converts that silent hang into an ordinary
+ * error. It is tested directly because a real codec cannot be made to wedge
+ * on demand, and racing a real encode against a short timer is inherently
+ * flaky (the encode resolves in microtasks, the timer is a macrotask).
+ */
+describe('withTimeout', () => {
+  test('rejects with the given message when the promise never settles', async () => {
+    const neverSettles = new Promise<never>(() => {});
+    await expect(withTimeout(neverSettles, 10, 'codec wedged')).rejects.toThrow('codec wedged');
+  });
+
+  test('resolves with the value when the promise settles in time', async () => {
+    await expect(withTimeout(Promise.resolve('encoded'), 10_000, 'unused')).resolves.toBe(
+      'encoded',
+    );
+  });
+
+  test('propagates the original rejection rather than masking it as a timeout', async () => {
+    const failed = Promise.reject(new Error('missing wasm binary'));
+    await expect(withTimeout(failed, 10_000, 'timed out')).rejects.toThrow('missing wasm binary');
+  });
+
+  /**
+   * The timer must be cleared on the success path. If it leaked, every probe
+   * would hold the event loop open for the full timeout and `doctor` would
+   * take 10s per format instead of milliseconds.
+   */
+  test('does not hold the event loop open after the promise settles', async () => {
+    const started = Date.now();
+    await withTimeout(Promise.resolve('fast'), 60_000, 'unused');
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 });
 

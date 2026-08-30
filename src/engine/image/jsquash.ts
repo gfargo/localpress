@@ -171,13 +171,30 @@ const PREFLIGHT_PIXELS = new Uint8ClampedArray([
 ]);
 
 /**
+ * Per-format ceiling for the pre-flight encode.
+ *
+ * A 2x2 encode is instant when the codec is healthy, so this only ever fires
+ * when a WASM codec wedges. That is not hypothetical: under Bun some jSquash
+ * builds can hang on init and never settle their promise. Because a pending
+ * WASM job holds no libuv handle, the event loop drains and the process exits
+ * 0 with no output at all — the caller never learns anything went wrong.
+ * Bounding each probe converts that silent hang into an ordinary
+ * "codec unavailable" result the caller can report.
+ */
+const PREFLIGHT_TIMEOUT_MS = 10_000;
+
+/**
  * Attempt a tiny real encode for each requested format to confirm the jSquash
  * WASM codec actually loads and produces output. This is a one-time check
  * meant to run before a bulk `optimize --encoder jsquash` run touches
  * anything — a codec that fails to load today throws per-item, mid-run.
+ *
+ * A codec that neither resolves nor rejects within `PREFLIGHT_TIMEOUT_MS` is
+ * reported as unavailable rather than allowed to stall the whole command.
  */
 export async function preflightJsquashEncoder(
   formats: ImageFormat[],
+  timeoutMs: number = PREFLIGHT_TIMEOUT_MS,
 ): Promise<EncoderPreflightResult> {
   const results: EncoderPreflightResult['formats'] = [];
   let firstError: EncoderPreflightResult['firstError'];
@@ -185,7 +202,11 @@ export async function preflightJsquashEncoder(
   for (const format of formats) {
     if (!isJsquashSupported(format)) continue;
     try {
-      const { codec } = await jsquashEncode(PREFLIGHT_PIXELS, 2, 2, format, 75);
+      const { codec } = await withTimeout(
+        jsquashEncode(PREFLIGHT_PIXELS, 2, 2, format, 75),
+        timeoutMs,
+        `jSquash ${format} codec did not respond within ${timeoutMs}ms (likely a wedged WASM build)`,
+      );
       results.push({ format, ok: true, codec });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -199,4 +220,31 @@ export async function preflightJsquashEncoder(
     formats: results,
     firstError,
   };
+}
+
+/**
+ * Reject with `message` if `promise` has not settled within `timeoutMs`.
+ *
+ * The timer is deliberately NOT `unref`'d. A wedged WASM job holds no libuv
+ * handle, so without a referenced timer keeping the loop alive the process
+ * would simply drain and exit 0 before the timeout could fire — reproducing
+ * the silent-exit bug this guard exists to prevent. The timer is always
+ * cleared in `finally`, so a healthy probe never delays exit.
+ */
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }
