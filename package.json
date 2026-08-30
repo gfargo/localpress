@@ -41,6 +41,7 @@
     "test": "bun test",
     "test:watch": "bun test --watch",
     "test:tarball": "bun test test/tarball/",
+    "test:quality": "LOCALPRESS_RUN_MODEL_QUALITY=1 bun test test/quality/",
     "screenshot": "bun run bin/screenshot/screenshot.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",

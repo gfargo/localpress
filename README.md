@@ -262,11 +262,17 @@ Built for Kiro's birthday-week "Custom MCP Integration" challenge: `site_briefin
 
 | Model | Size | Quality | License |
 | ------- | ------ | --------- | --------- |
-| `birefnet-lite` | ~224 MB | State-of-the-art | MIT |
-| `isnet-general-use` | ~176 MB | Great edges | Apache-2.0 |
-| `u2net` (default) | ~176 MB | General purpose | Apache-2.0 |
-| `silueta` | ~44 MB | Balanced | MIT |
-| `u2netp` | ~4.7 MB | Fast | Apache-2.0 |
+| `birefnet-lite` | ~224 MB | Best edges; slowest (~7-15s/image) | MIT |
+| `isnet-general-use` (default) | ~176 MB | Best all-rounder (~4s/image) | Apache-2.0 |
+| `u2net` | ~176 MB | General purpose; weak on portraits | Apache-2.0 |
+| `silueta` | ~44 MB | Fast; weak on portraits | Apache-2.0 |
+| `u2netp` | ~4.7 MB | Fastest (~0.5s/image) | Apache-2.0 |
+
+**On portraits:** `u2net` and `silueta` judge saliency in a way that can discard
+low-contrast clothing — a cream sweater against a light background gets dropped,
+cutting the subject off at the neck. If you cut out people, prefer the default
+`isnet-general-use` or `birefnet-lite`. All five handle products, animals, and
+high-contrast subjects well.
 
 Models download on first use. Use `--preview` to adjust in the browser before applying. Or pass `--rembg` to use system Python rembg instead.
 

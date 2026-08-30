@@ -98,7 +98,18 @@ const MODEL_REGISTRY: Record<ModelName, ModelInfo> = {
   },
 };
 
-export const DEFAULT_MODEL: ModelName = 'u2net';
+/**
+ * Default background-removal model.
+ *
+ * `isnet-general-use` rather than `u2net`: on the checked-in photorealistic
+ * fixture, u2net and silueta both discard low-contrast clothing entirely —
+ * a cream sweater against a light background reads as non-salient, so the
+ * subject gets cut off at the neck (IoU 0.78 / 0.73 against a 0.85 floor).
+ * isnet clears every floor and leaves markedly less colour fringing at hair
+ * and glass edges. It costs roughly 2x the inference time (~4s vs ~2s per
+ * image on CPU) for the same ~176 MB download. See test/quality/.
+ */
+export const DEFAULT_MODEL: ModelName = 'isnet-general-use';
 
 export function isModelName(name: string): name is ModelName {
   return Object.hasOwn(MODEL_REGISTRY, name);

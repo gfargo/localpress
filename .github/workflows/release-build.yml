@@ -28,8 +28,17 @@ permissions:
   contents: write
 
 jobs:
+  # Gate the release on the background-removal quality suite. It is too slow
+  # for per-PR CI, so shipping is the other point (besides the nightly run) at
+  # which it must have passed — a silent regression in cutout quality is not
+  # something to discover from a bug report after the binaries are published.
+  quality-gate:
+    name: Quality gate
+    uses: ./.github/workflows/quality-gate.yml
+
   build:
     name: Build binaries
+    needs: quality-gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
