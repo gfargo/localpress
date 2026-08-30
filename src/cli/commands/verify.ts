@@ -21,6 +21,7 @@ import { AdapterResolver } from '../../adapters/resolver.ts';
 import { type MediaItem, WpApiError, WpCliError } from '../../adapters/types.ts';
 import { downloadToBuffer } from '../../engine/network/download.ts';
 import { SiteDb } from '../../engine/state/db.ts';
+import type { SiteConfig } from '../../types.ts';
 import { getSiteDbPath, loadConfig, resolveActiveSite } from '../utils/config.ts';
 import { parseAttachmentIds } from '../utils/ids.ts';
 import { error, info, printJson, warn } from '../utils/output.ts';
@@ -121,15 +122,433 @@ export async function verifyRemoteHash(options: {
   }
 }
 
+/** Per-site result from verifySite, including counts and optionally an error if
+ * the site was unreachable at the site level (DB unavailable, adapter failure). */
+export interface SiteVerifySummary {
+  site: string;
+  url?: string;
+  verified: number;
+  ok: number;
+  drift: number;
+  missing: number;
+  unreachable: number;
+  unverified: number;
+  results: VerifyResult[];
+  /** Set when the site was skipped at the site level (e.g. DB unavailable). */
+  error?: string;
+}
+
+/** Rolled-up report for --all-sites. */
+export interface AllSitesVerifyReport {
+  sites: SiteVerifySummary[];
+  summary: {
+    sites: number;
+    verified: number;
+    ok: number;
+    drift: number;
+    missing: number;
+    unreachable: number;
+    unverified: number;
+    sitesWithErrors: number;
+  };
+}
+
+/**
+ * Aggregates per-site summaries into an overall rolled-up report.
+ * Pure function — no I/O, fully testable.
+ */
+export function aggregateVerifyResults(sites: SiteVerifySummary[]): AllSitesVerifyReport {
+  const summary = {
+    sites: sites.length,
+    verified: 0,
+    ok: 0,
+    drift: 0,
+    missing: 0,
+    unreachable: 0,
+    unverified: 0,
+    sitesWithErrors: 0,
+  };
+
+  for (const s of sites) {
+    summary.verified += s.verified;
+    summary.ok += s.ok;
+    summary.drift += s.drift;
+    summary.missing += s.missing;
+    summary.unreachable += s.unreachable;
+    summary.unverified += s.unverified;
+    if (s.error !== undefined) {
+      summary.sitesWithErrors++;
+    }
+  }
+
+  return { sites, summary };
+}
+
+/**
+ * Returns the appropriate exit code for an all-sites verify report.
+ * Exits non-zero if any site has drift, missing, unreachable, unverified
+ * findings, or if any site had a site-level error.
+ * Pure function — no I/O, fully testable.
+ */
+export function allSitesExitCode(report: AllSitesVerifyReport): number {
+  const { summary } = report;
+  if (
+    summary.drift > 0 ||
+    summary.missing > 0 ||
+    summary.unreachable > 0 ||
+    summary.unverified > 0 ||
+    summary.sitesWithErrors > 0
+  ) {
+    return 1;
+  }
+  return 0;
+}
+
+/**
+ * Runs the per-attachment verify logic for a single site.
+ * Does NOT call process.exit and does NOT print the final summary/JSON —
+ * it returns counts. Uses try/finally to ensure the DB is always closed.
+ */
+export async function verifySite(
+  site: SiteConfig,
+  opts: { hash?: boolean; ids?: number[]; all?: boolean },
+): Promise<SiteVerifySummary> {
+  const resolver = new AdapterResolver(site);
+  const adapter = resolver.resolve('get');
+
+  const authHeader = `Basic ${btoa(`${site.username}:${site.appPassword}`)}`;
+
+  const db = SiteDb.init(getSiteDbPath(site.name));
+
+  let targetIds: number[];
+
+  try {
+    if (opts.ids && opts.ids.length > 0) {
+      targetIds = opts.ids;
+    } else if (opts.all) {
+      const attachments = db.listAttachments(site.name);
+      targetIds = attachments.map((a) => a.wpId);
+    } else {
+      return {
+        site: site.name,
+        url: site.url,
+        verified: 0,
+        ok: 0,
+        drift: 0,
+        missing: 0,
+        unreachable: 0,
+        unverified: 0,
+        results: [],
+      };
+    }
+
+    if (targetIds.length === 0) {
+      return {
+        site: site.name,
+        url: site.url,
+        verified: 0,
+        ok: 0,
+        drift: 0,
+        missing: 0,
+        unreachable: 0,
+        unverified: 0,
+        results: [],
+      };
+    }
+
+    const results: VerifyResult[] = [];
+    let okCount = 0;
+    let driftCount = 0;
+    let missingCount = 0;
+    let unverifiedCount = 0;
+    let unreachableCount = 0;
+
+    for (const id of targetIds) {
+      const localRecord = db.getAttachment(site.name, id);
+
+      if (!localRecord) {
+        // Not in local DB — might still exist remotely.
+        try {
+          const remote = await adapter.getMedia(id);
+          results.push({
+            id,
+            filename: remote.filename,
+            status: 'missing-local',
+            findings: [
+              {
+                field: 'local-record',
+                local: null,
+                remote: remote.filename,
+                severity: 'missing',
+              },
+            ],
+          });
+          warn(`  #${id} (${remote.filename}): not in local DB (never processed by localpress)`);
+          missingCount++;
+        } catch (err) {
+          const classification = classifyRemoteFetchError(err);
+          results.push({
+            id,
+            filename: `attachment-${id}`,
+            status: classification.status,
+            findings: [
+              {
+                field: 'remote-record',
+                local: null,
+                remote: null,
+                severity: classification.status === 'missing-remote' ? 'missing' : 'unreachable',
+              },
+            ],
+            reason: classification.reason,
+            ...(classification.httpStatus !== undefined
+              ? { httpStatus: classification.httpStatus }
+              : {}),
+          });
+          if (classification.status === 'missing-remote') {
+            warn(`  #${id}: not found locally or remotely`);
+            missingCount++;
+          } else {
+            error(`  #${id}: unreachable — ${classification.reason}`);
+            unreachableCount++;
+          }
+        }
+        continue;
+      }
+
+      // Fetch remote state.
+      let remote: MediaItem;
+      try {
+        remote = await adapter.getMedia(id);
+      } catch (err) {
+        const classification = classifyRemoteFetchError(err);
+        results.push({
+          id,
+          filename: localRecord.sourceUrl,
+          status: classification.status,
+          findings: [
+            {
+              field: 'remote-record',
+              local: localRecord.sourceUrl,
+              remote: null,
+              severity: classification.status === 'missing-remote' ? 'missing' : 'unreachable',
+            },
+          ],
+          reason: classification.reason,
+          ...(classification.httpStatus !== undefined
+            ? { httpStatus: classification.httpStatus }
+            : {}),
+        });
+        if (classification.status === 'missing-remote') {
+          error(`  #${id}: exists locally but not remotely (${classification.reason})`);
+          missingCount++;
+        } else {
+          error(`  #${id}: unreachable — ${classification.reason}`);
+          unreachableCount++;
+        }
+        continue;
+      }
+
+      // Compare fields.
+      const findings: VerifyFinding[] = [];
+
+      if (localRecord.mimeType && remote.mimeType !== localRecord.mimeType) {
+        findings.push({
+          field: 'mimeType',
+          local: localRecord.mimeType,
+          remote: remote.mimeType,
+          severity: 'mismatch',
+        });
+      }
+
+      if (
+        localRecord.sizeBytes !== null &&
+        remote.sizeBytes !== undefined &&
+        remote.sizeBytes !== null &&
+        Math.abs((remote.sizeBytes ?? 0) - (localRecord.sizeBytes ?? 0)) > 100
+      ) {
+        findings.push({
+          field: 'sizeBytes',
+          local: localRecord.sizeBytes,
+          remote: remote.sizeBytes ?? null,
+          severity: 'drift',
+        });
+      }
+
+      if (
+        localRecord.width !== null &&
+        remote.width !== undefined &&
+        remote.width !== localRecord.width
+      ) {
+        findings.push({
+          field: 'width',
+          local: localRecord.width,
+          remote: remote.width ?? null,
+          severity: 'mismatch',
+        });
+      }
+
+      if (
+        localRecord.height !== null &&
+        remote.height !== undefined &&
+        remote.height !== localRecord.height
+      ) {
+        findings.push({
+          field: 'height',
+          local: localRecord.height,
+          remote: remote.height ?? null,
+          severity: 'mismatch',
+        });
+      }
+
+      // Optional hash verification — download the file and compare SHA-256.
+      let hashVerified: boolean | undefined;
+
+      if (opts.hash) {
+        if (!localRecord.sourceHash) {
+          hashVerified = false;
+          warn(`  #${id}: no local source hash recorded — cannot verify`);
+        } else {
+          const hashResult = await verifyRemoteHash({
+            url: remote.url,
+            authHeader,
+            localHash: localRecord.sourceHash,
+          });
+          hashVerified = hashResult.verified;
+
+          if (hashResult.verified) {
+            if (hashResult.mismatch) {
+              findings.push({
+                field: 'sha256',
+                local: `${localRecord.sourceHash.slice(0, 12)}…`,
+                remote: `${(hashResult.remoteHash ?? '').slice(0, 12)}…`,
+                severity: 'drift',
+              });
+            }
+          } else {
+            warn(`  #${id}: ${hashResult.reason}`);
+          }
+        }
+      }
+
+      const hashUnverified = opts.hash === true && hashVerified === false;
+      const status = findings.length === 0 ? 'ok' : 'drift';
+      results.push({
+        id,
+        filename: remote.filename,
+        status,
+        findings,
+        ...(opts.hash ? { hashVerified } : {}),
+      });
+
+      if (status === 'ok' && !hashUnverified) {
+        info(`  ✓ #${id} (${remote.filename}) — in sync`);
+        okCount++;
+      } else if (status === 'ok' && hashUnverified) {
+        warn(`  ⚠ #${id} (${remote.filename}) — in sync except hash could not be verified`);
+      } else {
+        warn(`  ⚠ #${id} (${remote.filename}) — ${findings.length} difference(s):`);
+        for (const f of findings) {
+          warn(`      ${f.field}: local=${f.local} ≠ remote=${f.remote}`);
+        }
+        driftCount++;
+      }
+
+      if (hashUnverified) {
+        unverifiedCount++;
+      }
+    }
+
+    return {
+      site: site.name,
+      url: site.url,
+      verified: targetIds.length,
+      ok: okCount,
+      drift: driftCount,
+      missing: missingCount,
+      unreachable: unreachableCount,
+      unverified: unverifiedCount,
+      results,
+    };
+  } finally {
+    db.close();
+  }
+}
+
 export function registerVerifyCommand(program: Command): void {
   program
     .command('verify [ids...]')
     .description('Cross-check local DB state against remote WordPress for one or more attachments')
     .option('--hash', 'download remote file and verify SHA-256 hash (slower)')
     .option('--all', 'verify all locally-tracked attachments')
+    .option(
+      '--all-sites',
+      'verify all locally-tracked attachments across every configured site (positional IDs are ignored)',
+    )
     .action(async (idStrs: string[], options) => {
       const parentOpts = program.opts();
       const config = await loadConfig();
+
+      // -- All-sites branch --------------------------------------------------
+      if (options.allSites) {
+        const siteList = Object.values(config.sites);
+
+        if (siteList.length === 0) {
+          error('No sites configured. Run `localpress init` to add one.');
+          process.exitCode = 2;
+          return;
+        }
+
+        const siteSummaries: SiteVerifySummary[] = [];
+
+        for (const site of siteList) {
+          info(`\n── ${site.name} ──────────────────────────────`);
+          info(`Verifying all locally-tracked attachments for ${site.name}...\n`);
+
+          try {
+            const summary = await verifySite(site, { hash: options.hash, all: true });
+            siteSummaries.push(summary);
+
+            if (!parentOpts.json) {
+              info(
+                `  Summary: ${summary.ok} ok, ${summary.drift} drifted, ` +
+                  `${summary.missing} missing, ${summary.unreachable} unreachable, ` +
+                  `${summary.unverified} unverified (${summary.verified} total)`,
+              );
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            error(`  ${site.name}: site-level error — ${msg}`);
+            siteSummaries.push({
+              site: site.name,
+              url: site.url,
+              verified: 0,
+              ok: 0,
+              drift: 0,
+              missing: 0,
+              unreachable: 0,
+              unverified: 0,
+              results: [],
+              error: msg,
+            });
+          }
+        }
+
+        const report = aggregateVerifyResults(siteSummaries);
+
+        if (parentOpts.json) {
+          printJson(report);
+        } else {
+          const s = report.summary;
+          info(
+            `\n  Overall: ${s.sites} site(s), ${s.verified} verified, ${s.ok} ok, ${s.drift} drifted, ${s.missing} missing, ${s.unreachable} unreachable, ${s.unverified} unverified${s.sitesWithErrors > 0 ? `, ${s.sitesWithErrors} site error(s)` : ''}`,
+          );
+        }
+
+        process.exitCode = allSitesExitCode(report);
+        return;
+      }
+
+      // -- Single-site branch (unchanged behavior) ---------------------------
       const site = resolveActiveSite(config, parentOpts.site);
       const resolver = new AdapterResolver(site);
       const adapter = resolver.resolve('get');
